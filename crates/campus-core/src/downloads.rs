@@ -1,8 +1,8 @@
+use crate::platform::PrivateOpenOptions;
 use super::*;
 use std::{
     fs::OpenOptions,
     io::Write,
-    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -59,7 +59,20 @@ pub fn safe_filename(s: &str) -> Result<String> {
     {
         bail!("invalid filename")
     }
+    #[cfg(windows)]
+    if s.ends_with('.') || s.chars().any(|c| "<>\"|?*".contains(c)) || windows_reserved(s) {
+        bail!("invalid Windows filename");
+    }
     Ok(s.into())
+}
+fn windows_reserved(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        || ["COM", "LPT"].iter().any(|prefix| {
+            stem.strip_prefix(prefix).is_some_and(|suffix| {
+                matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³")
+            })
+        })
 }
 pub(crate) fn allowed_url(s: &str) -> bool {
     url::Url::parse(s).is_ok_and(|u| {
@@ -143,7 +156,7 @@ fn folder_component(s: &str) -> String {
     let v: String = s
         .chars()
         .map(|c| {
-            if c.is_control() || "/\\:".contains(c) {
+            if c.is_control() || "/\\:".contains(c) || (cfg!(windows) && "<>\"|?*".contains(c)) {
                 '_'
             } else {
                 c
@@ -151,9 +164,11 @@ fn folder_component(s: &str) -> String {
         })
         .take(65)
         .collect();
-    let v = v.trim().trim_matches('.');
+    let v = v.trim().trim_matches('.').trim();
     if v.is_empty() {
         "课程".into()
+    } else if cfg!(windows) && windows_reserved(v) {
+        format!("_{v}")
     } else {
         v.into()
     }
@@ -492,7 +507,7 @@ impl Core {
         match OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .private_mode()
             .open(sidecar)
         {
             Ok(mut f) => {
@@ -553,7 +568,7 @@ impl Core {
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .private_mode()
             .open(&temp)?;
         struct Cleanup(PathBuf);
         impl Drop for Cleanup {
@@ -593,7 +608,7 @@ impl Core {
         match OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .private_mode()
             .open(sidecar)
         {
             Ok(mut out) => {
@@ -647,6 +662,26 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn windows_device_names_are_recognized_without_rejecting_ordinary_names() {
+        for name in ["CON", "con.txt", "NUL.json", "AUX", "COM1", "LPT9.txt", "COM¹.txt", "con .txt"] {
+            assert!(windows_reserved(name), "{name}");
+        }
+        for name in ["课程.pdf", "console.txt", "COM10.txt", "LPT0", "auxiliary.md"] {
+            assert!(!windows_reserved(name), "{name}");
+        }
+    }
+    #[cfg(windows)]
+    #[test]
+    fn windows_archive_names_cannot_target_devices_or_alternate_streams() {
+        for name in ["CON.txt", "NUL", "name:stream", "a?b.txt", "a*b.txt", "a|b", "a\"b", "trailing."] {
+            assert!(safe_filename(name).is_err(), "{name}");
+        }
+        assert_eq!(safe_filename("讲义 & 100%.pdf").unwrap(), "讲义 & 100%.pdf");
+        assert_eq!(folder_component("CON"), "_CON");
+        assert_eq!(folder_component("课程 <一> | ?"), "课程 _一_ _ _");
+    }
+
     #[test]
     fn download_only_accepts_authenticated_file_paths() {
         assert!(allowed_url("https://course.pku.edu.cn/bbcswebdav/xid-1"));

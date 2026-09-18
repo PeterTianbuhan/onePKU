@@ -244,7 +244,7 @@ export default function Settings({
           <details className="settings-explanation">
             <summary>数据保存与更新说明</summary>
             <p>
-              数据与账号凭证保存在此 Mac，凭证与 PKU CLI 共用。通知和作业每 5
+              数据与账号凭证保存在本机，凭证与 PKU CLI 共用。通知和作业每 5
               分钟更新；网络不可用时保留上次数据并提示更新时间。校园日期统一使用北京时间。
             </p>
             <p>

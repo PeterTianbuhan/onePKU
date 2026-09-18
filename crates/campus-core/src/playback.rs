@@ -1,11 +1,11 @@
 //! Local HLS playback: an opaque loopback URL serves authorized, persistent
 //! segments. The player never receives school cookies, signed URLs, or keys.
+use crate::platform::PrivateOpenOptions;
 use super::*;
 use pku_course::api::{CourseApi, PlaybackMedia};
 use std::{
     fs,
     io::Write,
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
@@ -64,7 +64,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .private_mode()
             .open(&temp)?;
         file.write_all(bytes)?;
         file.sync_all()?;
@@ -582,7 +582,7 @@ impl Core {
             fs::remove_dir_all(&directory)?;
         }
         fs::create_dir_all(&directory)?;
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+        platform::private_directory(&directory)?;
         write_private(
             &directory.join("manifest.json"),
             &serde_json::to_vec(&manifest)?,

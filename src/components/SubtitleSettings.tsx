@@ -8,6 +8,7 @@ type Models = {
   models: { id: string; label: string; hint: string }[];
   available: boolean;
   custom: boolean;
+  nativeInstallSupported?: boolean;
   setupMessage?: string | null;
 };
 export default function SubtitleSettings() {
@@ -76,7 +77,7 @@ export default function SubtitleSettings() {
       {data?.available && (
         <p className="footnote">
           {selected?.hint}
-          {selected ? " · " : ""}仅显示此 Mac
+          {selected ? " · " : ""}仅显示本机
           已安装的模型，更改用于之后启动的任务。
         </p>
       )}
@@ -86,33 +87,43 @@ export default function SubtitleSettings() {
             "本机字幕组件尚未安装，仍可在播放器导入字幕文件。"}
         </p>
       )}
-      <details>
-        <summary>{data?.available ? "安装与检查" : "按需安装本机字幕"}</summary>
+      {data?.nativeInstallSupported !== false ? (
+        <details>
+          <summary>
+            {data?.available ? "安装与检查" : "按需安装本机字幕"}
+          </summary>
+          <p className="footnote">
+            Apple Silicon Mac · macOS 14 或以上。安装 Belle
+            中文模型与独立运行环境，模型约 864
+            MB，另需依赖空间。仅安装时联网，识别时音频不上传。
+          </p>
+          <p className="footnote">
+            下载 OnePKU 源码后，在项目目录的终端运行。需要先安装 uv 和
+            ffmpeg（Homebrew：<code>brew install uv ffmpeg</code>）。
+          </p>
+          <pre>
+            <code>bash scripts/subtitles/install.sh</code>
+          </pre>
+          <p className="footnote">
+            安装工具会复用可用配置，检查通过后再启用。排查问题可在命令末尾添加{" "}
+            <code>--check</code>；修复已有配置可添加 <code>--replace</code>
+            ，旧环境与配置备份保留。
+          </p>
+          <button
+            className="button quiet"
+            disabled={resource.isFetching}
+            onClick={() => void resource.refetch()}
+          >
+            {resource.isFetching ? "正在刷新…" : "安装后刷新"}
+          </button>
+        </details>
+      ) : (
         <p className="footnote">
-          Apple Silicon Mac · macOS 14 或以上。安装 Belle
-          中文模型与独立运行环境，模型约 864
-          MB，另需依赖空间。仅安装时联网，识别时音频不上传。
+          此平台暂不提供内置自动字幕安装。可在播放器导入 SRT /
+          VTT；已有字幕继续保留。 高级用户可按源码 docs/SUBTITLES.md
+          配置本机识别适配器，音频不上传。
         </p>
-        <p className="footnote">
-          下载 OnePKU 源码后，在项目目录的终端运行。需要先安装 uv 和
-          ffmpeg（Homebrew：<code>brew install uv ffmpeg</code>）。
-        </p>
-        <pre>
-          <code>bash scripts/subtitles/install.sh</code>
-        </pre>
-        <p className="footnote">
-          安装工具会复用可用配置，检查通过后再启用。排查问题可在命令末尾添加{" "}
-          <code>--check</code>；修复已有配置可添加 <code>--replace</code>
-          ，旧环境与配置备份保留。
-        </p>
-        <button
-          className="button quiet"
-          disabled={resource.isFetching}
-          onClick={() => void resource.refetch()}
-        >
-          {resource.isFetching ? "正在刷新…" : "安装后刷新"}
-        </button>
-      </details>
+      )}
       {message && (
         <p className="settings-message" role="status">
           {message}

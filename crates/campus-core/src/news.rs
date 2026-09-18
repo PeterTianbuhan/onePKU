@@ -311,9 +311,7 @@ pub fn open_link(s: &str) -> Result<()> {
     {
         bail!("invalid link")
     }
-    std::process::Command::new("/usr/bin/open")
-        .arg(u.as_str())
-        .spawn()?;
+    platform::open(std::ffi::OsStr::new(u.as_str()))?;
     Ok(())
 }
 pub fn open_item(source: &str, item: &Value) -> Result<()> {
@@ -324,9 +322,7 @@ pub fn open_item(source: &str, item: &Value) -> Result<()> {
     if !school_url(url) {
         bail!("invalid notice link")
     }
-    std::process::Command::new("/usr/bin/open")
-        .arg(url)
-        .spawn()?;
+    platform::open(std::ffi::OsStr::new(url))?;
     Ok(())
 }
 impl Core {

@@ -1,3 +1,4 @@
+import { searchShortcut } from "../lib/platform";
 import {
   lazy,
   Suspense,
@@ -200,10 +201,13 @@ export default function SearchWorkspace({
   };
   return (
     <Dialog.Root open={open} onOpenChange={openSearch}>
-      <Dialog.Trigger className="global-search-trigger" title="搜索（⌘K）">
+      <Dialog.Trigger
+        className="global-search-trigger"
+        title={`搜索（${searchShortcut()}）`}
+      >
         <Search size={17} />
         <span>搜索</span>
-        <kbd>⌘ K</kbd>
+        <kbd>{searchShortcut()}</kbd>
       </Dialog.Trigger>
       <Dialog.Portal>
         <Dialog.Overlay className="overlay search-overlay" />

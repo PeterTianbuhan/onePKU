@@ -2,7 +2,7 @@
 
 # OnePKU
 
-一个本地运行的北大校园桌面应用。课程、作业、成绩、通知、校历、空闲教室、校园卡放在一个窗口里，数据只在你的 Mac 上。
+一个本地运行的北大校园桌面应用。课程、作业、成绩、通知、校历、空闲教室、校园卡放在一个窗口里，数据只在你的电脑上。
 
 ![OnePKU 今日页](docs/onepku-preview.png)
 
@@ -24,7 +24,9 @@
 
 ## 安装
 
-目前只提供 macOS 版本（Apple Silicon）。从 [Releases](../../releases) 下载 `OnePKU.app.zip`，解压后拖进"应用程序"。
+已发布版本目前只提供 macOS（Apple Silicon）。Windows x64 已加入实验性源码支持，尚未发布正式安装包，构建与验收见 [Windows 说明](docs/WINDOWS.md)。
+
+macOS：从 [Releases](../../releases) 下载 `OnePKU.app.zip`，解压后拖进"应用程序"。
 
 应用没有 Apple 公证，首次打开会被系统拦下，按你的系统版本处理：
 
@@ -44,7 +46,7 @@ xattr -cr /Applications/OnePKU.app
 2. 应用会根据成绩和课程推断你的入学年份、院系和专业，你可以改，之后随时在设置里改。
 3. 回到今日页。默认开启保持登录，应用运行期间每 15 分钟做一次轻量会话检查。
 
-登录凭证存在 `~/.config/info/<服务>/`，与 [PKU CLI](https://github.com/pkuinfo/pkucli) 共用。如果你已经在用 PKU CLI，打开应用直接复用会话。
+登录凭证保存在按平台选择的用户配置目录（macOS：`~/Library/Application Support/info/<服务>/`；Windows：`%APPDATA%\info\config\<服务>\`），与 [PKU CLI](https://github.com/pkuinfo/pkucli) 共用。如果你已经在用 PKU CLI，打开应用直接复用会话。
 
 ## 边界与已知限制
 
@@ -57,7 +59,10 @@ xattr -cr /Applications/OnePKU.app
 
 ## 本地开发
 
-需要 Node.js 20+、Rust stable 与 Xcode Command Line Tools。
+需要 Node.js 24.15+（24 LTS；也支持 22.22.2+ 或 26+）与 Rust stable。
+
+- macOS：安装 Xcode Command Line Tools。
+- Windows x64：安装 Visual Studio C++ Build Tools（桌面 C++ 工作负载和 Windows SDK）与 WebView2 Runtime，详见 [Windows 开发说明](docs/WINDOWS.md)。
 
 ```bash
 npm ci
@@ -69,6 +74,14 @@ npm run tauri -- dev
 ```bash
 npm run tauri -- build --bundles app
 ```
+
+构建 Windows 安装包（在 Windows 上运行；输出 `target/release/bundle/nsis/`）：
+
+```powershell
+npm run tauri -- build --bundles nsis -- --locked
+```
+
+两个平台共用 React 界面和 Rust 业务逻辑，Tauri 自动合并对应平台配置；不需要两份仓库。
 
 浏览器里用真实后端验收：`npm run build && npm run preview:live`，打开 `http://127.0.0.1:1421`。
 
@@ -83,7 +96,7 @@ npm test && npm run typecheck && npm run format:check && npm run verify:tokens &
 ```
 src/                 React 界面（页面、组件、样式 token）
 crates/campus-core/  Rust 核心：类型化命令、缓存、认证、下载、回放、写操作
-src-tauri/           macOS 容器与原文窗口
+src-tauri/           macOS / Windows 容器与原文窗口
 vendor/pkucli/       PKU CLI 快照与本地补丁（MIT）
 data/curriculum/     培养方案结构化数据（由脚本生成）
 scripts/             token 校验、PDF 资源、字幕安装、培养方案清洗
