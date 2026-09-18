@@ -251,6 +251,7 @@ mod tests {
         assert!(status.status.success());
         assert!(is_link(&fs::symlink_metadata(&link).unwrap()));
         assert!(open_regular_file(&link).is_err());
+        assert!(crate::downloads::validate_download_root(&link).is_err());
         // Remove the junction itself, never recurse into its destination.
         fs::remove_dir(&link).unwrap();
         assert!(target.is_dir());

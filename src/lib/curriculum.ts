@@ -54,8 +54,33 @@ export type Plan = {
   warnings: string[];
   unparsed?: { code: string; line: number; text: string }[];
   titleInference?: { from: number; title: string; overlap: number };
-  source: { volumeId: string; url: string; lineStart: number; lineEnd: number };
+  source: {
+    volumeId: string;
+    url: string;
+    lineStart: number;
+    lineEnd: number;
+    /** 所在的 PDF 页码范围（从 1 起），用于抽取原文。 */
+    pageStart?: number;
+    pageEnd?: number;
+    /** 页脚印刷的书页号，与 PDF 页码有前置页偏移。 */
+    pageLabels?: [number, number] | null;
+  };
 };
+
+/** 大学英语分级与对应的公共必修学分（2025 版《北京大学大学英语课程培养方案》表 1；免修按同文件第 3 条获 2 学分）。 */
+export const ENGLISH_LEVELS = [
+  { id: "Y", label: "Y 级", credits: 8 },
+  { id: "A", label: "A 级", credits: 8 },
+  { id: "B", label: "B 级", credits: 6 },
+  { id: "C", label: "C 级", credits: 4 },
+  { id: "C+", label: "C+ 级", credits: 2 },
+  { id: "exempt", label: "免修", credits: 2 },
+] as const;
+export type EnglishLevel = (typeof ENGLISH_LEVELS)[number]["id"];
+export const ENGLISH_FULL_CREDITS = 8;
+export function englishLevelInfo(level: EnglishLevel | null | undefined) {
+  return ENGLISH_LEVELS.find((l) => l.id === level) ?? null;
+}
 export type PlanIndexEntry = {
   id: string;
   cohort: number;
@@ -458,13 +483,58 @@ function assign(
   return { ...course, sectionId: null, via: null };
 }
 
+export type ProgressOptions = { englishLevel?: EnglishLevel | null };
+
+/** 按分级把"大学英语 2～8 学分"固定下来；不足 8 学分的部分方案要求用专业或通识选修补齐，这里按通识教育课计。 */
+function applyEnglishLevel(
+  sections: ProgressSection[],
+  index: SectionIndex,
+  level: EnglishLevel,
+) {
+  const info = englishLevelInfo(level);
+  if (!info) return;
+  const english = [...index.flat.values()].find(
+    (s) => s.children.length === 0 && /大学英语|英语/.test(s.name),
+  );
+  if (!english || english.min === undefined) return;
+  const full = english.max ?? ENGLISH_FULL_CREDITS;
+  english.min = info.credits;
+  english.max = info.credits;
+  english.requirement = `${info.credits} 学分（${info.label}）`;
+  const shortfall = Math.max(0, full - info.credits);
+  if (shortfall > 0) {
+    const general = index.categoryTargets.general
+      ? index.flat.get(index.categoryTargets.general)
+      : undefined;
+    if (general && general.min !== undefined) {
+      general.min += shortfall;
+      general.max = (general.max ?? general.min - shortfall) + shortfall;
+      general.requirement = `${general.min} 学分（含补齐大学英语 ${shortfall} 学分）`;
+      general.note = "方案允许用专业或通识选修补齐英语差额，这里按通识计";
+    }
+  }
+  const top = sections.find((s) => s.children.includes(english));
+  if (
+    top &&
+    top.min !== undefined &&
+    top.max !== undefined &&
+    top.min !== top.max
+  ) {
+    top.min = top.max;
+    top.requirement = `${top.max} 学分`;
+  }
+}
+
 export function computeProgress(
   plan: Plan,
   scores: GradeCourse[],
   courses: CurrentCourse[],
   overrides: Overrides = {},
+  options: ProgressOptions = {},
 ): Progress {
   const { sections, index, usesRequirements } = buildSections(plan);
+  if (options.englishLevel && usesRequirements)
+    applyEnglishLevel(sections, index, options.englishLevel);
   const seen = new Set<string>();
   const matched: MatchedCourse[] = [];
   scores.forEach((row, i) => {

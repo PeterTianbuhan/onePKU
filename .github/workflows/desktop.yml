@@ -50,7 +50,7 @@ jobs:
       - name: Vendored session persistence tests
         run: cargo test --manifest-path vendor/pkucli/Cargo.toml -p pkuinfo-common --lib --locked
       - name: Package desktop app
-        run: npm run tauri -- build --bundles ${{ matrix.bundle }} -- --locked
+        run: npm run tauri -- build --config src-tauri/tauri.test.conf.json --bundles ${{ matrix.bundle }} -- --locked
       - name: Archive macOS app preserving permissions
         if: runner.os == 'macOS'
         run: ditto -c -k --sequesterRsrc --keepParent target/release/bundle/macos/OnePKU.app target/release/bundle/OnePKU-macos-arm64.app.zip

@@ -14,13 +14,13 @@
 - **课程**：按学期分组的全部课程，课程通知、资料、回放、教学网成绩；应用内边下边播，支持倍速、断点续看、离线缓存与本机字幕。
 - **作业**：跨课程列表和筛选；已提交作业显示评分、反馈与提交历史；首次单文件提交需逐步确认，以学校回执核对哈希才算成功。
 - **成绩**：正式成绩、学分与 GPA，学期筛选；学校未返回 GPA 时按官方规则本地计算并注明。
-- **培养方案**：首次打开时按成绩和课程推断年级与专业，可修改；按培养方案的学分系列显示要求、已获、在修与缺口，匹配不上的课程手动归类，只存本机。课程详情提供拼好课、课程测评、PKUHUB 的评课入口。
+- **培养方案**：首次打开时按成绩和课程推断年级与专业，可修改；毕业总学分与各大类以圆环显示已获 / 要求，点开看学分系列与课程；大学英语按分级计学分；一键抽出教务部 PDF 里本专业的几页原文。匹配不上的课程手动归类，只存本机。课程详情提供拼好课、课程测评、PKUHUB 的评课入口。
 - **通知**：课程、学校、各单位、教务部、信科，以及图书馆活动，可订阅、搜索、已读，内置原文窗口。
 - **校历**：学校官方整张 PDF，学年切换与缩放。
 - **校园卡与空闲教室**：余额、月度收支与流水、充值入口；按教学楼、日期、节次查空闲教室。
 - **设置**：各服务分别扫码登录、保持登录、缓存管理、字幕组件。
 
-课程资料和回放保存在 `~/Downloads/OnePKU/`，按学期、课程整理，附来源与 SHA-256。
+课程资料和回放默认保存在 `~/Downloads/OnePKU/`，可在设置里改到别的文件夹；按学期、课程整理，附来源与 SHA-256。
 
 ## 安装
 
@@ -37,6 +37,8 @@ macOS：从 [Releases](../../releases) 下载 `OnePKU.app.zip`，解压后拖进
 ```bash
 xattr -cr /Applications/OnePKU.app
 ```
+
+之后的版本可以在应用内更新：设置 → 版本与更新 → 检查更新，下载后重新启动即可，不再需要重新处理 Gatekeeper。
 
 可选组件：下载回放为 MP4 需要 `ffmpeg`（`brew install ffmpeg`）；本机生成字幕需要 macOS 14 以上并运行一次 `bash scripts/subtitles/install.sh`，见 [字幕说明](docs/SUBTITLES.md)。播放回放、导入 SRT/VTT 字幕不需要这些。
 
@@ -72,14 +74,16 @@ npm run tauri -- dev
 构建 Mac 应用（输出 `target/release/bundle/macos/OnePKU.app`）：
 
 ```bash
-npm run tauri -- build --bundles app
+npm run tauri -- build --config src-tauri/tauri.test.conf.json --bundles app -- --locked
 ```
 
 构建 Windows 安装包（在 Windows 上运行；输出 `target/release/bundle/nsis/`）：
 
 ```powershell
-npm run tauri -- build --bundles nsis -- --locked
+npm run tauri -- build --config src-tauri/tauri.test.conf.json --bundles nsis -- --locked
 ```
+
+上面的测试包不生成签名更新制品；正式发布使用默认配置和 `TAURI_SIGNING_PRIVATE_KEY`，见 `.github/workflows/release.yml`。不要把测试配置用于发布更新包。
 
 两个平台共用 React 界面和 Rust 业务逻辑，Tauri 自动合并对应平台配置；不需要两份仓库。
 

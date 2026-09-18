@@ -43,6 +43,31 @@ async fn choose_assignment_file(
     .map_err(|_| "文件准备失败".to_string())?
 }
 #[tauri::command]
+async fn choose_download_folder(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Arc<campus_core::Core>>,
+) -> Result<Option<serde_json::Value>, String> {
+    if window.label() != "main" {
+        return Err("此窗口不可执行本地操作".into());
+    }
+    let selected = rfd::AsyncFileDialog::new()
+        .set_title("选择 OnePKU 保存下载与资料的文件夹")
+        .pick_folder()
+        .await;
+    let Some(folder) = selected else {
+        return Ok(None);
+    };
+    let path = folder.path().to_path_buf();
+    let core = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        core.set_download_root(&path)
+            .map(Some)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|_| "未能保存所选文件夹".to_string())?
+}
+#[tauri::command]
 async fn choose_course_files(
     window: tauri::WebviewWindow,
     course: String,
@@ -145,6 +170,9 @@ async fn open_booking(
 }
 fn main() {
     tauri::Builder::default()
+        // 更新只从 tauri.conf.json 里写死的 GitHub Release 地址取，并用内置公钥校验签名。
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(campus_core::Core::new())
         .manage(browser::PortalNoticeReader::default())
         .setup(|app| {
@@ -155,6 +183,7 @@ fn main() {
             campus,
             choose_assignment_file,
             choose_course_files,
+            choose_download_folder,
             choose_subtitle_file,
             open_booking,
             browser::open_browser

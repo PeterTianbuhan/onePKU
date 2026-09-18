@@ -341,7 +341,18 @@ main {
 .button.quiet {
   background: transparent;
   border-color: transparent;
-  color: var(--muted);
+  color: var(--text);
+}
+.button.quiet:hover {
+  background: var(--hover);
+  border-color: var(--border);
+}
+.button:active:not(:disabled) {
+  transform: translateY(0.5px);
+  filter: brightness(0.97);
+}
+.button:disabled {
+  opacity: 0.55;
 }
 .text-button {
   border: 0;
@@ -3711,4 +3722,410 @@ input[type="checkbox"] {
 }
 .curriculum-footnote .text-button {
   margin: 0 4px;
+}
+
+/* 培养方案：圆环与明细 */
+.curriculum-hint {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.ring-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 12px;
+  margin: 12px 0 20px;
+}
+.ring-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 18px 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--background);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  text-align: center;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.ring-card:hover {
+  background: var(--hover);
+}
+.ring-card.selected {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+.ring-card:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.ring svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.ring circle {
+  fill: none;
+  stroke-linecap: round;
+}
+.ring-track {
+  stroke: var(--border);
+}
+.ring-pending {
+  stroke: var(--primary);
+  opacity: 0.28;
+}
+.ring-done {
+  stroke: var(--primary);
+}
+.ring.complete .ring-done {
+  stroke: var(--success);
+}
+.ring-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.1;
+}
+.ring-center strong {
+  font-size: 30px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+.ring-center small {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.ring-name {
+  margin-top: 6px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.ring-detail {
+  font-size: 13px;
+  color: var(--muted);
+}
+.ring-detail.complete {
+  color: var(--success);
+}
+.section-detail {
+  display: flex;
+  flex-direction: column;
+}
+.detail-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  column-gap: 20px;
+  row-gap: 8px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+}
+.detail-row.top .detail-name {
+  font-weight: 600;
+}
+.detail-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.detail-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 15px;
+}
+.detail-title .subtle {
+  font-size: 13px;
+}
+.detail-bar {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--sidebar);
+  overflow: hidden;
+}
+.detail-bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 3px;
+  background: var(--primary);
+}
+.detail-bar i.pending {
+  opacity: 0.28;
+}
+.detail-row.complete .detail-bar i.done {
+  background: var(--success);
+}
+.detail-numbers {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  white-space: nowrap;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.detail-numbers strong {
+  font-size: 20px;
+  font-weight: 650;
+}
+.detail-gap {
+  margin-left: 12px;
+  color: var(--muted);
+}
+.detail-gap.complete {
+  color: var(--success);
+}
+.detail-toggle {
+  font-size: 13px;
+  white-space: nowrap;
+}
+.detail-children {
+  grid-column: 1 / -1;
+  padding-left: 18px;
+  border-left: 2px solid var(--border);
+}
+.detail-children .detail-row {
+  padding: 10px 0;
+}
+.detail-children .detail-row:first-child {
+  border-top: none;
+}
+.course-list {
+  grid-column: 1 / -1;
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 18px;
+}
+.course-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto 44px;
+  align-items: baseline;
+  gap: 14px;
+  padding: 7px 0;
+  font-size: 14px;
+  border-top: 1px dashed var(--border);
+}
+.course-list li:first-child {
+  border-top: none;
+}
+.course-list .subtle {
+  font-size: 12px;
+}
+.course-status {
+  font-size: 13px;
+  color: var(--muted);
+}
+.course-status.passed {
+  color: var(--success);
+}
+.course-status.inProgress {
+  color: var(--primary);
+}
+.course-status.failed {
+  color: var(--danger);
+}
+.course-credits {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.course-list-empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+.source-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.source-path {
+  font-size: 12px;
+  word-break: break-all;
+}
+.source-pages {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  max-height: 70vh;
+  overflow: auto;
+  padding: 8px;
+  background: var(--sidebar);
+  border-radius: var(--radius-default);
+}
+.source-pages canvas {
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
+  background: white;
+}
+
+/* 版本与更新 */
+.update-settings .settings-facts {
+  margin-bottom: 12px;
+}
+.update-settings p {
+  margin: 10px 0 0;
+  font-size: 13px;
+}
+.update-notes {
+  white-space: pre-wrap;
+}
+
+/* 保存位置 */
+.path-value {
+  word-break: break-all;
+  font-weight: 500;
+}
+.storage-location {
+  margin: 4px 0 8px;
+}
+
+/* 设置页：统一的行 */
+.settings-section h2 {
+  margin-bottom: 4px;
+}
+.setting-row {
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+}
+.settings-section h2 + .setting-row,
+.settings-section h2 + .setting-anchor > .setting-row:first-child {
+  border-top: 0;
+}
+.setting-row-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+.setting-row.stacked .setting-row-main {
+  align-items: flex-start;
+}
+.setting-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.setting-row-label {
+  font-size: 14px;
+  font-weight: 550;
+}
+.setting-row-description {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  max-width: 62ch;
+}
+.setting-row-description .path-value {
+  color: var(--text);
+  font-weight: 500;
+}
+.setting-row-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.setting-row-control select {
+  min-width: 200px;
+}
+.setting-row-body {
+  margin-top: 14px;
+}
+.setting-row-body .profile-form {
+  margin: 0;
+}
+.setting-row-status {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+.setting-row-status.error {
+  color: var(--danger);
+}
+.setting-details > summary,
+.settings-section .operation-summary > summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--muted);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.setting-details > summary::-webkit-details-marker,
+.settings-section .operation-summary > summary::-webkit-details-marker {
+  display: none;
+}
+.setting-details > summary::before,
+.settings-section .operation-summary > summary::before {
+  content: "▸";
+  font-size: 12px;
+  width: 12px;
+}
+.setting-details[open] > summary::before,
+.settings-section .operation-summary[open] > summary::before {
+  content: "▾";
+}
+.settings-section .operation-summary > summary span {
+  margin-left: 4px;
+}
+.setting-details-body {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.7;
+  max-width: 65ch;
+}
+.setting-details-body p {
+  margin: 0 0 6px;
+}
+.setting-details-body pre {
+  margin: 6px 0 10px;
+}
+.settings-section .operation-summary {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  margin-top: 0;
+}
+.settings-section .connections + .setting-row {
+  border-top: 1px solid var(--border);
+}
+.connection {
+  padding: 16px 0;
+}
+.connection:last-child {
+  padding-bottom: 16px;
+  border-bottom: 0;
+}
+.connection h3 {
+  font-size: 14px;
+  font-weight: 550;
+}
+.connection p {
+  font-size: 12px;
+}
+.connection-state {
+  font-size: 12px;
 }

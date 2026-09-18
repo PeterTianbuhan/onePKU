@@ -224,6 +224,18 @@ export async function chooseAssignmentFile(): Promise<StagedFile | null> {
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<StagedFile | null>("choose_assignment_file");
 }
+export type Preferences = {
+  keepAlive: boolean;
+  downloadRoot: string | null;
+  downloadRootIsDefault: boolean;
+};
+/** 打开系统文件夹选择框并保存为下载与资料目录；取消返回 null。 */
+export async function chooseDownloadFolder(): Promise<Preferences | null> {
+  if (!("__TAURI_INTERNALS__" in window))
+    throw Error("请在 OnePKU 桌面应用中更改保存位置");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<Preferences | null>("choose_download_folder");
+}
 export type MaterialImport = {
   added: { name: string; bytes: number }[];
   reused: number;

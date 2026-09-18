@@ -1,11 +1,17 @@
 // 用户资料：年级、培养方案与待确认归类。只存本机 preferences.json，不含任何凭证。
 import { useResource, action } from "./api";
-import type { Overrides } from "./curriculum";
+import {
+  ENGLISH_LEVELS,
+  type EnglishLevel,
+  type Overrides,
+} from "./curriculum";
 
 export type Profile = {
   cohort: number | null;
   planId: string | null;
   secondaryPlanId: string | null;
+  /** 大学英语分级；null 表示未选择，按方案的 2～8 学分区间显示。 */
+  englishLevel: EnglishLevel | null;
   overrides: Overrides;
   inferred: boolean;
   updatedAt: string;
@@ -15,6 +21,7 @@ export const emptyProfile: Profile = {
   cohort: null,
   planId: null,
   secondaryPlanId: null,
+  englishLevel: null,
   overrides: {},
   inferred: false,
   updatedAt: "",
@@ -32,6 +39,9 @@ export function normalizeProfile(value: unknown): Profile | null {
     planId: typeof v.planId === "string" ? v.planId : null,
     secondaryPlanId:
       typeof v.secondaryPlanId === "string" ? v.secondaryPlanId : null,
+    englishLevel: ENGLISH_LEVELS.some((l) => l.id === v.englishLevel)
+      ? (v.englishLevel as EnglishLevel)
+      : null,
     overrides:
       v.overrides && typeof v.overrides === "object"
         ? Object.fromEntries(

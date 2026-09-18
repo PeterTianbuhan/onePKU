@@ -245,6 +245,12 @@
   "volumeId": "2025-文科",
   "url": "https://dean.pku.edu.cn/web/download_down.php?type=down&id=217",
   "lineStart": 28759,
-  "lineEnd": 28849
+  "lineEnd": 28849,
+  "pageStart": 757,
+  "pageEnd": 760,
+  "pageLabels": [
+   751,
+   753
+  ]
  }
 }

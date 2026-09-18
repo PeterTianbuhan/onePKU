@@ -1,16 +1,17 @@
 [package]
 name = "onepku"
-version = "0.6.0"
+version = "0.1.0"
 edition = "2021"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# Keep this in sync with app.macOSPrivateApi: tauri-build checks the common dependency table.
+# The feature only enables private native APIs on macOS.
+tauri = { version = "2", features = ["macos-private-api"] }
 campus-core = { path = "../crates/campus-core" }
 serde_json = "1"
 rfd = "0.15"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"

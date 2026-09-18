@@ -12,3 +12,4 @@ tsconfig.tsbuildinfo
 # 由脚本生成
 public/pdfjs/
 src-tauri/gen/schemas/
+.playwright-mcp/

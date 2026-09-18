@@ -9,7 +9,7 @@ colors:
   muted: "#71747D"
   background: "#FFFFFF"
   sidebar: "#F6F7F9"
-  border: "#E9EAED"
+  border: "#D4D6DC"
   success: "#32785A"
   success-soft: "#EDF6F0"
   warning: "#8A621F"
@@ -17,7 +17,7 @@ colors:
   danger: "#A92D3C"
   hover: "#F3F4F6"
   overlay: "#24272D66"
-  scrollbar: "#C7C9CF"
+  scrollbar: "#B8BBC3"
 typography:
   sans:
     fontFamily: '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif'

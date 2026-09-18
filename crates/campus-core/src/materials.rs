@@ -414,6 +414,19 @@ mod tests {
         assert!(source_attachment(&file, "account-a", None).is_none());
     }
     #[test]
+    fn custom_download_root_supports_nested_unicode_archives() {
+        let temp = tempfile::tempdir().unwrap();
+        let chosen = temp.path().join("自选目录 & 100%");
+        fs::create_dir(&chosen).unwrap();
+        let validated = downloads::validate_download_root(&chosen).unwrap();
+        let archive = validated.join("26-27-1").join("中文课");
+        checked_directory(&archive).unwrap();
+        let source = temp.path().join("讲义.txt");
+        fs::write(&source, "内容").unwrap();
+        import_file(&archive, &source, &json!({})).unwrap();
+        assert_eq!(scan(&archive, "account", None).unwrap().len(), 1);
+    }
+    #[test]
     fn imports_copy_deduplicate_and_preserve_conflicting_names_and_originals() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();

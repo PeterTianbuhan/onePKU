@@ -144,15 +144,71 @@ fn finish_file(temp: &Path, dir: &Path, name: &str) -> Result<PathBuf> {
     }
     bail!("too many duplicate files")
 }
-pub(crate) fn archive_directory(semester: &str, course: &str) -> Result<PathBuf> {
-    let root = directories::UserDirs::new()
+/// 默认保存目录：~/Downloads/OnePKU。
+pub(crate) fn default_download_root() -> Result<PathBuf> {
+    directories::UserDirs::new()
         .and_then(|d| d.download_dir().map(|p| p.join("OnePKU")))
-        .ok_or_else(|| anyhow!("Downloads unavailable"))?;
+        .ok_or_else(|| anyhow!("Downloads unavailable"))
+}
+/// 用户在设置里选的目录必须是已存在、可写的绝对路径目录。
+pub(crate) fn validate_download_root(path: &std::path::Path) -> Result<PathBuf> {
+    if !path.is_absolute() {
+        bail!("请选择一个完整路径的文件夹");
+    }
+    let meta = std::fs::symlink_metadata(path).map_err(|_| anyhow!("文件夹不存在或无法访问"))?;
+    if !meta.is_dir() || crate::platform::is_link(&meta) {
+        bail!("请选择普通文件夹，不支持链接或重解析点");
+    }
+    let probe = path.join(format!(".onepku-write-test-{}", rand::random::<u64>()));
+    let file = std::fs::OpenOptions::new().write(true).create_new(true)
+        .private_mode().open(&probe).map_err(|_| anyhow!("这个文件夹不可写"))?;
+    drop(file);
+    let _ = std::fs::remove_file(&probe);
+    // Keep ordinary Windows drive/UNC paths usable by Explorer and the folder picker.
+    Ok(dunce::canonicalize(path)?)
+}
+/// 当前生效的保存目录：偏好里有合法值就用它，否则回到默认。
+pub(crate) fn download_root() -> Result<PathBuf> {
+    if let Some(p) = crate::maintenance::read_preferences()
+        .get("downloadRoot")
+        .and_then(|v| v.as_str())
+    {
+        let path = PathBuf::from(p);
+        if path.is_absolute() && path.is_dir() {
+            return Ok(path);
+        }
+    }
+    default_download_root()
+}
+pub(crate) fn download_root_info() -> Value {
+    let effective = download_root().ok();
+    let normalize = |p: PathBuf| dunce::canonicalize(&p).unwrap_or(p);
+    let is_default = effective.clone().map(normalize) == default_download_root().ok().map(normalize);
+    json!({
+        "downloadRoot": effective.as_ref().map(|p| p.to_string_lossy().to_string()),
+        "downloadRootIsDefault": effective.is_some() && is_default,
+    })
+}
+pub(crate) fn set_download_root(path: Option<&std::path::Path>) -> Result<Value> {
+    match path {
+        Some(p) => {
+            let canon = validate_download_root(p)?;
+            crate::maintenance::write_preference(
+                "downloadRoot",
+                Value::String(canon.to_string_lossy().to_string()),
+            )?;
+        }
+        None => crate::maintenance::write_preference("downloadRoot", Value::Null)?,
+    }
+    Ok(download_root_info())
+}
+pub(crate) fn archive_directory(semester: &str, course: &str) -> Result<PathBuf> {
+    let root = download_root()?;
     Ok(root
         .join(folder_component(semester))
         .join(folder_component(course)))
 }
-fn folder_component(s: &str) -> String {
+pub(crate) fn folder_component(s: &str) -> String {
     let v: String = s
         .chars()
         .map(|c| {
@@ -555,9 +611,7 @@ impl Core {
             &f.name,
             mime,
         )?;
-        let mut dir = directories::UserDirs::new()
-            .and_then(|d| d.download_dir().map(|p| p.join("OnePKU")))
-            .ok_or_else(|| anyhow!("Downloads unavailable"))?;
+        let mut dir = download_root()?;
         if !f.course.is_empty() {
             dir = dir
                 .join(folder_component(&f.semester))
@@ -682,6 +736,22 @@ mod tests {
         assert_eq!(folder_component("课程 <一> | ?"), "课程 _一_ _ _");
     }
 
+    #[test]
+    fn download_root_validation_rejects_relative_missing_and_files() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(validate_download_root(std::path::Path::new("relative/dir")).is_err());
+        assert!(validate_download_root(&dir.path().join("missing")).is_err());
+        let file = dir.path().join("f.txt");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(validate_download_root(&file).is_err());
+        let ok = validate_download_root(dir.path()).unwrap();
+        assert!(ok.is_absolute() && ok.is_dir());
+        assert!(!std::fs::read_dir(dir.path()).unwrap().any(|e| e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".onepku-write-test")));
+    }
     #[test]
     fn download_only_accepts_authenticated_file_paths() {
         assert!(allowed_url("https://course.pku.edu.cn/bbcswebdav/xid-1"));

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   defaultVersion,
+  ENGLISH_LEVELS,
   planIndex,
   planVersions,
   type Inference,
@@ -176,6 +177,26 @@ export default function ProfileForm({
                 {p.school} · {p.title}
               </option>
             ))}
+        </select>
+      </label>
+      <label>
+        <span>大学英语分级</span>
+        <select
+          aria-label="大学英语分级"
+          value={value.englishLevel ?? ""}
+          onChange={(e) =>
+            onChange({
+              ...value,
+              englishLevel: (e.target.value || null) as Profile["englishLevel"],
+            })
+          }
+        >
+          <option value="">未选择（按方案 2～8 学分）</option>
+          {ENGLISH_LEVELS.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.label}（{l.credits} 学分）
+            </option>
+          ))}
         </select>
       </label>
       {inference && inference.candidates.length > 0 && (

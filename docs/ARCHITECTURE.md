@@ -62,6 +62,10 @@ React 页面  ──useResource({kind:"scores"})──▶  src/lib/api.ts  call(
 
 培养方案没有独立的 Rust 模块：`data/curriculum/` 的静态 JSON 由前端 `lib/curriculum.ts` 按需加载并与成绩、课程匹配，不联网；用户资料（年级、方案、手动归类）通过 `maintenance.rs` 的 `profile` / `setProfile` 请求走 Preferences 通道存本机。
 
+### Tauri 插件
+
+除 `campus` 命令外，前端只多了两个官方插件：`updater`（检查与安装更新，地址与公钥在 `tauri.conf.json`）和 `process`（更新后重启）。权限在 `src-tauri/capabilities/main.json` 逐条列出。
+
 ### 上游 `vendor/pkucli/`
 
 MIT 快照，提交 0ad6dea。本地补丁只做四类事：暴露类型化查询、序列化结果模型、非交互式树洞登录、放宽人为的 24 小时本地过期。逐项记录在 [UPSTREAM.md](UPSTREAM.md)。可回馈的部分以补丁形式放在 `contributions/`。

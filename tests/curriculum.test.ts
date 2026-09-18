@@ -277,6 +277,44 @@ describe("computeProgress", () => {
     expect(progress.ignored.map((c) => c.name)).toContain("量子计算");
     expect(sectionChoices(progress).map((c) => c.id)).toContain("3-2");
   });
+  it("fixes English credits by level and adds the shortfall to general education", () => {
+    const progress = computeProgress(
+      plan,
+      scores,
+      courses,
+      {},
+      { englishLevel: "B" },
+    );
+    const pub = progress.sections.find((s) => s.id === "1")!;
+    const english = pub.children.find((c) => c.id === "1-1")!;
+    const general = pub.children.find((c) => c.id === "1-8")!;
+    expect(english).toMatchObject({
+      min: 6,
+      max: 6,
+      requirement: "6 学分（B 级）",
+    });
+    expect(general).toMatchObject({ min: 14, max: 14 });
+    expect(general.note).toMatch(/专业或通识选修/);
+    expect(pub).toMatchObject({ min: 51, max: 51 });
+    const full = computeProgress(
+      plan,
+      scores,
+      courses,
+      {},
+      { englishLevel: "Y" },
+    );
+    expect(
+      full.sections
+        .find((s) => s.id === "1")!
+        .children.find((c) => c.id === "1-8")!.min,
+    ).toBe(12);
+    const untouched = computeProgress(plan, scores, courses);
+    expect(
+      untouched.sections
+        .find((s) => s.id === "1")!
+        .children.find((c) => c.id === "1-1"),
+    ).toMatchObject({ min: 2, max: 8 });
+  });
   it("falls back to course groups when a plan has no requirement table", () => {
     const bare: Plan = { ...plan, requirements: [], topRequirements: [] };
     const progress = computeProgress(bare, scores, courses);

@@ -14,7 +14,7 @@ fn home(source: &str) -> Result<&'static str> {
         _ => bail!("invalid news source"),
     })
 }
-fn client() -> Result<reqwest::Client> {
+pub(crate) fn client() -> Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .timeout(Duration::from_secs(22))
         .user_agent("OnePKU/0.2 (personal campus reader)")
@@ -37,7 +37,7 @@ fn school_url(s: &str) -> bool {
                 .is_some_and(|h| h == "pku.edu.cn" || h.ends_with(".pku.edu.cn"))
     })
 }
-async fn body(r: reqwest::Response, max: usize) -> Result<Vec<u8>> {
+pub(crate) async fn body(r: reqwest::Response, max: usize) -> Result<Vec<u8>> {
     let r = r.error_for_status()?;
     if !school_url(r.url().as_str()) {
         bail!("invalid response origin")

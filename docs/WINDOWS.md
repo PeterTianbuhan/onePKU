@@ -35,7 +35,7 @@ npm run format:check
 npm run verify:tokens
 cargo test --workspace --locked
 cargo test --manifest-path vendor/pkucli/Cargo.toml -p pkuinfo-common --lib --locked
-npm run tauri -- build --bundles nsis -- --locked
+npm run tauri -- build --config src-tauri/tauri.test.conf.json --bundles nsis -- --locked
 ```
 
 安装包：`target/release/bundle/nsis/OnePKU_<版本>_x64-setup.exe`。
@@ -44,14 +44,14 @@ Windows 配置使用当前用户安装模式，不要求把应用安装到系统
 
 开发包未做 Windows 代码签名，SmartScreen 可能提示未知发布者。只测试自己构建或维护者明确提供的文件，不要为运行开发包全局关闭 Defender/SmartScreen。最终发布应考虑代码签名，并明确列出 SHA-256。
 
-macOS 仍使用 `npm run tauri -- build --bundles app -- --locked`，不要求在 Windows 上交叉构建 Mac 安装包。
+macOS 仍使用 `npm run tauri -- build --config src-tauri/tauri.test.conf.json --bundles app -- --locked`，不要求在 Windows 上交叉构建 Mac 安装包。
 
 ## 平台差异
 
 | 项目          | Windows 行为                                                                                         |
 | ------------- | ---------------------------------------------------------------------------------------------------- |
 | 本地数据      | 使用 Known Folders / `directories`；具体位置见 `SECURITY.md`                                         |
-| 资料目录      | 系统“下载”目录下 `OnePKU`，保留原件与来源 sidecar                                                    |
+| 资料目录      | 默认系统“下载”目录下 `OnePKU`；设置可更改，旧文件不搬移，保留来源 sidecar                            |
 | 文件权限      | 继承当前用户目录的 NTFS ACL；Unix 的 0600/0700 仅在 Unix 设置                                        |
 | 资料安全      | 拒绝重解析点/目录联接；用卷 ID 和文件 ID 检查身份；禁止设备名与备用数据流文件名                      |
 | 打开文件/网页 | Windows Shell API，目标不拼进 cmd.exe 命令                                                           |
@@ -63,16 +63,26 @@ macOS 仍使用 `npm run tauri -- build --bundles app -- --locked`，不要求�
 
 下载目录不要放在共享可写文件夹。对重解析点的拒绝是保守选择，可能使联接/部分云盘目录不可用；不为方便而绕过这项检查。
 
+## 跟进公开版 v0.1.0
+
+- 合并 main 的培养方案圆环、英语分级、PDF 抽页、新设置页、可选保存目录及扫码自动取码；保留 Windows 字幕限制。
+- 保存目录与 PDF 使用跨平台默认应用打开；中文标题按 UTF-8 边界截断。所选目录保留可写检查，并拒绝链接/重解析点；Windows 常规路径使用便于文件管理器打开的形式。
+- 公共配置保留更新签名要求与原有公钥。上述 `tauri.test.conf.json` 只关闭测试包的签名更新制品生成，不关闭客户端的签名验证。Windows Authenticode 代码签名和 Tauri 更新签名是两回事。
+- Release 工作流先构建 Mac，再构建 Windows NSIS，合并两平台的 `latest.json`，避免并发覆盖；仍创建草稿，不自动发布。正式构建需要已有的 `TAURI_SIGNING_PRIVATE_KEY` secret。手动运行请选择版本标签，不是在 main 分支直接运行。
+- 之前试用的内部版 `0.6.0` 高于公开版 `0.1.0`：首次切换需手动运行新安装器，不会把版本号降低伪装为自动更新。不要勾选删除用户数据；凭证与偏好目录不变。
+- 更改保存目录只影响后续下载。旧文件仍在原目录，不自动搬移。
+
 ## 本轮本机验证（2026-09-18）
 
 环境：Windows 11 x64，Node.js 24.21.0，Rust 1.98.1 / MSVC。以下是本地检查和用户试用反馈；用户反馈不等于逐项发布验收记录：
 
-- 前端 22 个测试文件、73 个测试通过；类型检查、Prettier、design tokens 检查通过。
-- Rust workspace：核心 46 个、桌面层 3 个测试通过；vendored 会话/Cookie 保存 2 个测试通过，均使用合成数据或临时目录。
-- `npm run tauri -- build --bundles nsis -- --locked` 成功，生成 Windows x64 当前用户安装包；本地包未签名。
-- 浏览器连接真实本地 Rust 预览后端：今日页/设置页正常渲染，Ctrl+K 打开搜索，Windows 显示内置字幕引擎不可用且不提供 Mac 安装命令。浏览器控制台只有预览服务缺失 `favicon.ico` 的 404；未做登录或学校写操作。
-- Windows/macOS CI 配置已添加并做 YAML 解析检查；远端运行结果以 PR 中的检查为准。
-- 首次自动启动曾受到执行环境限制；随后经用户要求，成功启动 Windows 原生程序并确认窗口存在。用户手工试用反馈所走流程均正常，但没有逐项记录覆盖范围，下面的安装/卸载与功能清单仍需保留。macOS 实机回归尚未执行。
+- 前端 24 个测试文件、81 个测试通过；类型检查、Prettier、design tokens 检查通过。
+- Rust workspace：核心 51 个、桌面层 3 个测试通过；vendored 会话/Cookie 保存 2 个测试通过，均使用合成数据或临时目录。
+- `npm run tauri -- build --config src-tauri/tauri.test.conf.json --bundles nsis -- --locked` 成功，生成 Windows x64 当前用户安装包；本地包未签名。为不打断正在运行的旧程序，本次另加 `--target x86_64-pc-windows-msvc`，新包位于 `target/x86_64-pc-windows-msvc/release/bundle/nsis/OnePKU_0.1.0_x64-setup.exe`。
+- 上一版浏览器连接真实本地 Rust 预览后端：今日页/设置页正常渲染，Ctrl+K 打开搜索，Windows 显示内置字幕引擎不可用且不提供 Mac 安装命令。浏览器控制台只有预览服务缺失 `favicon.ico` 的 404；未做登录或学校写操作。
+- 增加更新检查、缺少平台包、下载进度/签名错误、中文 PDF 标题及自选中文目录归档测试。培养方案结构校验通过；已有数据解析警告仍需人工核对。
+- 上一版远端 Windows 检查和打包通过；macOS 的 Tauri feature/config 校验错误已定位并修复配置，新一轮结果以 PR 检查为准。
+- 上一版首次自动启动曾受到执行环境限制；随后经用户要求，成功启动 Windows 原生程序并确认窗口存在。用户手工试用反馈所走流程均正常，但没有逐项记录覆盖范围，下面的安装/卸载与功能清单仍需保留。macOS 实机回归尚未执行。
 
 ## 发布前手工验收清单
 

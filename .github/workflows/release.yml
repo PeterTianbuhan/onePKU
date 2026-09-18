@@ -1,0 +1,87 @@
+# 推送 v* 标签时构建 macOS（Apple Silicon）和 Windows x64，生成草稿 Release：
+# OnePKU.app.zip（手动下载）、OnePKU.app.tar.gz + .sig 与 latest.json（应用内更新）。
+# 草稿由维护者检查后手动发布；发布后应用内“检查更新”即可看到。
+name: Release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  macos:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: node scripts/curriculum/check.mjs
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "OnePKU ${{ github.ref_name }}"
+          releaseBody: "更新内容见仓库 CHANGELOG.md。首次安装的打开方法见 README「安装」。"
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+          args: --target aarch64-apple-darwin -- --locked
+      - name: Zip .app for manual download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          APP=target/aarch64-apple-darwin/release/bundle/macos/OnePKU.app
+          ditto -c -k --keepParent "$APP" OnePKU.app.zip
+          gh release upload "${{ github.ref_name }}" OnePKU.app.zip --clobber
+
+  windows:
+    # Serialize latest.json updates: tauri-action reads existing platforms before adding this one.
+    needs: macos
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run curriculum:check
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "OnePKU ${{ github.ref_name }}"
+          releaseBody: "更新内容见仓库 CHANGELOG.md。首次安装的打开方法见 README「安装」。"
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+          args: --target x86_64-pc-windows-msvc --bundles nsis -- --locked

@@ -29,6 +29,13 @@ export default function Auth({
         void action({ kind: "authCancel", id: currentId.current });
     };
   }, []);
+  // 扫码登录打开即取二维码，不用先点一次按钮；短信验证不自动发送。
+  useEffect(() => {
+    if (scope) return;
+    void begin();
+    // begin 只依赖 service，而 service 变化会重新挂载组件。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope]);
   useEffect(() => {
     if (!cooldown) return;
     const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
@@ -196,17 +203,15 @@ export default function Auth({
                 />
               </div>
               {state === "expired" && <p>二维码已过期</p>}
-              <Button
-                variant="primary"
-                disabled={state === "loading"}
-                onClick={() => void begin()}
-              >
-                {state === "loading"
-                  ? "正在获取…"
-                  : qr
+              {state === "loading" ? (
+                <p className="subtle">正在获取二维码…</p>
+              ) : (
+                <Button variant="primary" onClick={() => void begin()}>
+                  {state === "expired" || state === "failed"
                     ? "重新获取二维码"
                     : "获取登录二维码"}
-              </Button>
+                </Button>
+              )}
             </>
           )}
         </div>

@@ -200,7 +200,7 @@ impl Core {
         Ok(profile.clone())
     }
 }
-fn read_preferences() -> serde_json::Map<String, Value> {
+pub(crate) fn read_preferences() -> serde_json::Map<String, Value> {
     pref_path()
         .ok()
         .and_then(|p| std::fs::read(p).ok())
@@ -209,7 +209,7 @@ fn read_preferences() -> serde_json::Map<String, Value> {
         .unwrap_or_default()
 }
 /// 读改写整个 preferences.json，原子替换，其他键保持不变。
-fn write_preference(key: &str, value: Value) -> Result<()> {
+pub(crate) fn write_preference(key: &str, value: Value) -> Result<()> {
     let path = pref_path()?;
     std::fs::create_dir_all(path.parent().unwrap())?;
     let mut prefs = read_preferences();

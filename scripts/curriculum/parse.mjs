@@ -534,7 +534,28 @@ function parseSection(lines, start, end) {
 }
 
 export function parseVolume(text, meta) {
-  const lines = stripDecorations(text.split(/\r?\n/));
+  const rawLines = text.split(/\r?\n/);
+  // pdftotext 在每页开头放一个换页符；据此得到每行所在的 PDF 页码（从 1 起）。
+  const pageOfLine = [];
+  let page = 1;
+  for (const l of rawLines) {
+    page += (l.match(/\f/g) ?? []).length;
+    pageOfLine.push(page);
+  }
+  // 页脚里印刷的页码（·445·），与 PDF 页码有前置页的偏移，给用户对照原书用。
+  const printedLabels = (from, to) => {
+    let first = null;
+    let last = null;
+    for (let i = from; i < to; i++) {
+      const m = /·(\d+)·/.exec(rawLines[i]);
+      if (!m) continue;
+      const n = Number(m[1]);
+      if (first === null) first = n;
+      last = n;
+    }
+    return first === null ? null : [first, last];
+  };
+  const lines = stripDecorations(rawLines);
   // 两类段首：“一、…”章节行（往上找院系行与标题），以及紧跟标题却没有“一、”的院系行
   // （个别专业直接从“1. 专业历史沿革”开始）。
   const heads = [];
@@ -697,6 +718,9 @@ export function parseVolume(text, meta) {
         url: meta.url,
         lineStart: start + 1,
         lineEnd: end,
+        pageStart: pageOfLine[start],
+        pageEnd: pageOfLine[Math.max(start, end - 1)],
+        pageLabels: printedLabels(start, end),
       },
     });
   });

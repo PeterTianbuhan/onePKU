@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Curriculum from "../src/pages/Curriculum";
@@ -151,6 +152,7 @@ it("shows earned, in-progress and pending courses and persists a manual assignme
     cohort: 2025,
     planId: ai.id,
     secondaryPlanId: null,
+    englishLevel: null,
     overrides: {},
     inferred: true,
     updatedAt: "x",
@@ -159,10 +161,19 @@ it("shows earned, in-progress and pending courses and persists a manual assignme
   expect(section).toBeInTheDocument();
   // 高数 5 + 人工智能引论 3 + 人工智能中的数学 4 + 通选 2 = 14 已获；线代 4 在修；神秘学导论待确认。
   expect(await screen.findByText("待确认（1）")).toBeInTheDocument();
-  const metrics = section.querySelector(".study-metrics")!;
-  expect(metrics).toHaveTextContent("已获学分14");
-  expect(metrics).toHaveTextContent("在修学分4");
-  expect(metrics).toHaveTextContent("毕业总学分140");
+  const total = screen.getByRole("tab", { name: /毕业总学分/ });
+  expect(within(total).getByText("14")).toBeInTheDocument();
+  expect(within(total).getByText("/ 140")).toBeInTheDocument();
+  expect(total).toHaveTextContent("在修 4 · 还差 122");
+  const major = screen.getByRole("tab", { name: /专业必修课程/ });
+  expect(within(major).getByText("12")).toBeInTheDocument();
+  fireEvent.click(major);
+  expect(
+    screen.getByRole("tabpanel", { name: "专业必修课程明细" }),
+  ).toHaveTextContent("专业基础课");
+  expect(
+    screen.getByRole("button", { name: "原文 PDF · 书页 446–453" }),
+  ).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("归类 神秘学导论"), {
     target: { value: "2-2" },
   });
@@ -176,9 +187,27 @@ it("shows earned, in-progress and pending courses and persists a manual assignme
   await waitFor(() =>
     expect(screen.queryByText("待确认（1）")).not.toBeInTheDocument(),
   );
-  expect(section.querySelector(".study-metrics")).toHaveTextContent(
-    "已获学分16",
-  );
+  expect(
+    within(screen.getByRole("tab", { name: /毕业总学分/ })).getByText("16"),
+  ).toBeInTheDocument();
+});
+
+it("fixes the English requirement by level and moves the shortfall into general education", async () => {
+  mount({
+    cohort: 2025,
+    planId: ai.id,
+    secondaryPlanId: null,
+    englishLevel: "C",
+    overrides: {},
+    inferred: true,
+    updatedAt: "x",
+  });
+  await screen.findByLabelText(`主修方案：${ai.title}`);
+  fireEvent.click(screen.getByRole("tab", { name: /公共基础课程/ }));
+  const panel = screen.getByRole("tabpanel", { name: "公共基础课程明细" });
+  expect(panel).toHaveTextContent("4 学分（C 级）");
+  expect(panel).toHaveTextContent("16 学分（含补齐大学英语 4 学分）");
+  expect(screen.queryByText(/选择你的英语分级/)).not.toBeInTheDocument();
 });
 
 it("offers to pick a plan when the profile was saved without one", async () => {

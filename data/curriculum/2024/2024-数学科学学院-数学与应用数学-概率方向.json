@@ -897,7 +897,13 @@
   "volumeId": "2024-理科",
   "url": "https://dean.pku.edu.cn/web/download_down.php?type=down&id=209",
   "lineStart": 2159,
-  "lineEnd": 2380
+  "lineEnd": 2380,
+  "pageStart": 65,
+  "pageEnd": 71,
+  "pageLabels": [
+   60,
+   65
+  ]
  },
  "titleInference": {
   "from": 2025,

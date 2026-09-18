@@ -10,6 +10,7 @@ use std::{
 };
 mod auth;
 mod bookings;
+mod curriculum;
 mod downloads;
 mod maintenance;
 mod materials;
@@ -53,7 +54,17 @@ pub enum Request {
     CalendarPdf {
         year: String,
     },
+    CurriculumPages {
+        volume: String,
+        from: u32,
+        to: u32,
+        title: String,
+        open: bool,
+    },
     Preferences,
+    /// 只能恢复默认；更改到某个目录必须经过桌面容器的系统选择框，前端不能传路径。
+    ResetDownloadRoot,
+    OpenDownloadRoot,
     Profile,
     SetProfile {
         profile: Value,
@@ -389,6 +400,11 @@ fn problem(e: anyhow::Error) -> Problem {
     }
 }
 impl Core {
+    /// 由桌面容器在用户通过系统对话框选好文件夹后调用。
+    pub fn set_download_root(&self, path: &std::path::Path) -> Result<Value> {
+        downloads::set_download_root(Some(path))
+    }
+
     pub fn call(self: &Arc<Self>, req: Request) -> Envelope {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -534,6 +550,13 @@ impl Core {
                 json!({"opened":true})
             }
             Request::CalendarPdf { year } => news::calendar_pdf(year).await?,
+            Request::CurriculumPages {
+                volume,
+                from,
+                to,
+                title,
+                open,
+            } => curriculum::pages(volume, *from, *to, title, *open).await?,
             Request::OpenLink { url } => {
                 news::open_link(url)?;
                 json!({"opened":true})
@@ -541,7 +564,16 @@ impl Core {
             Request::SubtitleSettings => self.subtitle_settings()?,
             Request::SetSubtitleModel { model } => self.set_subtitle_model(model)?,
             Request::Preferences => {
-                json!({"keepAlive":self.keep_alive.load(std::sync::atomic::Ordering::Relaxed)})
+                let mut v = downloads::download_root_info();
+                v["keepAlive"] = json!(self.keep_alive.load(std::sync::atomic::Ordering::Relaxed));
+                v
+            }
+            Request::ResetDownloadRoot => downloads::set_download_root(None)?,
+            Request::OpenDownloadRoot => {
+                let dir = downloads::download_root()?;
+                std::fs::create_dir_all(&dir)?;
+                platform::open(dir.as_os_str())?;
+                json!({"opened":true})
             }
             Request::SetKeepAlive { enabled } => {
                 self.save_preference(*enabled)?;

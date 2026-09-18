@@ -24,6 +24,8 @@ import {
   type Profile,
 } from "../lib/profile";
 import ProfileForm from "../components/ProfileForm";
+import CurriculumRing from "../components/CurriculumRing";
+import CurriculumSource from "../components/CurriculumSource";
 import { Button, Empty, type Login } from "../components/ui";
 
 const viaLabel: Record<NonNullable<MatchedCourse["via"]>, string> = {
@@ -53,9 +55,22 @@ function requirementText(s: ProgressSection) {
 function fmt(n: number) {
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
 }
+/** 圆环与缺口用的数值：学分系列按学分，门数系列按已通过门数。 */
+function measure(s: ProgressSection) {
+  if (s.unit === "门") return { value: s.passedCount, pending: 0, unit: "门" };
+  if (s.unit === "学时")
+    return { value: s.earned, pending: s.inProgress, unit: "学时" };
+  return { value: s.earned, pending: s.inProgress, unit: "学分" };
+}
 function gap(s: ProgressSection) {
-  if (s.min === undefined || (s.unit && s.unit !== "学分")) return null;
-  return Math.max(0, s.min - s.earned - s.inProgress);
+  if (s.min === undefined || s.unit === "学时") return null;
+  const m = measure(s);
+  return Math.max(0, s.min - m.value - m.pending);
+}
+function gapText(s: ProgressSection) {
+  const g = gap(s);
+  if (g === null) return "";
+  return g === 0 ? "已满足" : `还差 ${fmt(g)} ${measure(s).unit}`;
 }
 
 export default function Curriculum({
@@ -308,9 +323,11 @@ function PlanProgress({
   const progress = useMemo(
     () =>
       plan.data
-        ? computeProgress(plan.data, scoreRows, courseRows, overrides)
+        ? computeProgress(plan.data, scoreRows, courseRows, overrides, {
+            englishLevel: profile.englishLevel,
+          })
         : null,
-    [plan.data, scoreRows, courseRows, overrides],
+    [plan.data, scoreRows, courseRows, overrides, profile.englishLevel],
   );
   if (plan.isPending)
     return (
@@ -331,6 +348,7 @@ function PlanProgress({
     <ProgressView
       progress={progress}
       secondary={secondary}
+      englishChosen={profile.englishLevel !== null}
       onOverride={onOverride}
     />
   );
@@ -339,15 +357,31 @@ function PlanProgress({
 function ProgressView({
   progress,
   secondary,
+  englishChosen,
   onOverride,
 }: {
   progress: Progress;
   secondary: boolean;
+  englishChosen: boolean;
   onOverride: (key: string, sectionId: string | null) => void;
 }) {
   const { plan, sections, pending, ignored, totals } = progress;
   const choices = sectionChoices(progress);
+  const [selected, setSelected] = useState<string>("total");
+  const [sourceOpen, setSourceOpen] = useState(false);
   const inferredTitle = plan.titleInference;
+  const totalGap =
+    totals.required !== null
+      ? Math.max(0, totals.required - totals.earned - totals.inProgress)
+      : null;
+  const current =
+    selected === "total" ? null : sections.find((s) => s.id === selected);
+  const hasEnglishRange = sections.some((s) =>
+    s.children.some(
+      (c) => /英语/.test(c.name) && c.min !== undefined && c.min !== c.max,
+    ),
+  );
+  const pageLabels = plan.source.pageLabels;
   return (
     <section
       className={`resource curriculum-plan ${secondary ? "secondary" : ""}`}
@@ -365,62 +399,85 @@ function ProgressView({
             {inferredTitle
               ? ` · 专业名按 ${inferredTitle.from} 版推断，请核对`
               : ""}
-            {plan.warnings.length
-              ? ` · 该方案有 ${plan.warnings.length} 处解析警告`
-              : ""}
           </p>
         </div>
+        <Button variant="quiet" onClick={() => setSourceOpen(true)}>
+          原文 PDF
+          {pageLabels ? ` · 书页 ${pageLabels[0]}–${pageLabels[1]}` : ""}
+        </Button>
       </div>
-      <div className="study-metrics grade-metrics">
-        <div>
-          <span>已获学分</span>
-          <strong>{fmt(totals.earned)}</strong>
-          <span>按已通过成绩汇总</span>
-        </div>
-        <div>
-          <span>在修学分</span>
-          <strong>{fmt(totals.inProgress)}</strong>
-          <span>本学期与未出分课程</span>
-        </div>
-        <div>
-          <span>毕业总学分</span>
-          <strong>{totals.required ?? "—"}</strong>
-          <span>
-            {totals.required
-              ? `还差 ${fmt(Math.max(0, totals.required - totals.earned - totals.inProgress))}`
-              : "方案未标注"}
-          </span>
-        </div>
-        {pending.length > 0 && (
-          <div>
-            <span>待确认</span>
-            <strong>{pending.length}</strong>
-            <span>门课未能归类</span>
-          </div>
-        )}
+      <CurriculumSource
+        plan={plan}
+        open={sourceOpen}
+        onClose={() => setSourceOpen(false)}
+      />
+      <div className="ring-grid" role="tablist" aria-label="学分系列">
+        <RingCard
+          id="total"
+          name="毕业总学分"
+          value={totals.earned}
+          pending={totals.inProgress}
+          target={totals.required}
+          unit="学分"
+          detail={
+            totals.required === null
+              ? "方案未标注总学分"
+              : totalGap === 0
+                ? "已满足"
+                : `在修 ${fmt(totals.inProgress)} · 还差 ${fmt(totalGap!)}`
+          }
+          selected={selected === "total"}
+          onSelect={() => setSelected("total")}
+        />
+        {sections.map((s) => {
+          const m = measure(s);
+          return (
+            <RingCard
+              key={s.id}
+              id={s.id}
+              name={s.name}
+              value={m.value}
+              pending={m.pending}
+              target={s.min ?? null}
+              unit={m.unit}
+              detail={
+                s.min === undefined
+                  ? "方案未标注要求"
+                  : m.pending
+                    ? `在修 ${fmt(m.pending)} · ${gapText(s)}`
+                    : gapText(s)
+              }
+              selected={selected === s.id}
+              onSelect={() => setSelected(s.id)}
+            />
+          );
+        })}
       </div>
       {totals.unknownCredits > 0 && (
         <p className="subtle">
           有 {totals.unknownCredits} 门课的学分未知，未计入合计。
         </p>
       )}
-      <div className="table-scroll">
-        <table className="curriculum-table">
-          <thead>
-            <tr>
-              <th>学分系列</th>
-              <th>要求</th>
-              <th className="numeric">已获</th>
-              <th className="numeric">在修</th>
-              <th className="numeric">缺口</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sections.map((top) => (
-              <SectionRows key={top.id} section={top} depth={0} />
-            ))}
-          </tbody>
-        </table>
+      {hasEnglishRange && !englishChosen && (
+        <p className="subtle curriculum-hint">
+          大学英语按分级修 2～8
+          学分。在“修改年级与专业”里选择你的英语分级后，这里会按分级固定英语学分，差额计入通识教育课。
+        </p>
+      )}
+      <div
+        className="section-detail"
+        role="tabpanel"
+        aria-label={current ? `${current.name}明细` : "全部学分系列明细"}
+      >
+        {current ? (
+          current.children.length > 0 ? (
+            current.children.map((c) => <DetailRow key={c.id} section={c} />)
+          ) : (
+            <CourseList courses={current.courses} />
+          )
+        ) : (
+          sections.map((s) => <DetailRow key={s.id} section={s} top />)
+        )}
       </div>
       {pending.length > 0 && (
         <div className="curriculum-pending">
@@ -486,7 +543,12 @@ function ProgressView({
       )}
       {(plan.notes.length > 0 || plan.warnings.length > 0) && (
         <details className="settings-explanation">
-          <summary>方案原文备注与数据说明</summary>
+          <summary>
+            方案原文备注与数据说明
+            {plan.warnings.length
+              ? `（${plan.warnings.length} 处解析警告）`
+              : ""}
+          </summary>
           {plan.notes.length > 0 && (
             <ul className="curriculum-notes">
               {plan.notes.slice(0, 40).map((n, i) => (
@@ -504,100 +566,156 @@ function ProgressView({
               </ul>
             </>
           )}
-          <button
-            className="text-button"
-            onClick={() =>
-              void action({ kind: "openLink", url: plan.source.url })
-            }
-          >
-            下载原文 PDF（{plan.volume}）
-          </button>
         </details>
       )}
     </section>
   );
 }
 
-function SectionRows({
+function RingCard({
+  id,
+  name,
+  value,
+  pending,
+  target,
+  unit,
+  detail,
+  selected,
+  onSelect,
+}: {
+  id: string;
+  name: string;
+  value: number;
+  pending: number;
+  target: number | null;
+  unit: string;
+  detail: string;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const complete = target !== null && value >= target;
+  return (
+    <button
+      type="button"
+      role="tab"
+      id={`ring-${id}`}
+      aria-selected={selected}
+      className={`ring-card ${selected ? "selected" : ""}`}
+      onClick={onSelect}
+    >
+      <CurriculumRing
+        value={value}
+        pending={pending}
+        target={target}
+        complete={complete}
+      >
+        <strong>{fmt(value)}</strong>
+        <small>{target !== null ? `/ ${fmt(target)}` : unit}</small>
+      </CurriculumRing>
+      <span className="ring-name">{name}</span>
+      <span className={`ring-detail ${complete ? "complete" : ""}`}>
+        {detail}
+      </span>
+    </button>
+  );
+}
+
+function DetailRow({
   section,
-  depth,
+  top = false,
 }: {
   section: ProgressSection;
-  depth: number;
+  top?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const m = measure(section);
+  const target = section.min ?? null;
+  const ratio = (n: number) => (target ? Math.min(100, (100 * n) / target) : 0);
   const g = gap(section);
+  const complete = g === 0 && target !== null;
   const hasCourses = section.courses.length > 0;
+  const hasChildren = section.children.length > 0;
   return (
-    <>
-      <tr
-        className={`depth-${depth} ${g === 0 && section.min !== undefined ? "complete" : ""}`}
-      >
-        <td>
-          {hasCourses ? (
-            <button
-              className="text-button section-toggle"
-              aria-expanded={open}
-              onClick={() => setOpen(!open)}
-            >
-              {open ? "▾" : "▸"} {section.name}
-              <span className="subtle"> {section.courses.length} 门</span>
-            </button>
-          ) : (
-            <span className="section-name">{section.name}</span>
-          )}
-          {section.note && <span className="subtle"> · {section.note}</span>}
-        </td>
-        <td className="subtle">{requirementText(section)}</td>
-        <td className="numeric">
-          {section.unit === "门" ? section.passedCount : fmt(section.earned)}
-        </td>
-        <td className="numeric">
-          {section.inProgress ? fmt(section.inProgress) : "—"}
-        </td>
-        <td className="numeric">
-          {section.unit && section.unit !== "学分"
-            ? "—"
-            : g === null
-              ? "—"
-              : g === 0
-                ? "已满足"
-                : fmt(g)}
-        </td>
-      </tr>
-      {open &&
-        section.courses.map((c) => (
-          <tr key={c.key} className="course-row">
-            <td colSpan={2}>
-              <span className="course-indent">{c.name}</span>
-              <span className="subtle">
-                {" "}
-                · {c.term} · {c.via ? viaLabel[c.via] : ""}
-              </span>
-            </td>
-            <td className="numeric">
-              {c.status === "passed"
-                ? c.credits !== null
-                  ? fmt(c.credits)
-                  : "?"
-                : "—"}
-            </td>
-            <td className="numeric">
-              {c.status === "inProgress"
-                ? c.credits !== null
-                  ? fmt(c.credits)
-                  : "?"
-                : "—"}
-            </td>
-            <td className="subtle">
-              {statusLabel[c.status]}
-              {c.score && c.status !== "inProgress" ? ` ${c.score}` : ""}
-            </td>
-          </tr>
-        ))}
-      {section.children.map((child) => (
-        <SectionRows key={child.id} section={child} depth={depth + 1} />
+    <div
+      className={`detail-row ${top ? "top" : ""} ${complete ? "complete" : ""}`}
+    >
+      <div className="detail-main">
+        <div className="detail-title">
+          <span className="detail-name">{section.name}</span>
+          {section.requirement || target !== null ? (
+            <span className="subtle">{requirementText(section)}</span>
+          ) : null}
+          {section.note && <span className="subtle">· {section.note}</span>}
+        </div>
+        <div className="detail-bar" aria-hidden="true">
+          <i
+            className="pending"
+            style={{ width: `${ratio(m.value + m.pending)}%` }}
+          />
+          <i className="done" style={{ width: `${ratio(m.value)}%` }} />
+        </div>
+      </div>
+      <div className="detail-numbers">
+        <strong>{fmt(m.value)}</strong>
+        <span className="subtle">
+          {target !== null ? ` / ${fmt(target)} ${m.unit}` : ` ${m.unit}`}
+        </span>
+        {m.pending > 0 && (
+          <span className="subtle"> · 在修 {fmt(m.pending)}</span>
+        )}
+        <span className={`detail-gap ${complete ? "complete" : ""}`}>
+          {gapText(section)}
+        </span>
+      </div>
+      {(hasCourses || hasChildren) && (
+        <button
+          type="button"
+          className="text-button detail-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >
+          {open
+            ? "收起"
+            : hasChildren
+              ? `${section.children.length} 个系列`
+              : `${section.courses.length} 门课`}
+        </button>
+      )}
+      {open && hasChildren && (
+        <div className="detail-children">
+          {section.children.map((c) => (
+            <DetailRow key={c.id} section={c} />
+          ))}
+        </div>
+      )}
+      {open && !hasChildren && hasCourses && (
+        <CourseList courses={section.courses} />
+      )}
+    </div>
+  );
+}
+
+function CourseList({ courses }: { courses: MatchedCourse[] }) {
+  if (courses.length === 0)
+    return <p className="subtle course-list-empty">还没有归到这里的课。</p>;
+  return (
+    <ul className="course-list">
+      {courses.map((c) => (
+        <li key={c.key}>
+          <span className="course-name">{c.name}</span>
+          <span className="subtle">
+            {c.term}
+            {c.via ? ` · ${viaLabel[c.via]}` : ""}
+          </span>
+          <span className={`course-status ${c.status}`}>
+            {statusLabel[c.status]}
+            {c.score && c.status !== "inProgress" ? ` ${c.score}` : ""}
+          </span>
+          <strong className="course-credits">
+            {c.credits !== null ? fmt(c.credits) : "?"}
+          </strong>
+        </li>
       ))}
-    </>
+    </ul>
   );
 }
