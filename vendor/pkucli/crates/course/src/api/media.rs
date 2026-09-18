@@ -264,8 +264,10 @@ impl CourseApi {
             total: detail.playlist.segments.len(),
         });
         let rendered = dir.join("rendered.mp4");
-        let mut child = tokio::process::Command::new(ffmpeg)
-            .args([
+        let mut command = tokio::process::Command::new(ffmpeg);
+        #[cfg(windows)]
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        let mut child = command.args([
                 "-nostdin",
                 "-n",
                 "-hide_banner",

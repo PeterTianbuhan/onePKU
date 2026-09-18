@@ -1,3 +1,4 @@
+import { trashName } from "../lib/platform";
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { FileText, FolderOpen, Plus, RefreshCw } from "lucide-react";
@@ -100,7 +101,7 @@ export default function LocalMaterials({
       await action({ kind, course, id: file.id });
       if (kind === "trashLocalMaterial") {
         setConfirm(undefined);
-        setMessage(`已将「${file.name}」移到废纸篓`);
+        setMessage(`已将「${file.name}」移到${trashName()}`);
         await q.refetch();
       }
     } catch (e) {
@@ -147,7 +148,7 @@ export default function LocalMaterials({
         </button>
         {confirm === file.id ? (
           <div className="local-material-confirm">
-            <span>移到废纸篓？</span>
+            <span>移到{trashName()}？</span>
             <Button
               autoFocus
               variant="quiet"
@@ -160,7 +161,7 @@ export default function LocalMaterials({
               disabled={!!busy}
               onClick={() => void operate("trashLocalMaterial", file)}
             >
-              移到废纸篓
+              移到{trashName()}
             </Button>
           </div>
         ) : (
@@ -180,7 +181,7 @@ export default function LocalMaterials({
               onClick={() => setConfirm(file.id)}
               aria-label={`删除 ${file.name}`}
             >
-              移到废纸篓
+              移到{trashName()}
             </Button>
           </ActionMenu>
         )}

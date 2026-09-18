@@ -28,7 +28,7 @@ export default function WriteOperations() {
                   : "暂无记录"}
         </span>
       </summary>
-      <p className="footnote">提交结果保存在此 Mac，重启后可继续核对。</p>
+      <p className="footnote">提交结果保存在本机，重启后可继续核对。</p>
       {q.error ? (
         <p className="inline-error">暂时无法读取操作记录</p>
       ) : !q.data?.length ? (

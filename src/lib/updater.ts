@@ -21,7 +21,19 @@ export function inApp(): boolean {
 /** 返回 null 表示已是最新。 */
 export async function checkForUpdate(): Promise<UpdateHandle | null> {
   const { check } = await import("@tauri-apps/plugin-updater");
-  const update = await check({ timeout: 20_000 });
+  const update = await check({ timeout: 20_000 }).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      message.includes("platforms") &&
+      (message.includes("not found") ||
+        message.includes("None of the fallback"))
+    ) {
+      throw new Error(
+        "此版本尚未提供当前系统的更新包，请稍后重试或查看 Releases。",
+      );
+    }
+    throw error;
+  });
   if (!update) return null;
   return {
     version: update.version,

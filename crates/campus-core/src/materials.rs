@@ -1,9 +1,9 @@
 //! Course-local files: OS-selected imports and ID-scoped open/trash operations.
+use crate::platform::PrivateOpenOptions;
 use super::*;
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::{Read, Write},
-    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
 };
 
@@ -27,8 +27,8 @@ fn checked_directory(path: &Path) -> Result<()> {
     // Refuse linked archive directories; file operations never escape the course folder.
     for parent in path.ancestors().collect::<Vec<_>>().into_iter().rev() {
         match fs::symlink_metadata(parent) {
-            Ok(meta) if meta.is_dir() && !meta.is_symlink() => {}
-            Ok(_) => bail!("LOCAL_MATERIAL: 资料目录已变化，请在 Finder 检查文件夹"),
+            Ok(meta) if meta.is_dir() && !platform::is_link(&meta) => {}
+            Ok(_) => bail!("LOCAL_MATERIAL: 资料目录已变化，请在文件管理器检查文件夹"),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => fs::create_dir(parent)?,
             Err(e) => return Err(e.into()),
         }
@@ -44,7 +44,7 @@ fn sidecar(path: &Path) -> PathBuf {
 }
 fn source_label(path: &Path) -> &'static str {
     let meta = sidecar(path);
-    if fs::symlink_metadata(&meta).is_ok_and(|m| m.is_file() && !m.is_symlink() && m.len() <= 65536)
+    if fs::symlink_metadata(&meta).is_ok_and(|m| m.is_file() && !platform::is_link(&m) && m.len() <= 65536)
     {
         if let Ok(value) = fs::read(&meta)
             .and_then(|b| serde_json::from_slice::<Value>(&b).map_err(std::io::Error::other))
@@ -73,7 +73,7 @@ fn source_label(path: &Path) -> &'static str {
 fn source_attachment(path: &Path, generation: &str, course: Option<&Value>) -> Option<String> {
     let meta = sidecar(path);
     let stat = fs::symlink_metadata(&meta).ok()?;
-    if !stat.is_file() || stat.is_symlink() || stat.len() > 65536 {
+    if !stat.is_file() || platform::is_link(&stat) || stat.len() > 65536 {
         return None;
     }
     let value: Value = serde_json::from_slice(&fs::read(meta).ok()?).ok()?;
@@ -108,20 +108,18 @@ fn source_attachment(path: &Path, generation: &str, course: Option<&Value>) -> O
 
 fn file_id(path: &Path, generation: &str) -> Result<String> {
     let meta = fs::symlink_metadata(path)?;
-    if !meta.is_file() || meta.is_symlink() {
+    if !meta.is_file() || platform::is_link(&meta) {
         bail!("LOCAL_MATERIAL: 资料已变化，请刷新后重试");
     }
     Ok(format!(
         "{:x}",
         Sha256::digest(format!(
-            "{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{:?}|{}|{:?}",
             generation,
             path.display(),
-            meta.dev(),
-            meta.ino(),
+            platform::file_identity(&platform::open_regular_file(path)?)?,
             meta.len(),
-            meta.mtime(),
-            meta.mtime_nsec()
+            meta.modified()?
         ))
     ))
 }
@@ -135,10 +133,10 @@ fn scan(dir: &Path, generation: &str, course: Option<&Value>) -> Result<Vec<Valu
             continue;
         };
         let meta = fs::symlink_metadata(&path)?;
-        if !meta.is_file() || meta.is_symlink() {
+        if !meta.is_file() || platform::is_link(&meta) {
             continue;
         }
-        rows.push(json!({"id":file_id(&path, generation)?, "name":name, "bytes":meta.len(), "modified":meta.mtime(), "source":source_label(&path), "downloadId":source_attachment(&path, generation, course)}));
+        rows.push(json!({"id":file_id(&path, generation)?, "name":name, "bytes":meta.len(), "modified":meta.modified()?.duration_since(std::time::UNIX_EPOCH)?.as_secs(), "source":source_label(&path), "downloadId":source_attachment(&path, generation, course)}));
     }
     rows.sort_by(|a, b| {
         b["modified"]
@@ -174,15 +172,15 @@ fn import_file(dir: &Path, source: &Path, course: &Value) -> Result<(Value, bool
     checked_directory(dir)?;
     let name = checked_name(source)?;
     let original = fs::symlink_metadata(source)?;
-    if !original.is_file() || original.is_symlink() {
+    if !original.is_file() || platform::is_link(&original) {
         bail!("LOCAL_MATERIAL: 请选择普通文件，暂不支持文件夹或替身");
     }
     if original.len() > MAX_FILE {
         bail!("LOCAL_MATERIAL: 单份资料不能超过 2 GB");
     }
-    let mut input = File::open(source)?;
+    let mut input = platform::open_regular_file(source)?;
     let opened = input.metadata()?;
-    if opened.ino() != original.ino() || opened.dev() != original.dev() {
+    if platform::file_identity(&input)? != platform::file_identity(&platform::open_regular_file(source)?)? {
         bail!("LOCAL_MATERIAL: 文件已变化，请重新选择");
     }
     let temp = Temporary(dir.join(format!(
@@ -192,7 +190,7 @@ fn import_file(dir: &Path, source: &Path, course: &Value) -> Result<(Value, bool
     let mut output = OpenOptions::new()
         .write(true)
         .create_new(true)
-        .mode(0o600)
+        .private_mode()
         .open(&temp.0)?;
     let mut hash = Sha256::new();
     let mut buffer = [0u8; 65536];
@@ -212,21 +210,20 @@ fn import_file(dir: &Path, source: &Path, course: &Value) -> Result<(Value, bool
     let after = input.metadata()?;
     if size != opened.len()
         || after.len() != opened.len()
-        || after.mtime() != opened.mtime()
-        || after.mtime_nsec() != opened.mtime_nsec()
+        || after.modified()? != opened.modified()?
     {
         bail!("LOCAL_MATERIAL: 文件在添加过程中发生变化，请保存后重新添加");
     }
     output.sync_all()?;
     let digest = format!("{:x}", hash.finalize());
     let path = downloads::finish_archive(&temp.0, dir, &name, &digest)?;
-    let reused = path.metadata()?.ino() != output.metadata()?.ino();
+    let reused = platform::file_identity(&platform::open_regular_file(&path)?)? != platform::file_identity(&output)?;
     // Keep existing provenance when an identical teaching download is reused.
     let metadata = json!({"name":path.file_name().unwrap().to_string_lossy(),"course":course["name"],"courseId":course["id"],"semester":course["semester"],"source":"local","sha256":digest,"size":size,"addedAt":chrono::Utc::now().to_rfc3339()});
     match OpenOptions::new()
         .write(true)
         .create_new(true)
-        .mode(0o600)
+        .private_mode()
         .open(sidecar(&path))
     {
         Ok(mut f) => {
@@ -321,12 +318,8 @@ impl Core {
             bail!("LOCAL_MATERIAL: 账号已变化，请刷新课程");
         }
         let path = resolve(&dir, &generation, id)?;
-        let status = std::process::Command::new("/usr/bin/open")
-            .arg(&path)
-            .status()?;
-        if !status.success() {
-            bail!("LOCAL_MATERIAL: 无法打开这份资料，请在文件夹中查看");
-        }
+        platform::open(path.as_os_str())
+            .map_err(|_| anyhow!("LOCAL_MATERIAL: 无法打开这份资料，请在文件夹中查看"))?;
         Ok(json!({"opened":true}))
     }
     pub(crate) async fn read_local_material(&self, course: &str, id: &str) -> Result<Value> {
@@ -348,7 +341,7 @@ impl Core {
             _ => bail!("LOCAL_MATERIAL: 此格式请用默认应用打开"),
         };
         const LIMIT: u64 = 32 * 1024 * 1024;
-        let file = OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(&path)?;
+        let file = platform::open_regular_file(&path)?;
         if file.metadata()?.len() > LIMIT {
             bail!("LOCAL_MATERIAL: 超过 32 MB，请用默认应用打开");
         }
@@ -367,12 +360,16 @@ impl Core {
             bail!("LOCAL_MATERIAL: 账号已变化，请刷新课程");
         }
         let path = resolve(&dir, &generation, id)?;
+        #[cfg(target_os = "macos")]
         use trash::macos::{DeleteMethod, TrashContextExtMacos};
-        let mut trash = trash::TrashContext::default();
+        let trash = trash::TrashContext::default();
+        #[cfg(target_os = "macos")]
+        let mut trash = trash;
+        #[cfg(target_os = "macos")]
         trash.set_delete_method(DeleteMethod::NsFileManager);
         trash
             .delete(&path)
-            .map_err(|_| anyhow!("LOCAL_MATERIAL: 未能移到废纸篓，文件仍保留，请重试"))?;
+            .map_err(|_| anyhow!("LOCAL_MATERIAL: 未能移到回收站，文件仍保留，请重试"))?;
         // Retain provenance if the user restores this file from the Trash.
         Ok(json!({"trashed":true}))
     }
@@ -415,6 +412,19 @@ mod tests {
         assert!(scan(&root, "account-a", None).unwrap()[0]["downloadId"].is_null());
         fs::write(sidecar(&file), r#"{"source":"https://example.com/lecture.pdf","course":"测试课 _1_1","semester":"26-27-1"}"#.as_bytes()).unwrap();
         assert!(source_attachment(&file, "account-a", None).is_none());
+    }
+    #[test]
+    fn custom_download_root_supports_nested_unicode_archives() {
+        let temp = tempfile::tempdir().unwrap();
+        let chosen = temp.path().join("自选目录 & 100%");
+        fs::create_dir(&chosen).unwrap();
+        let validated = downloads::validate_download_root(&chosen).unwrap();
+        let archive = validated.join("26-27-1").join("中文课");
+        checked_directory(&archive).unwrap();
+        let source = temp.path().join("讲义.txt");
+        fs::write(&source, "内容").unwrap();
+        import_file(&archive, &source, &json!({})).unwrap();
+        assert_eq!(scan(&archive, "account", None).unwrap().len(), 1);
     }
     #[test]
     fn imports_copy_deduplicate_and_preserve_conflicting_names_and_originals() {
@@ -460,11 +470,14 @@ mod tests {
         assert!(resolve(&a, "account", "../../outside").is_err());
         fs::write(&file, "changed notes").unwrap();
         assert!(resolve(&a, "account", &id).is_err());
+        #[cfg(unix)]
+        {
         std::os::unix::fs::symlink(&file, b.join("link.txt")).unwrap();
         assert!(scan(&b, "account", None).unwrap().is_empty());
         assert!(import_file(&b, &b.join("link.txt"), &json!({})).is_err());
         let linked = root.join("linked");
         std::os::unix::fs::symlink(&a, &linked).unwrap();
         assert!(scan(&linked, "account", None).is_err());
+        }
     }
 }

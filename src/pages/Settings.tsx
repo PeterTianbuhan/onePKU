@@ -278,7 +278,18 @@ export default function Settings({
                   恢复默认
                 </button>
               )}
-              <Button onClick={() => void action({ kind: "openDownloadRoot" })}>
+              <Button
+                onClick={() => {
+                  setStorageError("");
+                  void action({ kind: "openDownloadRoot" }).catch(
+                    (e: unknown) =>
+                      setStorageError(
+                        "未能打开保存位置：" +
+                          (e instanceof Error ? e.message : String(e)),
+                      ),
+                  );
+                }}
+              >
                 打开
               </Button>
               {inApp && (

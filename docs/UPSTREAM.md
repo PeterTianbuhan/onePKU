@@ -45,3 +45,10 @@ Core error classification now recognizes the campus-card library's exact `登录
 ### 课程通知与作业反馈
 
 在 vendored PKU CLI 上保留公告原始 ID、课程 ID 和原文地址；课程原文通过原生 WebView 的 Cookie API 复用目标域会话，JavaScript 无凭证接口。根据 PkuClaw 公开 Blackboard 选择器与实际页面独立编写反馈读取模块，按 mode=view 查询分数、反馈、历史尝试与已交文件。历史 URL 重新构建并限制课程/作业范围及只读参数；已交文件只允许明确的 assignment/download 路径，按课程注册后复用下载队列。未复制上游提交实现、未改全局 CLI 或贡献候选。
+
+### Windows 移植增量
+
+- `common/src/session.rs`：仅在 Unix 设置 0600；所有平台在原子替换前关闭临时文件和 Cookie writer。Windows 继承用户配置目录 ACL；会话格式和目录选择逻辑不变。
+- `course/src/api/media.rs`：Windows 调用 ffmpeg 时使用 CREATE_NO_WINDOW；参数列表、取消逻辑和网络白名单不变。
+- 新增临时目录内的会话/Cookie 覆盖写入测试，不读写真实账号。
+- 增量候选见 `contributions/pkucli-windows.patch`；它基于 OnePKU 初始提交的 vendor 快照，而不是可直接套用到裸上游的完整独立 PR。贡献前仍需按当前上游代码移植并跑测试。

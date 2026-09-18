@@ -1,8 +1,8 @@
+use crate::platform::PrivateOpenOptions;
 use super::*;
 use std::{
     fs::OpenOptions,
     io::Write,
-    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -59,7 +59,20 @@ pub fn safe_filename(s: &str) -> Result<String> {
     {
         bail!("invalid filename")
     }
+    #[cfg(windows)]
+    if s.ends_with('.') || s.chars().any(|c| "<>\"|?*".contains(c)) || windows_reserved(s) {
+        bail!("invalid Windows filename");
+    }
     Ok(s.into())
+}
+fn windows_reserved(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        || ["COM", "LPT"].iter().any(|prefix| {
+            stem.strip_prefix(prefix).is_some_and(|suffix| {
+                matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³")
+            })
+        })
 }
 pub(crate) fn allowed_url(s: &str) -> bool {
     url::Url::parse(s).is_ok_and(|u| {
@@ -142,14 +155,17 @@ pub(crate) fn validate_download_root(path: &std::path::Path) -> Result<PathBuf> 
     if !path.is_absolute() {
         bail!("请选择一个完整路径的文件夹");
     }
-    let meta = std::fs::metadata(path).map_err(|_| anyhow!("文件夹不存在或无法访问"))?;
-    if !meta.is_dir() {
-        bail!("所选位置不是文件夹");
+    let meta = std::fs::symlink_metadata(path).map_err(|_| anyhow!("文件夹不存在或无法访问"))?;
+    if !meta.is_dir() || crate::platform::is_link(&meta) {
+        bail!("请选择普通文件夹，不支持链接或重解析点");
     }
     let probe = path.join(format!(".onepku-write-test-{}", rand::random::<u64>()));
-    std::fs::write(&probe, b"").map_err(|_| anyhow!("这个文件夹不可写"))?;
+    let file = std::fs::OpenOptions::new().write(true).create_new(true)
+        .private_mode().open(&probe).map_err(|_| anyhow!("这个文件夹不可写"))?;
+    drop(file);
     let _ = std::fs::remove_file(&probe);
-    Ok(path.canonicalize()?)
+    // Keep ordinary Windows drive/UNC paths usable by Explorer and the folder picker.
+    Ok(dunce::canonicalize(path)?)
 }
 /// 当前生效的保存目录：偏好里有合法值就用它，否则回到默认。
 pub(crate) fn download_root() -> Result<PathBuf> {
@@ -166,10 +182,11 @@ pub(crate) fn download_root() -> Result<PathBuf> {
 }
 pub(crate) fn download_root_info() -> Value {
     let effective = download_root().ok();
-    let default = default_download_root().ok();
+    let normalize = |p: PathBuf| dunce::canonicalize(&p).unwrap_or(p);
+    let is_default = effective.clone().map(normalize) == default_download_root().ok().map(normalize);
     json!({
         "downloadRoot": effective.as_ref().map(|p| p.to_string_lossy().to_string()),
-        "downloadRootIsDefault": effective.is_some() && effective == default,
+        "downloadRootIsDefault": effective.is_some() && is_default,
     })
 }
 pub(crate) fn set_download_root(path: Option<&std::path::Path>) -> Result<Value> {
@@ -195,7 +212,7 @@ pub(crate) fn folder_component(s: &str) -> String {
     let v: String = s
         .chars()
         .map(|c| {
-            if c.is_control() || "/\\:".contains(c) {
+            if c.is_control() || "/\\:".contains(c) || (cfg!(windows) && "<>\"|?*".contains(c)) {
                 '_'
             } else {
                 c
@@ -203,9 +220,11 @@ pub(crate) fn folder_component(s: &str) -> String {
         })
         .take(65)
         .collect();
-    let v = v.trim().trim_matches('.');
+    let v = v.trim().trim_matches('.').trim();
     if v.is_empty() {
         "课程".into()
+    } else if cfg!(windows) && windows_reserved(v) {
+        format!("_{v}")
     } else {
         v.into()
     }
@@ -544,7 +563,7 @@ impl Core {
         match OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .private_mode()
             .open(sidecar)
         {
             Ok(mut f) => {
@@ -603,7 +622,7 @@ impl Core {
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .private_mode()
             .open(&temp)?;
         struct Cleanup(PathBuf);
         impl Drop for Cleanup {
@@ -643,7 +662,7 @@ impl Core {
         match OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .private_mode()
             .open(sidecar)
         {
             Ok(mut out) => {
@@ -697,6 +716,26 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn windows_device_names_are_recognized_without_rejecting_ordinary_names() {
+        for name in ["CON", "con.txt", "NUL.json", "AUX", "COM1", "LPT9.txt", "COM¹.txt", "con .txt"] {
+            assert!(windows_reserved(name), "{name}");
+        }
+        for name in ["课程.pdf", "console.txt", "COM10.txt", "LPT0", "auxiliary.md"] {
+            assert!(!windows_reserved(name), "{name}");
+        }
+    }
+    #[cfg(windows)]
+    #[test]
+    fn windows_archive_names_cannot_target_devices_or_alternate_streams() {
+        for name in ["CON.txt", "NUL", "name:stream", "a?b.txt", "a*b.txt", "a|b", "a\"b", "trailing."] {
+            assert!(safe_filename(name).is_err(), "{name}");
+        }
+        assert_eq!(safe_filename("讲义 & 100%.pdf").unwrap(), "讲义 & 100%.pdf");
+        assert_eq!(folder_component("CON"), "_CON");
+        assert_eq!(folder_component("课程 <一> | ?"), "课程 _一_ _ _");
+    }
+
     #[test]
     fn download_root_validation_rejects_relative_missing_and_files() {
         let dir = tempfile::tempdir().unwrap();

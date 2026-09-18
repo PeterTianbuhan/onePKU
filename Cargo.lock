@@ -709,6 +709,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "directories",
+ "dunce",
  "fs2",
  "futures",
  "libc",
@@ -733,6 +734,7 @@ dependencies = [
  "tokio",
  "trash",
  "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

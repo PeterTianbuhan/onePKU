@@ -16,6 +16,7 @@ mod maintenance;
 mod materials;
 mod news;
 mod playback;
+mod platform;
 mod reminders;
 mod storage;
 mod study;
@@ -571,7 +572,7 @@ impl Core {
             Request::OpenDownloadRoot => {
                 let dir = downloads::download_root()?;
                 std::fs::create_dir_all(&dir)?;
-                std::process::Command::new("/usr/bin/open").arg(dir).spawn()?;
+                platform::open(dir.as_os_str())?;
                 json!({"opened":true})
             }
             Request::SetKeepAlive { enabled } => {
@@ -582,9 +583,7 @@ impl Core {
             Request::SetProfile { profile } => self.save_profile(profile)?,
             Request::OpenArchive { course } => {
                 let dir = self.material_directory(course).await?;
-                std::process::Command::new("/usr/bin/open")
-                    .arg(dir)
-                    .spawn()?;
+                platform::open(dir.as_os_str())?;
                 json!({"opened":true})
             }
             Request::LocalMaterials { course } => self.local_materials(course).await?,
@@ -797,9 +796,7 @@ impl Core {
             Request::DownloadCancel { id } => self.download_cancel(id)?,
             Request::Open { target } => {
                 let url = official_target(target)?;
-                std::process::Command::new("/usr/bin/open")
-                    .arg(url)
-                    .spawn()?;
+                platform::open(std::ffi::OsStr::new(url))?;
                 json!({"opened":true})
             }
         };
