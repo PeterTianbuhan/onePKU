@@ -1,5 +1,5 @@
 import { trashName } from "../lib/platform";
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { FileText, FolderOpen, Plus, RefreshCw } from "lucide-react";
 import {
@@ -9,7 +9,16 @@ import {
   type Content,
   type Attachment,
 } from "../lib/api";
-import { ActionMenu, AttachmentRow, Button, Resource, type Login } from "./ui";
+import {
+  ActionMenu,
+  AttachmentRow,
+  Button,
+  Modal,
+  Resource,
+  type Login,
+} from "./ui";
+
+const AttachmentPreview = lazy(() => import("./AttachmentPreview"));
 
 export type Material = {
   id: string;
@@ -41,6 +50,10 @@ export default function LocalMaterials({
   const [confirm, setConfirm] = useState<string>();
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [preview, setPreview] = useState<{
+    course: string;
+    file: Attachment;
+  }>();
   const files = q.data?.data ?? [];
   const entries = content.data?.data ?? [];
   const ids = new Set(
@@ -138,7 +151,14 @@ export default function LocalMaterials({
       <div className="local-material-row" key={file.id}>
         <button
           className="local-material-name"
-          onClick={() => void operate("openLocalMaterial", file)}
+          onClick={() =>
+            downloaded && file.downloadId
+              ? setPreview({
+                  course,
+                  file: { name: file.name, downloadId: file.downloadId },
+                })
+              : void operate("openLocalMaterial", file)
+          }
           disabled={!!busy}
         >
           <FileText size={18} />
@@ -286,7 +306,11 @@ export default function LocalMaterials({
                       {localFor(only).length ? (
                         localFor(only).map((local) => fileRow(local, true))
                       ) : (
-                        <AttachmentRow file={only} />
+                        <AttachmentRow
+                          file={only}
+                          course={course}
+                          onPreview={() => setPreview({ course, file: only })}
+                        />
                       )}
                     </div>
                   );
@@ -317,7 +341,12 @@ export default function LocalMaterials({
                             {localFor(f).map((local) => fileRow(local, true))}
                           </div>
                         ) : (
-                          <AttachmentRow key={i} file={f} course={course} />
+                          <AttachmentRow
+                            key={i}
+                            file={f}
+                            course={course}
+                            onPreview={() => setPreview({ course, file: f })}
+                          />
                         ),
                       )}
                     {!c.attachments.length && !c.description && (
@@ -358,6 +387,21 @@ export default function LocalMaterials({
             )
           }
         </Resource>
+      )}
+      {preview?.course === course && preview.file.downloadId && (
+        <Modal
+          title={preview.file.name}
+          open
+          wide
+          onClose={() => setPreview(undefined)}
+        >
+          <Suspense fallback={<p className="subtle">正在打开预览…</p>}>
+            <AttachmentPreview
+              course={course}
+              downloadId={preview.file.downloadId}
+            />
+          </Suspense>
+        </Modal>
       )}
     </section>
   );

@@ -334,12 +334,14 @@ export function Pager({
 export function AttachmentRow({
   file,
   course,
+  onPreview,
   request,
   extra,
   icon,
 }: {
   file: Attachment;
   course?: string;
+  onPreview?: () => void;
   request?: Request;
   extra?: ReactNode;
   icon?: ReactNode;
@@ -409,7 +411,7 @@ export function AttachmentRow({
         {course && file.downloadId ? (
           <button
             className="attachment-name text-button"
-            onClick={() => setPreview(true)}
+            onClick={() => (onPreview ? onPreview() : setPreview(true))}
             title="打开预览"
           >
             {file.name}
