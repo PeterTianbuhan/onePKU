@@ -52,3 +52,15 @@ Core error classification now recognizes the campus-card library's exact `登录
 - `course/src/api/media.rs`：Windows 调用 ffmpeg 时使用 CREATE_NO_WINDOW；参数列表、取消逻辑和网络白名单不变。
 - 新增临时目录内的会话/Cookie 覆盖写入测试，不读写真实账号。
 - 增量候选见 `contributions/pkucli-windows.patch`；它基于 OnePKU 初始提交的 vendor 快照，而不是可直接套用到裸上游的完整独立 PR。贡献前仍需按当前上游代码移植并跑测试。
+
+### 学期分组识别
+
+教学网当前课程分组补充识别「本学期」与不区分大小写、允许换行的英文标题；「非当前」和历史分组不再因包含 Current/当前而误判。增量及合成标题回归测试见 `contributions/pkucli-semester-labels.patch`，以本次修改前的 OnePKU vendor 快照为基线，回馈上游前需核对上游版本。此修复仍以学校分组为准，不按最新课程年份猜测在修状态。
+
+### 回放下载恢复
+
+`course/src/api/media.rs` 为桌面下载接收独立的恢复目录：完整 TS 分片原子落盘，失败/取消保留；缓存标识绑定播放列表并忽略临时 URL 查询签名，不落盘 URL 或密钥。短暂网络失败、429、5xx 最多尝试三次，401/403 保留明确提示；启动下载前检查 ffmpeg。新增中断恢复、损坏/HTML 分片拒收、临时签名更新和错误脱敏测试。仅修改 OnePKU 的 vendored 实现，未更新全局 CLI 或提交上游。
+
+播放与 MP4 下载现在共用恢复目录及播放列表指纹，通过进程内的异步分片锁合并并发请求；原子落盘后供两者读取，取消等待不会锁死后续请求。旧播放缓存只在账号、课程、视频及指纹匹配时导入，校验完整 TS 后优先硬链接；播放状态同步读取下载缓存。新增并发仅请求一次、取消恢复、旧缓存复用及下载分片无网络播放回归测试。
+
+完整 vendored 增量整理在 `contributions/pkucli-replay-cache.patch`，基线为 OnePKU `31beb7c`；其中已包含学期分组修复，不能再叠加独立学期补丁。双平台 CI 显式执行 `pku-course` 单元测试，覆盖共享下载与恢复逻辑；主工作区测试本身不会运行依赖包的单元测试。

@@ -882,6 +882,24 @@ select {
   flex: 1;
   overflow-wrap: anywhere;
 }
+.attachment-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.attachment-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.attachment-preview .search-file-preview canvas {
+  height: auto !important;
+  flex: none;
+}
+.attachment-preview .search-file-preview img {
+  max-width: 100%;
+}
 .attachment-line > svg {
   color: var(--primary);
 }

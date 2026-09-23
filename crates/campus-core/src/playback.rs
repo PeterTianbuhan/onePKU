@@ -30,6 +30,8 @@ struct Manifest {
     video: String,
     title: String,
     signature: String,
+    #[serde(default)]
+    cache_signature: Option<String>,
     parts: Vec<PartMeta>,
 }
 struct Progress {
@@ -40,8 +42,10 @@ pub(crate) struct Session {
     pub(crate) generation: String,
     pub(crate) subtitle_account: String,
     directory: PathBuf,
+    shared_directory: Option<PathBuf>,
     manifest: Manifest,
-    remote: Option<(CourseApi, PlaybackMedia)>,
+    remote: tokio::sync::OnceCell<std::result::Result<(CourseApi, PlaybackMedia), String>>,
+    core: std::sync::Weak<Core>,
     progress: Mutex<Progress>,
     locks: Vec<tokio::sync::Mutex<()>>,
     focus: AtomicUsize,
@@ -76,6 +80,72 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 fn part_path(directory: &Path, index: usize) -> PathBuf {
     directory.join(format!("{index:05}.ts"))
+}
+fn plain_directory(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|m| m.is_dir() && !platform::is_link(&m))
+}
+/// Adopt complete parts only from login generations previously bound to this
+/// verified account. Leave all originals in place and reject changed media.
+pub(crate) fn adopt_account_cache(cache: &Path, data: &Path, account: &str, course: &str, video: &str) -> Result<PathBuf> {
+    let key = format!("{:x}", Sha256::digest(format!("{course}|{video}")));
+    let destination = cache.join(account).join(&key);
+    let mut sources = accounts::bound_generations(data, account).into_iter()
+        .map(|g| cache.join(g).join(&key))
+        .filter(|p| *p != destination && plain_directory(p) && p.parent().is_some_and(plain_directory))
+        .filter_map(|p| saved_manifest(&p, course, video).map(|m| (p, m)))
+        .collect::<Vec<_>>();
+    sources.sort_by_key(|(p,_)| std::cmp::Reverse(fs::metadata(p.join("manifest.json")).and_then(|m|m.modified()).ok()));
+    let selected = saved_manifest(&destination, course, video)
+        .or_else(|| sources.first().map(|(_,m)|m.clone()));
+    let Some(manifest) = selected else { return Ok(destination); };
+    fs::create_dir_all(&destination)?;
+    if !plain_directory(&destination) || !destination.parent().is_some_and(plain_directory) {
+        bail!("回放缓存目录无效");
+    }
+    platform::private_directory(&destination)?;
+    if saved_manifest(&destination, course, video).is_none() {
+        write_private(&destination.join("manifest.json"), &serde_json::to_vec(&manifest)?)?;
+    }
+    for (source, old) in sources {
+        if old.signature != manifest.signature || old.parts.len() != manifest.parts.len()
+            || matches!((&old.cache_signature,&manifest.cache_signature),(Some(a),Some(b)) if a != b) { continue; }
+        let sizes = cache_sizes(&source, old.parts.len());
+        for (index, size) in sizes.into_iter().enumerate() {
+            if size == 0 { continue; }
+            let from = part_path(&source,index);
+            let to = part_path(&destination,index);
+            if to.exists() || !fs::symlink_metadata(&from).is_ok_and(|m| m.is_file() && !platform::is_link(&m)) { continue; }
+            // Immutable parts can be shared without duplicating large videos.
+            // If the filesystem cannot link, keep the source for a later retry.
+            let _ = fs::hard_link(from, to);
+        }
+    }
+    Ok(destination)
+}
+pub(crate) fn shared_cache_root(account: &str, course: &str, video: &str) -> Result<PathBuf> {
+    Ok(directories::ProjectDirs::from("me", "petertian", "OnePKU")
+        .ok_or_else(|| anyhow!("无法定位回放缓存"))?.cache_dir()
+        .join("video-downloads-v1").join(account)
+        .join(format!("{:x}", Sha256::digest(format!("{course}|{video}")))))
+}
+pub(crate) fn reuse_playback_parts(directory: &Path, shared: &Path, course: &str, video: &str,
+    signature: &str, legacy_signature: &str, count: usize) -> Result<()> {
+    let Some(old) = saved_manifest(directory, course, video) else { return Ok(()); };
+    if old.signature != legacy_signature || old.parts.len() != count
+        || old.cache_signature.as_deref().is_some_and(|s| s != signature) { return Ok(()); }
+    if !plain_directory(directory) || !directory.parent().is_some_and(plain_directory) { return Ok(()); }
+    for index in 0..count {
+        pku_course::api::reuse_media_part(&part_path(directory,index), &part_path(shared,index))?;
+    }
+    Ok(())
+}
+fn shared_directory(account: &str, manifest: &Manifest) -> Result<Option<PathBuf>> {
+    // A saved manifest is local data, not permission to choose an arbitrary path.
+    match manifest.cache_signature.as_deref() {
+        Some(s) if s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()) =>
+            Ok(Some(shared_cache_root(account, &manifest.course, &manifest.video)?.join(s))),
+        _ => Ok(None),
+    }
 }
 fn saved_manifest(directory: &Path, course: &str, video: &str) -> Option<Manifest> {
     let path = directory.join("manifest.json");
@@ -124,7 +194,38 @@ fn playlist(manifest: &Manifest) -> String {
     out.push_str("#EXT-X-ENDLIST\n");
     out
 }
+fn matches_media(manifest: &Manifest, media: &PlaybackMedia) -> bool {
+    manifest.signature == media.legacy_signature
+        && manifest.parts.len() == media.parts.len()
+        && manifest.cache_signature.as_ref().is_none_or(|s| *s == media.cache_signature)
+}
+fn focus_at(manifest: &Manifest, position: f64) -> usize {
+    let duration: f64 = manifest.parts.iter().map(|p| p.duration).sum();
+    if !position.is_finite() || position <= 0.0 || position >= duration - 5.0 { return 0; }
+    let mut end = 0.0;
+    manifest.parts.iter().position(|p| { end += p.duration; position < end }).unwrap_or(0)
+}
 impl Session {
+    async fn remote_media(&self) -> Result<&(CourseApi, PlaybackMedia)> {
+        // Only a missing part waits for school authorization. Cached parts and
+        // the local playlist never acquire this initialization lock.
+        let result = self.remote.get_or_init(|| async {
+            let resolved = async {
+                let core = self.core.upgrade().ok_or_else(|| anyhow!("这个片段尚未缓存，请联网后重试"))?;
+                let (api, media, _) = tokio::time::timeout(Duration::from_secs(60),
+                    core.resolve_playback(&self.manifest.course, &self.manifest.video))
+                    .await.map_err(|_| anyhow!("回放连接超时，已缓存的内容仍可播放；可重试连接"))?
+                    .map_err(|e| anyhow!("{}", problem(e).message))?;
+                if !self.valid() { bail!("播放会话已关闭，请重新打开回放"); }
+                if !matches_media(&self.manifest, &media) {
+                    bail!("回放版本已变化，请清除本节旧缓存后重新打开；旧缓存仍可播放");
+                }
+                Ok((api, media))
+            }.await;
+            resolved.map_err(|e: anyhow::Error| e.to_string())
+        }).await;
+        result.as_ref().map_err(|e| anyhow!("{e}"))
+    }
     pub(crate) fn subtitle_identity(&self) -> (&str, &str, &str) {
         (
             &self.manifest.course,
@@ -177,61 +278,58 @@ impl Session {
             && self.generation == fingerprint("course")
     }
     fn status(&self) -> Value {
-        let p = self.progress.lock().unwrap();
+        let mut p = self.progress.lock().unwrap();
+        if let Some(directory) = &self.shared_directory {
+            for (i,size) in cache_sizes(directory, p.sizes.len()).into_iter().enumerate() {
+                if size > 0 { p.sizes[i] = size; }
+            }
+        }
         let completed = p.sizes.iter().filter(|n| **n > 0).count();
+        if completed == p.sizes.len() { p.error.clear(); }
         json!({"completed":completed,"segments":p.sizes.len(),"bytes":p.sizes.iter().sum::<u64>(),
             "complete":completed==p.sizes.len(),"downloading":self.downloading.load(Ordering::Relaxed),
-            "message":p.error,"offline":self.remote.is_none()})
+            "message":p.error,"offline":self.remote.get().is_some_and(|r| r.is_err())
+                || (self.remote.get().is_none() && self.core.strong_count() == 0)})
     }
-    async fn part(&self, index: usize) -> Result<Vec<u8>> {
-        let _lock = self
-            .locks
-            .get(index)
-            .ok_or_else(|| anyhow!("invalid segment"))?
-            .lock()
-            .await;
-        if !self.valid() {
-            bail!("播放会话已关闭，请重新打开回放");
-        }
+    fn cached_part(&self, index: usize) -> Option<Vec<u8>> {
         let path = part_path(&self.directory, index);
+        if let Some(shared) = &self.shared_directory {
+            if let Some(bytes) = pku_course::api::cached_media_part(&part_path(shared,index)) {
+                self.progress.lock().unwrap().sizes[index] = bytes.len() as u64;
+                return Some(bytes);
+            }
+        }
         if !path.is_symlink() {
             if let Ok(bytes) = fs::read(&path) {
                 if !bytes.is_empty() && bytes.len() as u64 <= MAX_PART {
                     self.progress.lock().unwrap().sizes[index] = bytes.len() as u64;
-                    return Ok(bytes);
+                    return Some(bytes);
                 }
             }
         }
-        let (api, media) = self
-            .remote
-            .as_ref()
-            .ok_or_else(|| anyhow!("这个片段尚未缓存，请联网后重试"))?;
-        let mut bytes = None;
-        for attempt in 0..3 {
-            if !self.valid() {
-                bail!("播放已关闭");
-            }
-            match api.playback_part(&media.parts[index]).await {
-                Ok(value) => {
-                    bytes = Some(value);
-                    break;
-                }
-                Err(_) if attempt < 2 => {
-                    tokio::time::sleep(Duration::from_millis(400 * (attempt + 1))).await
-                }
-                Err(_) => {}
-            }
-        }
-        let bytes =
-            bytes.ok_or_else(|| anyhow!("网络暂时中断，已下载的片段仍可播放；可重试连接"))?;
+        None
+    }
+    async fn part(&self, index: usize) -> Result<Vec<u8>> {
+        let lock = self.locks.get(index).ok_or_else(|| anyhow!("invalid segment"))?;
+        if !self.valid() { bail!("播放会话已关闭，请重新打开回放"); }
+        if let Some(bytes) = self.cached_part(index) { return Ok(bytes); }
+        let _lock = lock.lock().await;
+        if !self.valid() { bail!("播放会话已关闭，请重新打开回放"); }
+        if let Some(bytes) = self.cached_part(index) { return Ok(bytes); }
+        let (api, media) = self.remote_media().await?;
+        // The media client retries transient errors. Keep its safe, specific
+        // failure so authorization errors are not disguised as network outages.
+        let bytes = if let Some(shared) = &self.shared_directory {
+            api.cached_playback_part(&media.parts[index], &part_path(shared,index)).await?
+        } else { api.playback_part(&media.parts[index]).await? };
         let mut progress = self.progress.lock().unwrap();
         if !self.valid() {
             bail!("播放已关闭");
         }
-        if progress.sizes.iter().sum::<u64>() + bytes.len() as u64 > MAX_VIDEO {
+        if progress.sizes.iter().sum::<u64>() - progress.sizes[index] + bytes.len() as u64 > MAX_VIDEO {
             bail!("本节回放缓存已达 8 GB");
         }
-        write_private(&path, &bytes)?;
+        if self.shared_directory.is_none() { write_private(&part_path(&self.directory, index), &bytes)?; }
         progress.sizes[index] = bytes.len() as u64;
         progress.error.clear();
         Ok(bytes)
@@ -357,6 +455,24 @@ fn serve(core: &Core, req: &tiny_http::Request, port: u16) -> Result<(Vec<u8>, &
     Ok((bytes, "video/mp2t"))
 }
 impl Core {
+    async fn resolve_playback(&self, course: &str, video_id: &str) -> Result<(CourseApi, PlaybackMedia, Manifest)> {
+        let api = self.course_api()?;
+        let c = self.find_course(course).await?;
+        let video = api.list_videos(course, c["name"].as_str().unwrap_or("课程"))
+            .await?.into_iter().find(|v| v.hash_id == video_id)
+            .ok_or_else(|| anyhow!("回放已变化，请刷新课程列表"))?;
+        let media = api.playback_media(&video).await?;
+        let manifest = Manifest {
+            version: 1, course: course.into(), video: video_id.into(),
+            title: format!("{} · {}", video.title, video.time),
+            signature: media.legacy_signature.clone(),
+            cache_signature: Some(media.cache_signature.clone()),
+            parts: media.parts.iter().map(|p| PartMeta {
+                duration: p.duration, discontinuity: p.discontinuity,
+            }).collect(),
+        };
+        Ok((api, media, manifest))
+    }
     fn playback_port(self: &Arc<Self>) -> Result<u16> {
         let mut store = self.playback.lock().unwrap();
         if let Some(port) = store.port {
@@ -465,8 +581,8 @@ impl Core {
         course: &str,
         video_id: &str,
         refresh: bool,
+        position: f64,
     ) -> Result<Value> {
-        let _prepare = self.playback_prepare_lock.lock().await;
         valid_id(course)?;
         valid_id(video_id)?;
         let generation = fingerprint("course");
@@ -486,82 +602,47 @@ impl Core {
             }
         }
         // Identity lookup failure must not prevent cached video playback. Retry on next open.
-        let subtitle_account = self
-            .subtitle_account(&generation)
-            .await
-            .unwrap_or_else(|_| generation.clone());
-        let directory = cache_dir(&generation, course, video_id)?;
-        let saved = saved_manifest(&directory, course, video_id);
-        let complete = saved.as_ref().is_some_and(|m| {
-            cache_sizes(&directory, m.parts.len())
-                .iter()
-                .all(|n| *n > 0)
-        });
-        let mut remote = None;
-        let manifest = if complete && !refresh {
-            saved.clone().unwrap()
+        let subtitle_account = if let Some(account) = accounts::binding(&accounts::root()?, &generation) {
+            self.prepare_subtitle_account(&generation, &account)?;
+            account
+        } else if saved_manifest(&cache_dir(&generation, course, video_id)?, course, video_id).is_some() {
+            generation.clone()
         } else {
-            let resolved = async {
-                let api = self.course_api()?;
-                let c = self.find_course(course).await?;
-                let video = api
-                    .list_videos(course, c["name"].as_str().unwrap_or("课程"))
-                    .await?
-                    .into_iter()
-                    .find(|v| v.hash_id == video_id)
-                    .ok_or_else(|| anyhow!("回放已变化，请刷新课程列表"))?;
-                let media = api.playback_media(&video).await?;
-                let signature = format!(
-                    "{:x}",
-                    Sha256::digest(
-                        media
-                            .parts
-                            .iter()
-                            .map(|p| format!("{}|{}|{}", p.url.path(), p.duration, p.discontinuity))
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    )
-                );
-                let manifest = Manifest {
-                    version: 1,
-                    course: course.into(),
-                    video: video_id.into(),
-                    title: format!("{} · {}", video.title, video.time),
-                    signature,
-                    parts: media
-                        .parts
-                        .iter()
-                        .map(|p| PartMeta {
-                            duration: p.duration,
-                            discontinuity: p.discontinuity,
-                        })
-                        .collect(),
-                };
-                Ok::<_, anyhow::Error>((api, media, manifest))
-            }
-            .await;
-            match resolved {
-                Ok((api, media, manifest)) => {
-                    remote = Some((api, media));
-                    manifest
-                }
-                Err(error) => match saved.clone() {
-                    Some(m)
-                        if cache_sizes(&directory, m.parts.len())
-                            .iter()
-                            .any(|n| *n > 0) =>
-                    {
-                        m
-                    }
-                    _ => return Err(error),
-                },
-            }
+            self.subtitle_account(&generation).await.unwrap_or_else(|_| generation.clone())
         };
+        let directory = if subtitle_account != generation {
+            let dirs = directories::ProjectDirs::from("me", "petertian", "OnePKU")
+                .ok_or_else(|| anyhow!("无法定位回放缓存"))?;
+            adopt_account_cache(&dirs.cache_dir().join("playback-v1"), &accounts::root()?, &subtitle_account, course, video_id)?
+        } else {
+            cache_dir(&generation, course, video_id)?
+        };
+        let saved = saved_manifest(&directory, course, video_id);
+        let mut remote = None;
+        // A partial cache is immediately playable too. Reopening/retrying only
+        // renews the downloader; it must not put remote I/O before local playback.
+        let manifest = if let Some(manifest) = &saved {
+            manifest.clone()
+        } else {
+            let (api, media, manifest) = self.resolve_playback(course, video_id).await?;
+            remote = Some((api, media));
+            manifest
+        };
+        // Do not let a cold video's slow remote lookup block cached opens.
+        let _prepare = self.playback_prepare_lock.lock().await;
         if generation != fingerprint("course") {
             bail!("账号已更新，请重试");
         }
         {
             let store = self.playback.lock().unwrap();
+            if !refresh {
+                if let Some((token, s)) = store.sessions.iter().find(|(_, s)| {
+                    s.valid() && s.manifest.course == course && s.manifest.video == video_id
+                }) {
+                    return Ok(json!({"id":token,"url":format!("http://127.0.0.1:{port}/media/{token}/index.m3u8"),
+                        "title":s.manifest.title,"duration":s.duration(),"status":s.status()}));
+                }
+            }
             for old in store
                 .sessions
                 .values()
@@ -571,18 +652,15 @@ impl Core {
                 let _disk = old.progress.lock().unwrap();
             }
         }
-        if saved
-            .as_ref()
-            .is_some_and(|m| m.signature != manifest.signature)
-        {
-            let _claim = self.ensure_subtitle_key_idle(&subtitle_account, course, video_id)?;
-            if directory.is_symlink() {
-                bail!("回放缓存目录无效");
-            }
-            fs::remove_dir_all(&directory)?;
-        }
         fs::create_dir_all(&directory)?;
         platform::private_directory(&directory)?;
+        let shared = shared_directory(&subtitle_account, &manifest)?;
+        if let Some(path) = &shared {
+            fs::create_dir_all(path)?;
+            platform::private_directory(path)?;
+            // Read legacy parts on demand. Revalidating/linking an entire video
+            // here makes startup proportional to all previously downloaded bytes.
+        }
         write_private(
             &directory.join("manifest.json"),
             &serde_json::to_vec(&manifest)?,
@@ -591,7 +669,9 @@ impl Core {
             generation,
             subtitle_account,
             directory: directory.clone(),
-            remote,
+            shared_directory: shared,
+            remote: tokio::sync::OnceCell::new_with(remote.map(Ok)),
+            core: Arc::downgrade(self),
             progress: Mutex::new(Progress {
                 sizes: cache_sizes(&directory, manifest.parts.len()),
                 error: String::new(),
@@ -599,8 +679,8 @@ impl Core {
             locks: (0..manifest.parts.len())
                 .map(|_| tokio::sync::Mutex::new(()))
                 .collect(),
+            focus: AtomicUsize::new(focus_at(&manifest, position)),
             manifest,
-            focus: AtomicUsize::new(0),
             closed: AtomicBool::new(false),
             downloading: AtomicBool::new(false),
             worker: AtomicBool::new(false),
@@ -662,6 +742,9 @@ impl Core {
     pub(crate) fn playback_close(&self, id: &str, clear: bool) -> Result<Value> {
         let _claim = if clear {
             let session = self.subtitle_session(id)?;
+            if self.replay_download_active(&session.manifest.course, &session.manifest.video) {
+                bail!("该回放正在下载，请先取消下载再清除缓存");
+            }
             Some(self.ensure_subtitle_idle(&session)?)
         } else {
             None
@@ -673,6 +756,9 @@ impl Core {
             let _disk = s.progress.lock().unwrap();
             if clear && s.directory.is_dir() && !s.directory.is_symlink() {
                 fs::remove_dir_all(&s.directory)?;
+                if let Some(shared) = &s.shared_directory {
+                    if plain_directory(shared) { fs::remove_dir_all(shared)?; }
+                }
             }
         }
         Ok(json!({"closed":true}))
@@ -682,6 +768,82 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn resumed_download_starts_at_the_watching_position() {
+        let manifest = Manifest { version: 1, course: "course".into(), video: "video".into(),
+            title: "lesson".into(), signature: "media".into(), cache_signature: None,
+            parts: vec![PartMeta { duration: 10.0, discontinuity: false }; 10] };
+        assert_eq!(focus_at(&manifest, 42.0), 4);
+        assert_eq!(focus_at(&manifest, 50.0), 5);
+        for position in [0.0, -1.0, f64::NAN, f64::INFINITY, 95.0, 100.0] {
+            assert_eq!(focus_at(&manifest, position), 0);
+        }
+    }
+    #[tokio::test]
+    async fn export_parts_are_playable_without_network_and_legacy_playback_seeds_exports() {
+        let root = tempfile::tempdir().unwrap();
+        let local = root.path().join("playback");
+        let shared = root.path().join("shared");
+        fs::create_dir(&local).unwrap(); fs::create_dir(&shared).unwrap();
+        let signature = "a".repeat(64);
+        let manifest = Manifest { version:1, course:"course".into(), video:"video".into(),
+            title:"lesson".into(), signature:"legacy".into(), cache_signature:None,
+            parts:vec![PartMeta {duration:10.0,discontinuity:false};3] };
+        write_private(&local.join("manifest.json"),&serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let mut bytes = vec![0;188*3]; for i in [0,188,376] {bytes[i]=0x47;}
+        write_private(&part_path(&local,0),&bytes).unwrap();
+        write_private(&part_path(&local,1),b"incomplete").unwrap();
+        reuse_playback_parts(&local,&shared,"wrong-account-course","video",&signature,"legacy",3).unwrap();
+        assert!(!part_path(&shared,0).exists());
+        reuse_playback_parts(&local,&shared,"course","video",&signature,"different-version",3).unwrap();
+        assert!(!part_path(&shared,0).exists());
+        reuse_playback_parts(&local,&shared,"course","video",&signature,"legacy",3).unwrap();
+        assert_eq!(pku_course::api::cached_media_part(&part_path(&shared,0)).unwrap(),bytes);
+        assert!(!part_path(&shared,1).exists());
+        assert!(part_path(&local,0).exists());
+        let session = Session {generation:fingerprint("course"),subtitle_account:"test-account".into(),
+            directory:local.clone(),shared_directory:Some(shared.clone()),manifest,
+            remote:tokio::sync::OnceCell::new(),core:std::sync::Weak::new(),progress:Mutex::new(Progress{sizes:vec![0;3],error:String::new()}),
+            locks:(0..3).map(|_|tokio::sync::Mutex::new(())).collect(),focus:AtomicUsize::new(0),
+            closed:AtomicBool::new(false),downloading:AtomicBool::new(false),worker:AtomicBool::new(false),
+            subtitle_active:AtomicBool::new(false)};
+        assert_eq!(session.status()["completed"],1);
+        // Simulate export completing a part after the player has opened. The
+        // existing player reports and serves it without any remote API/client.
+        write_private(&part_path(&shared,2),&bytes).unwrap();
+        assert_eq!(session.status()["completed"],2);
+        assert_eq!(session.part(2).await.unwrap(),bytes);
+        assert!(!part_path(&local,2).exists());
+        let mut newer=session.manifest.clone(); newer.cache_signature=Some("b".repeat(64));
+        write_private(&local.join("manifest.json"),&serde_json::to_vec(&newer).unwrap()).unwrap();
+        let incompatible=root.path().join("incompatible"); fs::create_dir(&incompatible).unwrap();
+        reuse_playback_parts(&local,&incompatible,"course","video",&signature,"legacy",3).unwrap();
+        assert!(!part_path(&incompatible,0).exists());
+    }
+    #[test]
+    fn replay_cache_unites_verified_logins_without_crossing_accounts_or_media() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache = temp.path().join("cache"); let data = temp.path().join("data");
+        fs::create_dir_all(data.join("subtitle-accounts")).unwrap();
+        let account = "a".repeat(64); let other = "b".repeat(64);
+        let key = format!("{:x}",Sha256::digest("course|video"));
+        let manifest = Manifest { version:1,course:"course".into(),video:"video".into(),title:"lesson".into(),signature:"same-media".into(),cache_signature:None,parts:vec![PartMeta{duration:10.0,discontinuity:false};3] };
+        for (letter, owner, index, signature) in [('1',&account,0,"same-media"),('2',&account,1,"same-media"),('3',&other,2,"same-media"),('4',&account,2,"different-media")] {
+            let generation=letter.to_string().repeat(64);
+            fs::write(data.join("subtitle-accounts").join(format!("{generation}.json")),serde_json::to_vec(owner).unwrap()).unwrap();
+            let dir=cache.join(generation).join(&key);fs::create_dir_all(&dir).unwrap();
+            let m=Manifest {signature:signature.into(),..manifest.clone()};
+            write_private(&dir.join("manifest.json"),&serde_json::to_vec(&m).unwrap()).unwrap();
+            write_private(&part_path(&dir,index),b"complete-cached-part").unwrap();
+        }
+        // An existing manifest determines which recording version is compatible.
+        let dest=cache.join(&account).join(&key);fs::create_dir_all(&dest).unwrap();
+        write_private(&dest.join("manifest.json"),&serde_json::to_vec(&manifest).unwrap()).unwrap();
+        assert_eq!(adopt_account_cache(&cache,&data,&account,"course","video").unwrap(),dest);
+        assert!(part_path(&dest,0).is_file());assert!(part_path(&dest,1).is_file());assert!(!part_path(&dest,2).exists());
+        assert!(part_path(&cache.join("1".repeat(64)).join(&key),0).exists());
+        assert!(adopt_account_cache(&cache,&data,&"f".repeat(64),"course","video").unwrap().read_dir().is_err());
+    }
     #[tokio::test]
     async fn cached_playback_survives_an_unavailable_source_and_rejects_other_origins() {
         let directory = tempfile::tempdir().unwrap();
@@ -692,13 +854,15 @@ mod tests {
             generation: fingerprint("course"),
             subtitle_account: "test-account".into(),
             directory: directory.path().into(),
-            remote: None,
+            shared_directory: None,
+            remote: tokio::sync::OnceCell::new(), core: std::sync::Weak::new(),
             manifest: Manifest {
                 version: 1,
                 course: "test".into(),
                 video: "lecture".into(),
                 title: "Lecture".into(),
                 signature: "fixture".into(),
+                cache_signature: None,
                 parts: vec![
                     PartMeta {
                         duration: 10.0,
@@ -728,6 +892,22 @@ mod tests {
             .insert("test-token".into(), session.clone());
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
         let root = format!("http://127.0.0.1:{port}/media/test-token");
+        {
+            // A downloader may still be resolving the school connection, or
+            // waiting on a part that another writer has now published. Neither
+            // condition may block serving an already complete local part.
+            let mut connecting = Box::pin(session.remote.get_or_init(|| std::future::pending()));
+            assert!(tokio::time::timeout(Duration::from_millis(10), &mut connecting).await.is_err());
+            let _downloader = session.locks[0].lock().await;
+            let local = tokio::time::timeout(Duration::from_secs(2), async {
+                let playlist = client.get(format!("{root}/index.m3u8")).send().await.unwrap();
+                assert_eq!(playlist.status(), 200);
+                assert!(playlist.text().await.unwrap().contains("#EXT-X-ENDLIST"));
+                client.get(format!("{root}/0.ts")).send().await.unwrap().bytes().await.unwrap()
+            }).await.expect("local playback must not wait for the downloader");
+            assert_eq!(local.as_ref(), b"cached-video");
+            assert!(session.remote.get().is_none());
+        }
         let hit = client
             .get(format!("{root}/0.ts"))
             .header("Origin", "http://127.0.0.1:1421")
@@ -821,6 +1001,7 @@ mod tests {
             video: "v".into(),
             title: "课".into(),
             signature: "s".into(),
+            cache_signature: None,
             parts: vec![
                 PartMeta {
                     duration: 5.5,

@@ -34,6 +34,7 @@ npm run typecheck
 npm run format:check
 npm run verify:tokens
 cargo test --workspace --locked
+cargo test -p pku-course --lib --locked
 cargo test --manifest-path vendor/pkucli/Cargo.toml -p pkuinfo-common --lib --locked
 npm run tauri -- build --config src-tauri/tauri.test.conf.json --bundles nsis -- --locked
 ```
@@ -83,6 +84,15 @@ macOS 仍使用 `npm run tauri -- build --config src-tauri/tauri.test.conf.json 
 - 增加更新检查、缺少平台包、下载进度/签名错误、中文 PDF 标题及自选中文目录归档测试。培养方案结构校验通过；已有数据解析警告仍需人工核对。
 - 上一版远端 Windows 检查和打包通过；macOS 的 Tauri feature/config 校验错误已定位并修复配置，新一轮结果以 PR 检查为准。
 - 上一版首次自动启动曾受到执行环境限制；随后经用户要求，成功启动 Windows 原生程序并确认窗口存在。用户手工试用反馈所走流程均正常，但没有逐项记录覆盖范围，下面的安装/卸载与功能清单仍需保留。macOS 实机回归尚未执行。
+
+## 日常使用改动整合验证（2026-09-23）
+
+- 前端 26 个测试文件、92 个测试通过；类型、Prettier、设计 token 和生产构建检查通过。
+- Rust 核心 59 个、桌面层 3 个、课程/媒体模块 15 个及 vendored 会话持久化 2 个测试通过。覆盖分片并发去重、失败/取消恢复、旧缓存兼容、缓存不等待远端、续播位置保护、附件来源匹配及账号隔离。
+- 补齐 vendored `Cargo.lock` 的 `sha2` 依赖记录，`--locked` 检查通过；双平台 CI 增加课程/媒体模块单元测试。
+- 培养方案结构校验通过；现有内容与解析警告保留，未据此改写原始方案数据。
+- Windows x64 NSIS 测试包构建成功，使用 `tauri.test.conf.json` 和 `--locked`，输出位于 `target/x86_64-pc-windows-msvc/release/bundle/nsis/OnePKU_0.1.0_x64-setup.exe`。本地包未签名，本轮不发布 Release。
+- 本轮没有重新执行真实账号完整视频下载、学校写操作、安装/卸载或 macOS 实机验收；上述自动化检查不代表这些流程已经通过。
 
 ## 发布前手工验收清单
 

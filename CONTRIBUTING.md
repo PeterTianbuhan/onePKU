@@ -21,6 +21,7 @@ npm run typecheck
 npm run format:check
 npm run verify:tokens
 cargo test -p campus-core --lib
+cargo test -p pku-course --lib --locked
 ```
 
 ## 项目边界

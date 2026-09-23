@@ -18,6 +18,7 @@ export type Material = {
   modified: number;
   source: string;
   downloadId?: string | null;
+  downloadIds?: string[];
 };
 function size(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -47,18 +48,21 @@ export default function LocalMaterials({
       c.attachments.flatMap((f) => (f.downloadId ? [f.downloadId] : [])),
     ),
   );
+  const identities = (f: Material) => [
+    ...new Set([
+      ...(f.downloadId ? [f.downloadId] : []),
+      ...(f.downloadIds ?? []),
+    ]),
+  ];
   const remaining = files.filter(
-    (f) => !f.downloadId || !ids.has(f.downloadId),
+    (f) => !identities(f).some((id) => ids.has(id)),
   );
   const matches = (name: string) =>
     name.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase());
   const copies = new Map<string, Material[]>();
   for (const file of files) {
-    if (file.downloadId)
-      copies.set(file.downloadId, [
-        ...(copies.get(file.downloadId) ?? []),
-        file,
-      ]);
+    for (const id of identities(file))
+      copies.set(id, [...(copies.get(id) ?? []), file]);
   }
   const localFor = (attachment: Attachment) =>
     attachment.downloadId ? (copies.get(attachment.downloadId) ?? []) : [];
@@ -313,7 +317,7 @@ export default function LocalMaterials({
                             {localFor(f).map((local) => fileRow(local, true))}
                           </div>
                         ) : (
-                          <AttachmentRow key={i} file={f} />
+                          <AttachmentRow key={i} file={f} course={course} />
                         ),
                       )}
                     {!c.attachments.length && !c.description && (

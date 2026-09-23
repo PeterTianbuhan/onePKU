@@ -203,10 +203,12 @@ pub(crate) fn set_download_root(path: Option<&std::path::Path>) -> Result<Value>
     Ok(download_root_info())
 }
 pub(crate) fn archive_directory(semester: &str, course: &str) -> Result<PathBuf> {
-    let root = download_root()?;
-    Ok(root
+    Ok(archive_directory_at(&download_root()?, semester, course))
+}
+pub(crate) fn archive_directory_at(root: &Path, semester: &str, course: &str) -> PathBuf {
+    root
         .join(folder_component(semester))
-        .join(folder_component(course)))
+        .join(folder_component(course))
 }
 pub(crate) fn folder_component(s: &str) -> String {
     let v: String = s
@@ -262,6 +264,11 @@ async fn cancelled(cancel: &AtomicBool) {
     }
 }
 impl Core {
+    pub(crate) fn replay_download_active(&self, course: &str, video: &str) -> bool {
+        let source = format!("video:{course}:{video}");
+        self.jobs.lock().unwrap().values().any(|j| j.source == source
+            && matches!(j.state["state"].as_str(), Some("queued" | "running")))
+    }
     pub(crate) fn register_files(&self, rows: &mut Vec<Value>) {
         let generation = fingerprint("course");
         for r in rows {
@@ -431,8 +438,16 @@ impl Core {
             }
             Err(e) => {
                 let raw = e.to_string();
-                let message = if raw.starts_with("无法启动 ffmpeg") {
+                let message = if raw.contains("会话已过期") || raw.contains("登录已失效") || raw.contains("未登录") {
+                    "登录已失效，请重新登录教学网后重试"
+                } else if raw.starts_with("无法启动 ffmpeg") {
                     "视频转换需要 ffmpeg，请安装后重试"
+                } else if e.downcast_ref::<reqwest::Error>().is_some_and(|e| e.is_timeout()) {
+                    "下载请求超时，请稍后重试"
+                } else if e.downcast_ref::<reqwest::Error>().is_some() {
+                    "下载服务连接失败，请检查网络后重试"
+                } else if e.downcast_ref::<std::io::Error>().is_some() {
+                    "本地文件写入失败，请检查保存目录权限和磁盘空间后重试"
                 } else if raw.starts_with("视频")
                     || raw.starts_with("回放")
                     || raw.starts_with("当前不是")
@@ -445,7 +460,8 @@ impl Core {
                 } else {
                     "下载未完成，请刷新来源后重试"
                 };
-                json!({"state":"failed","message":message})
+                let previous = self.jobs.lock().unwrap().get(id).map(|j| j.state.clone()).unwrap_or_default();
+                json!({"state":"failed","message":message,"bytes":previous["bytes"],"completed":previous["completed"],"segments":previous["segments"]})
             }
         };
         if let Some(j) = self.jobs.lock().unwrap().get_mut(id) {
@@ -532,6 +548,12 @@ impl Core {
             }
         }
         let _cleanup = Cleanup(temp.clone());
+        let account = self.course_account(generation).await.unwrap_or_else(|_| generation.into());
+        let resume = playback::shared_cache_root(&account, course, &video.hash_id)?;
+        let dirs = directories::ProjectDirs::from("me", "petertian", "OnePKU")
+            .ok_or_else(|| anyhow!("无法定位回放缓存"))?;
+        let playback_cache = playback::adopt_account_cache(&dirs.cache_dir().join("playback-v1"),
+            &accounts::root()?, &account, course, &video.hash_id)?;
         let ffmpeg = [
             "/opt/homebrew/bin/ffmpeg",
             "/usr/local/bin/ffmpeg",
@@ -541,7 +563,8 @@ impl Core {
         .map(PathBuf::from)
         .find(|p| p.is_file())
         .unwrap_or_else(|| PathBuf::from("ffmpeg"));
-        api.download_video_to(video,&temp,&ffmpeg,&cancel,|p| {if generation!=fingerprint("course") {cancel.store(true,Ordering::Relaxed);}if let Some(j)=self.jobs.lock().unwrap().get_mut(id) {j.state=json!({"state":"running","phase":p.phase,"bytes":p.bytes,"completed":p.completed,"segments":p.total});}}).await?;
+        api.download_video_to(video,&temp,&resume,&ffmpeg,&cancel,|p| {if generation!=fingerprint("course") {cancel.store(true,Ordering::Relaxed);}if let Some(j)=self.jobs.lock().unwrap().get_mut(id) {j.state=json!({"state":"running","phase":p.phase,"bytes":p.bytes,"completed":p.completed,"segments":p.total});}},
+            |signature, legacy, count, shared| playback::reuse_playback_parts(&playback_cache,shared,course,&video.hash_id,signature,legacy,count)).await?;
         if cancel.load(Ordering::Relaxed) || generation != fingerprint("course") {
             bail!("cancelled")
         }
@@ -611,12 +634,11 @@ impl Core {
             &f.name,
             mime,
         )?;
-        let mut dir = download_root()?;
-        if !f.course.is_empty() {
-            dir = dir
-                .join(folder_component(&f.semester))
-                .join(folder_component(&f.course));
-        }
+        let dir = if f.course.is_empty() {
+            download_root()?
+        } else {
+            archive_directory(&f.semester, &f.course)?
+        };
         std::fs::create_dir_all(&dir)?;
         let temp = dir.join(format!(".onepku-{id}.part"));
         let mut file = OpenOptions::new()
@@ -680,9 +702,26 @@ impl Core {
             .lock()
             .unwrap()
             .get(id)
+            .filter(|job| job.generation == fingerprint("course"))
             .ok_or_else(|| anyhow!("missing job"))?
             .state
             .clone())
+    }
+    pub(crate) async fn download_retry(self: &Arc<Self>, id: &str) -> Result<Value> {
+        let source = {
+            let jobs = self.jobs.lock().unwrap();
+            let job = jobs.get(id).filter(|j| j.generation == fingerprint("course"))
+                .ok_or_else(|| anyhow!("下载记录已过期，请从课程重新下载"))?;
+            if !matches!(job.state["state"].as_str(), Some("failed" | "cancelled")) {
+                bail!("此下载无需重试");
+            }
+            job.source.clone()
+        };
+        if let Some(id) = source.strip_prefix("file:") { return self.download(id); }
+        if let Some((course, video)) = source.strip_prefix("video:").and_then(|s| s.split_once(':')) {
+            return self.download_video(course, video).await;
+        }
+        bail!("下载来源已失效，请刷新课程")
     }
     pub(crate) fn downloads(&self) -> Value {
         let jobs = self.jobs.lock().unwrap();

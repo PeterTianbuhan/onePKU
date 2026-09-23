@@ -70,7 +70,14 @@ fn source_label(path: &Path) -> &'static str {
 
 // Match provenance, never filenames. Only return the current account's opaque
 // attachment identity; school URLs and source metadata stay on this machine.
+#[cfg(test)]
 fn source_attachment(path: &Path, generation: &str, course: Option<&Value>) -> Option<String> {
+    source_attachments(path, generation, course).into_iter().next()
+}
+fn source_attachments(path: &Path, generation: &str, course: Option<&Value>) -> Vec<String> {
+    source_identities(path, generation, course).unwrap_or_default()
+}
+fn source_identities(path: &Path, generation: &str, course: Option<&Value>) -> Option<Vec<String>> {
     let meta = sidecar(path);
     let stat = fs::symlink_metadata(&meta).ok()?;
     if !stat.is_file() || platform::is_link(&stat) || stat.len() > 65536 {
@@ -84,26 +91,25 @@ fn source_attachment(path: &Path, generation: &str, course: Option<&Value>) -> O
     let recorded_course = value["course"].as_str()?;
     let recorded_semester = value["semester"].as_str()?;
     let scoped_course;
-    let course_identity = if let Some(course) = course {
+    let mut identities = vec![];
+    if let Some(course) = course {
         let name = course["name"].as_str()?;
-        scoped_course = format!("{} {}", name, course["id"].as_str()?);
+        let id = course["id"].as_str()?;
+        scoped_course = format!("{} {}", name, id);
         // Older downloads recorded the name only. Their containing directory
         // has already been resolved through this account's course index.
-        if (recorded_course != name && recorded_course != scoped_course)
-            || course["semester"].as_str()? != recorded_semester
-        {
+        // A scoped course ID survives corrected semester labels and course names.
+        // Name-only legacy provenance is accepted only in the matching term.
+        if !recorded_course.ends_with(&format!(" {id}"))
+            && (recorded_course != name || course["semester"].as_str()? != recorded_semester) {
             return None;
         }
-        &scoped_course
-    } else {
-        recorded_course
-    };
-    Some(downloads::attachment_id(
-        generation,
-        source,
-        course_identity,
-        recorded_semester,
-    ))
+        identities.push(downloads::attachment_id(generation, source, &scoped_course, course["semester"].as_str()?));
+        identities.push(downloads::attachment_id(generation, source, &scoped_course, recorded_semester));
+    }
+    identities.push(downloads::attachment_id(generation, source, recorded_course, recorded_semester));
+    identities.dedup();
+    Some(identities)
 }
 
 fn file_id(path: &Path, generation: &str) -> Result<String> {
@@ -136,7 +142,8 @@ fn scan(dir: &Path, generation: &str, course: Option<&Value>) -> Result<Vec<Valu
         if !meta.is_file() || platform::is_link(&meta) {
             continue;
         }
-        rows.push(json!({"id":file_id(&path, generation)?, "name":name, "bytes":meta.len(), "modified":meta.modified()?.duration_since(std::time::UNIX_EPOCH)?.as_secs(), "source":source_label(&path), "downloadId":source_attachment(&path, generation, course)}));
+        let identities = source_attachments(&path, generation, course);
+        rows.push(json!({"id":file_id(&path, generation)?, "name":name, "bytes":meta.len(), "modified":meta.modified()?.duration_since(std::time::UNIX_EPOCH)?.as_secs(), "source":source_label(&path), "downloadId":identities.first(), "downloadIds":identities}));
     }
     rows.sort_by(|a, b| {
         b["modified"]
@@ -145,6 +152,40 @@ fn scan(dir: &Path, generation: &str, course: Option<&Value>) -> Result<Vec<Valu
             .then_with(|| a["name"].as_str().cmp(&b["name"].as_str()))
     });
     Ok(rows)
+}
+
+// New writes use the current course label. Reads also include older folders for
+// the same Blackboard course ID; no files are moved when metadata is corrected.
+fn course_directories(root: &Path, course: &Value) -> Result<Vec<PathBuf>> {
+    let id = course["id"].as_str().ok_or_else(|| anyhow!("invalid course"))?;
+    valid_id(id)?;
+    let name = course["name"].as_str().unwrap_or("课程");
+    let semester = course["semester"].as_str().unwrap_or("未标注学期");
+    let canonical = downloads::archive_directory_at(root, semester, &format!("{name} {id}"));
+    checked_directory(&canonical)?;
+    let mut dirs = vec![canonical];
+    for term in fs::read_dir(root)?.take(1000) {
+        let term = term?;
+        let meta = fs::symlink_metadata(term.path())?;
+        if !meta.is_dir() || platform::is_link(&meta) { continue; }
+        for entry in fs::read_dir(term.path())?.take(10000) {
+            let entry = entry?;
+            let path = entry.path();
+            let meta = fs::symlink_metadata(&path)?;
+            if !meta.is_dir() || platform::is_link(&meta) || dirs.contains(&path) { continue; }
+            let folder = entry.file_name().to_string_lossy().into_owned();
+            let name_only = term.file_name() == std::ffi::OsStr::new(&downloads::folder_component(semester))
+                && folder == downloads::folder_component(name);
+            if folder.ends_with(&format!(" {id}")) || name_only { dirs.push(path); }
+        }
+    }
+    Ok(dirs)
+}
+fn resolve_in_directories(dirs: &[PathBuf], generation: &str, id: &str) -> Result<PathBuf> {
+    for dir in dirs {
+        if let Ok(path) = resolve(dir, generation, id) { return Ok(path); }
+    }
+    bail!("LOCAL_MATERIAL: 资料已移动或变化，请刷新后重试")
 }
 fn resolve(dir: &Path, generation: &str, id: &str) -> Result<PathBuf> {
     if id.len() != 64 || !id.bytes().all(|c| c.is_ascii_hexdigit()) {
@@ -274,9 +315,14 @@ impl Core {
     }
     pub(crate) async fn local_materials(&self, course: &str) -> Result<Value> {
         let metadata = self.material_course(course).await?;
-        let dir = self.material_directory(course).await?;
+        let dirs = course_directories(&downloads::download_root()?, &metadata)?;
         let _guard = self.materials_lock.lock().unwrap();
-        Ok(json!(scan(&dir, &fingerprint("course"), Some(&metadata))?))
+        let mut rows = vec![];
+        for dir in dirs { rows.extend(scan(&dir, &fingerprint("course"), Some(&metadata))?); }
+        Ok(json!(rows))
+    }
+    async fn material_directories(&self, course: &str) -> Result<Vec<PathBuf>> {
+        course_directories(&downloads::download_root()?, &self.material_course(course).await?)
     }
     pub fn import_course_files(
         self: &Arc<Self>,
@@ -312,12 +358,12 @@ impl Core {
     }
     pub(crate) async fn open_local_material(&self, course: &str, id: &str) -> Result<Value> {
         let generation = fingerprint("course");
-        let dir = self.material_directory(course).await?;
+        let dirs = self.material_directories(course).await?;
         let _guard = self.materials_lock.lock().unwrap();
         if generation != fingerprint("course") {
             bail!("LOCAL_MATERIAL: 账号已变化，请刷新课程");
         }
-        let path = resolve(&dir, &generation, id)?;
+        let path = resolve_in_directories(&dirs, &generation, id)?;
         platform::open(path.as_os_str())
             .map_err(|_| anyhow!("LOCAL_MATERIAL: 无法打开这份资料，请在文件夹中查看"))?;
         Ok(json!({"opened":true}))
@@ -325,12 +371,12 @@ impl Core {
     pub(crate) async fn read_local_material(&self, course: &str, id: &str) -> Result<Value> {
         use base64::Engine;
         let generation = fingerprint("course");
-        let dir = self.material_directory(course).await?;
+        let dirs = self.material_directories(course).await?;
         let _guard = self.materials_lock.lock().unwrap();
         if generation != fingerprint("course") {
             bail!("LOCAL_MATERIAL: 账号已变化，请刷新课程");
         }
-        let path = resolve(&dir, &generation, id)?;
+        let path = resolve_in_directories(&dirs, &generation, id)?;
         let ext = path.extension().unwrap_or_default().to_string_lossy().to_lowercase();
         let mime = match ext.as_str() {
             "pdf" => "application/pdf",
@@ -347,19 +393,19 @@ impl Core {
         }
         let mut bytes = Vec::new();
         file.take(LIMIT + 1).read_to_end(&mut bytes)?;
-        if bytes.len() as u64 > LIMIT || resolve(&dir, &generation, id)? != path || generation != fingerprint("course") {
+        if bytes.len() as u64 > LIMIT || resolve_in_directories(&dirs, &generation, id)? != path || generation != fingerprint("course") {
             bail!("LOCAL_MATERIAL: 文件或账号已变化，请刷新后重试");
         }
         Ok(json!({"mime":mime,"base64":base64::engine::general_purpose::STANDARD.encode(bytes)}))
     }
     pub(crate) async fn trash_local_material(&self, course: &str, id: &str) -> Result<Value> {
         let generation = fingerprint("course");
-        let dir = self.material_directory(course).await?;
+        let dirs = self.material_directories(course).await?;
         let _guard = self.materials_lock.lock().unwrap();
         if generation != fingerprint("course") {
             bail!("LOCAL_MATERIAL: 账号已变化，请刷新课程");
         }
-        let path = resolve(&dir, &generation, id)?;
+        let path = resolve_in_directories(&dirs, &generation, id)?;
         #[cfg(target_os = "macos")]
         use trash::macos::{DeleteMethod, TrashContextExtMacos};
         let trash = trash::TrashContext::default();
@@ -378,6 +424,48 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn corrected_semester_reads_existing_download_with_old_and_new_attachment_ids() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let generation = fingerprint("course");
+        let core = Core::default();
+        let source = "https://course.pku.edu.cn/bbcswebdav/courses/_1_1/HW1.md";
+        let metadata = json!({"id":"_1_1","name":"测试课 (A)","semester":"26-27学年第1学期"});
+        let mut old = vec![json!({"course_id":"_1_1","course_name":"测试课","attachments":[{"name":"HW1.md","url":source}]})];
+        let mut current = old.clone();
+        study::apply_course_metadata(&mut current[0], &metadata);
+        core.register_files(&mut old);
+        core.register_files(&mut current);
+        let old_id = old[0]["attachments"][0]["downloadId"].as_str().unwrap();
+        let current_id = current[0]["attachments"][0]["downloadId"].as_str().unwrap();
+        assert_ne!(old_id, current_id);
+
+        let old_dir = downloads::archive_directory_at(&root, "未标注学期", "测试课 _1_1");
+        fs::create_dir_all(&old_dir).unwrap();
+        let file = old_dir.join("HW1.md");
+        fs::write(&file, "# homework\nexisting download").unwrap();
+        fs::write(sidecar(&file), serde_json::to_vec(&json!({
+            "source":source,"course":"测试课 _1_1","semester":"未标注学期"
+        })).unwrap()).unwrap();
+        let dirs = course_directories(&root, &metadata).unwrap();
+        assert_eq!(dirs[0], downloads::archive_directory_at(&root, "26-27学年第1学期", "测试课 (A) _1_1"));
+        let rows = dirs.iter().flat_map(|dir| scan(dir, &generation, Some(&metadata)).unwrap()).collect::<Vec<_>>();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["downloadId"], current_id);
+        assert!(rows[0]["downloadIds"].as_array().unwrap().iter().any(|id| id == old_id));
+        let local_id = rows[0]["id"].as_str().unwrap();
+        let resolved = resolve_in_directories(&dirs, &generation, local_id).unwrap();
+        assert_eq!(resolved, file);
+        assert_eq!(fs::read_to_string(&resolved).unwrap(), "# homework\nexisting download");
+        assert!(resolve_in_directories(&dirs, "different-account", local_id).is_err());
+        let foreign = json!({"id":"_2_1","name":"测试课 (A)","semester":"26-27学年第1学期"});
+        let other_dirs = course_directories(&root, &foreign).unwrap();
+        assert!(!other_dirs.contains(&old_dir));
+        assert!(resolve_in_directories(&other_dirs, &generation, local_id).is_err());
+        assert!(file.exists()); // Compatibility reads never move the original.
+        assert!(!serde_json::to_string(&rows).unwrap().contains(source));
+    }
     #[test]
     fn downloaded_copies_match_provenance_not_names_and_scope_the_identity() {
         let temp = tempfile::tempdir().unwrap();

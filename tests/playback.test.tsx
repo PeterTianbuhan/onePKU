@@ -34,8 +34,8 @@ it("plays a loopback stream, resumes position, controls cache, and closes withou
       requests.push(request);
       if (request.kind === "playbackControl") downloading = request.downloading;
       const status = {
-        completed: 2,
-        segments: 100,
+        completed: 3,
+        segments: 719,
         bytes: 1000000,
         complete: false,
         downloading,
@@ -82,6 +82,18 @@ it("plays a loopback stream, resumes position, controls cache, and closes withou
     expect(video.src).toBe("http://127.0.0.1:4567/media/token/index.m3u8"),
   );
   expect(video.controls).toBe(false);
+  expect(requests).toContainEqual({
+    kind: "playbackPrepare",
+    course: "1",
+    video: "abc",
+    refresh: false,
+    position: 42,
+  });
+  // Loading a source emits timeupdate/pause at zero before metadata arrives.
+  // Those events must not overwrite the saved resume position.
+  fireEvent.timeUpdate(video);
+  fireEvent.pause(video);
+  expect(localStorage.getItem("onepku.playback.account.1.abc")).toBe("42");
   fireEvent.loadedMetadata(video);
   expect(video.currentTime).toBe(42);
   expect(video.play).toHaveBeenCalled();
@@ -110,6 +122,9 @@ it("plays a loopback stream, resumes position, controls cache, and closes withou
   fireEvent.keyDown(video, { key: "ArrowLeft" });
   expect(video.currentTime).toBe(42);
   fireEvent.click(screen.getByRole("button", { name: "更多播放选项" }));
+  expect(
+    screen.getByText("已缓存 0.4%（3 / 719 个分片）", { exact: false }),
+  ).toBeInTheDocument();
   fireEvent.click(await screen.findByRole("button", { name: "暂停整节缓存" }));
   await waitFor(() =>
     expect(requests).toContainEqual({

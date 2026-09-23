@@ -13,3 +13,9 @@ Review the patch file directly. Apply the course patch to the stated base with `
 ## Windows portability delta
 
 `pkucli-windows.patch` is an incremental patch against the vendored source in OnePKU commit `ddeb402`, not against the original unmodified upstream SHA above. It adds platform-conditional private-file modes, closes session/cookie writers before replacement, hides Windows ffmpeg consoles, and tests synthetic session/cookie replacement. Paths retain the `vendor/pkucli/` prefix so the patch can be reviewed/applied at the OnePKU root. Adapt these small changes to upstream's current implementation before opening an upstream PR; no upstream PR has been submitted.
+
+## 学期识别与回放缓存增量
+
+`pkucli-semester-labels.patch` 是基于 OnePKU `31beb7c` 的独立学期分组识别修复，包含合成标题回归测试。
+
+`pkucli-replay-cache.patch` 是同一基线上的完整 vendored 增量，包含上述学期修复、稳定账号信息读取、播放与下载共享分片、失败恢复、临时网络错误重试及相关测试。它也包含两个工作区所需的依赖锁文件变更；与学期补丁择一应用，不要顺序叠加。可在该基线的独立 checkout 根目录运行 `git apply --check`，应用后运行 `cargo test -p pku-course --lib --locked`。桌面缓存归属、界面与目录迁移由 OnePKU 核心处理，不包含在此候选补丁中；回馈上游前需适配当前上游接口。尚未向上游提交。

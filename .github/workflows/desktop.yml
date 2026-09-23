@@ -47,6 +47,8 @@ jobs:
       - run: npm run format:check
       - run: npm run verify:tokens
       - run: cargo test --workspace --locked
+      - name: Replay cache and course parser tests
+        run: cargo test -p pku-course --lib --locked
       - name: Vendored session persistence tests
         run: cargo test --manifest-path vendor/pkucli/Cargo.toml -p pkuinfo-common --lib --locked
       - name: Package desktop app

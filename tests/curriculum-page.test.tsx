@@ -10,7 +10,7 @@ import {
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Curriculum from "../src/pages/Curriculum";
-import { planIndex } from "../src/lib/curriculum";
+import { planIndex, type CurrentCourse } from "../src/lib/curriculum";
 
 const ai = planIndex.find(
   (p) => p.cohort === 2025 && p.title === "智能科学与技术专业",
@@ -71,7 +71,17 @@ const scores = {
   total_credits: "12",
 };
 
-function mount(profile: unknown) {
+function mount(
+  profile: unknown,
+  currentCourses: CurrentCourse[] = [
+    {
+      id: "c1",
+      name: "线性代数 A（Ⅰ）",
+      semester: "26-27学年第1学期",
+      current: true,
+    },
+  ],
+) {
   const calls: Array<Record<string, unknown>> = [];
   let stored = profile;
   vi.stubGlobal(
@@ -87,14 +97,7 @@ function mount(profile: unknown) {
             : body.kind === "scores"
               ? scores
               : body.kind === "allCourses"
-                ? [
-                    {
-                      id: "c1",
-                      name: "线性代数 A（Ⅰ）",
-                      semester: "26-27学年第1学期",
-                      current: true,
-                    },
-                  ]
+                ? currentCourses
                 : body.kind === "openLink"
                   ? { opened: true }
                   : null;
@@ -226,4 +229,37 @@ it("offers to pick a plan when the profile was saved without one", async () => {
   ).toBeInTheDocument();
   expect(screen.getByLabelText("入学年份")).toHaveValue("2024");
   expect(screen.getByLabelText("培养方案版本")).toHaveValue("2024");
+});
+
+it("names unknown-credit courses and separately labels pending courses without credits", async () => {
+  mount(
+    {
+      cohort: 2025,
+      planId: ai.id,
+      secondaryPlanId: null,
+      englishLevel: null,
+      overrides: {},
+      inferred: false,
+      updatedAt: "x",
+    },
+    [
+      { id: "sport", name: "太极拳", current: true },
+      { id: "unknown", name: "待确认测试课程", current: true },
+    ],
+  );
+  const warning = await screen.findByText(/已归类课程中有 1 门课的学分未知/);
+  expect(warning).toHaveTextContent("太极拳");
+  expect(warning).not.toHaveTextContent("待确认测试课程");
+  expect(warning).toHaveTextContent("教学网在修课程列表不提供学分");
+  expect(
+    screen.getByLabelText("归类 待确认测试课程").closest("li"),
+  ).toHaveTextContent("学分未知");
+  fireEvent.change(screen.getByLabelText("归类 待确认测试课程"), {
+    target: { value: "3-2" },
+  });
+  const updated = await screen.findByText(/已归类课程中有 2 门课的学分未知/);
+  expect(updated).toHaveTextContent("太极拳、待确认测试课程");
+  expect(screen.getByRole("tab", { name: /毕业总学分/ })).toHaveTextContent(
+    "在修 0",
+  );
 });
