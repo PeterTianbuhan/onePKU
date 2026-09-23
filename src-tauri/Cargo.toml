@@ -7,6 +7,8 @@ edition = "2021"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# Keep this in sync with app.macOSPrivateApi: tauri-build checks the common dependency table.
+# The feature only enables private native APIs on macOS.
 tauri = { version = "2", features = ["macos-private-api"] }
 campus-core = { path = "../crates/campus-core" }
 serde_json = "1"

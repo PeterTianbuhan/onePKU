@@ -2,6 +2,8 @@ import {
   useEffect,
   useState,
   useRef,
+  lazy,
+  Suspense,
   type ReactNode,
   type ButtonHTMLAttributes,
 } from "react";
@@ -29,6 +31,7 @@ import {
   type Envelope,
   type Service,
 } from "../lib/api";
+const AttachmentPreview = lazy(() => import("./AttachmentPreview"));
 export type Login = (
   service: Service,
   scope?: "treehole" | "timetable",
@@ -330,16 +333,21 @@ export function Pager({
 }
 export function AttachmentRow({
   file,
+  course,
+  onPreview,
   request,
   extra,
   icon,
 }: {
   file: Attachment;
+  course?: string;
+  onPreview?: () => void;
   request?: Request;
   extra?: ReactNode;
   icon?: ReactNode;
 }) {
   const client = useQueryClient();
+  const [preview, setPreview] = useState(false);
   const [job, setJob] = useState<string>();
   const [state, setState] = useState<{
     state: string;
@@ -400,7 +408,17 @@ export function AttachmentRow({
     <div className="attachment">
       <div className="attachment-line">
         {icon ?? <FileText size={18} />}
-        <span>{file.name}</span>
+        {course && file.downloadId ? (
+          <button
+            className="attachment-name text-button"
+            onClick={() => (onPreview ? onPreview() : setPreview(true))}
+            title="打开预览"
+          >
+            {file.name}
+          </button>
+        ) : (
+          <span>{file.name}</span>
+        )}
         {extra}
         {(file.downloadId || request) && (
           <Button
@@ -445,6 +463,13 @@ export function AttachmentRow({
         <p className="inline-error" role="alert">
           {error || state?.message}
         </p>
+      )}
+      {preview && course && file.downloadId && (
+        <Modal title={file.name} open wide onClose={() => setPreview(false)}>
+          <Suspense fallback={<p className="subtle">正在打开预览…</p>}>
+            <AttachmentPreview course={course} downloadId={file.downloadId} />
+          </Suspense>
+        </Modal>
       )}
     </div>
   );

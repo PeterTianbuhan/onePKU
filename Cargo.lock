@@ -709,6 +709,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "directories",
+ "dunce",
  "fs2",
  "futures",
  "libc",
@@ -733,6 +734,7 @@ dependencies = [
  "tokio",
  "trash",
  "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4387,6 +4389,7 @@ dependencies = [
  "scraper 0.22.0",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
  "tracing",
  "tracing-subscriber",

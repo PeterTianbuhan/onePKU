@@ -1,0 +1,65 @@
+name: Desktop checks and packages
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            bundle: nsis
+            artifact: OnePKU-windows-x64
+          - name: macOS Apple Silicon
+            os: macos-15
+            bundle: app
+            artifact: OnePKU-macos-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - name: Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run format:check
+      - run: npm run verify:tokens
+      - run: cargo test --workspace --locked
+      - name: Replay cache and course parser tests
+        run: cargo test -p pku-course --lib --locked
+      - name: Vendored session persistence tests
+        run: cargo test --manifest-path vendor/pkucli/Cargo.toml -p pkuinfo-common --lib --locked
+      - name: Package desktop app
+        run: npm run tauri -- build --config src-tauri/tauri.test.conf.json --bundles ${{ matrix.bundle }} -- --locked
+      - name: Archive macOS app preserving permissions
+        if: runner.os == 'macOS'
+        run: ditto -c -k --sequesterRsrc --keepParent target/release/bundle/macos/OnePKU.app target/release/bundle/OnePKU-macos-arm64.app.zip
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.artifact }}
+          if-no-files-found: error
+          path: |
+            target/release/bundle/nsis/*-setup.exe
+            target/release/bundle/*.app.zip

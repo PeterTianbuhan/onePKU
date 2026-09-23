@@ -75,7 +75,15 @@ fn extract(bytes: Vec<u8>, from: u32, to: u32) -> Result<(Vec<u8>, u32)> {
     Ok((out, to - from + 1))
 }
 
-/// 返回抽出的几页（base64），并保存到 ~/Downloads/OnePKU/培养方案/；open 为真时用系统默认应用打开。
+fn title_component(title: &str, limit: usize) -> String {
+    let mut end = title.len().min(limit);
+    while !title.is_char_boundary(end) {
+        end -= 1;
+    }
+    folder_component(&title[..end])
+}
+
+/// 返回抽出的几页（base64），并保存到当前保存目录的培养方案文件夹；open 为真时用系统默认应用打开。
 pub async fn pages(id: &str, from: u32, to: u32, title: &str, open: bool) -> Result<Value> {
     if from == 0 || to < from {
         bail!("页码无效");
@@ -107,8 +115,8 @@ pub async fn pages(id: &str, from: u32, to: u32, title: &str, open: bool) -> Res
     std::fs::create_dir_all(&dir)?;
     let name = format!(
         "{} {}（{} 第{}-{}页）.pdf",
-        folder_component(&volume_title[..volume_title.len().min(40)]),
-        folder_component(&title[..title.len().min(60)]),
+        title_component(&volume_title, 40),
+        title_component(title, 60),
         folder_component(id),
         from,
         from + count - 1
@@ -116,12 +124,7 @@ pub async fn pages(id: &str, from: u32, to: u32, title: &str, open: bool) -> Res
     let path = dir.join(name);
     tokio::fs::write(&path, &pdf).await?;
     if open {
-        let status = std::process::Command::new("/usr/bin/open")
-            .arg(&path)
-            .status()?;
-        if !status.success() {
-            bail!("无法打开这份 PDF，请在下载文件夹中查看");
-        }
+        crate::platform::open(path.as_os_str())?;
     }
     Ok(json!({
         "pdf": base64::engine::general_purpose::STANDARD.encode(&pdf),
@@ -136,6 +139,16 @@ pub async fn pages(id: &str, from: u32, to: u32, title: &str, open: bool) -> Res
 mod tests {
     use super::*;
     use lopdf::dictionary;
+    #[test]
+    fn titles_truncate_at_character_boundaries() {
+        let title = "中文培养方案😀".repeat(20);
+        for limit in [40, 60] {
+            let part = title_component(&title, limit);
+            assert!(part.len() <= limit && part.len() + 4 > limit);
+            assert!(title.starts_with(&part));
+        }
+        assert_eq!(title_component("a/b:c", 60), "a_b_c");
+    }
     #[test]
     fn volumes_manifest_is_readable_and_pku_only() {
         let (title, url) = volume("2025-理科").unwrap();

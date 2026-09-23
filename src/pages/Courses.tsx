@@ -206,20 +206,35 @@ function CourseDetail({
 
 function Videos({ course, login }: { course: Course; login: Login }) {
   const q = useResource<Replay[]>({ kind: "videos", course: course.id });
-  const [playing, setPlaying] = useState<Replay>();
+  const [playing, setPlaying] = useState<{
+    video: Replay;
+    generation: string;
+  }>();
   const [params, navigate] = usePageParams("课程");
   const videoId = params.get("video");
   useEffect(() => {
-    setPlaying(q.data?.data?.find((video) => video.hash_id === videoId));
-  }, [videoId, q.data?.data]);
+    setPlaying((current) => {
+      if (!videoId) return undefined;
+      // A list refresh must not end an already-open playback session. Keep its
+      // snapshot until navigation or an account change selects another session.
+      const generation = q.data?.generation;
+      if (
+        current?.video.hash_id === videoId &&
+        (!generation || current.generation === generation)
+      )
+        return current;
+      const video = q.data?.data?.find((item) => item.hash_id === videoId);
+      return video ? { video, generation: generation ?? "" } : undefined;
+    });
+  }, [videoId, q.data?.data, q.data?.generation]);
   return (
     <>
       {playing && (
         <ReplayPlayer
-          key={`${course.id}:${playing.hash_id}:${q.data?.generation}`}
+          key={`${course.id}:${playing.video.hash_id}:${playing.generation}`}
           course={course.id}
-          video={playing}
-          generation={q.data?.generation ?? ""}
+          video={playing.video}
+          generation={playing.generation}
           close={() => {
             setPlaying(undefined);
             navigate({ video: null });
@@ -252,7 +267,10 @@ function Videos({ course, login }: { course: Course; login: Login }) {
                       video: v.hash_id,
                     }}
                     extra={
-                      <Button variant="primary" onClick={() => setPlaying(v)}>
+                      <Button
+                        variant="primary"
+                        onClick={() => navigate({ video: v.hash_id })}
+                      >
                         播放
                       </Button>
                     }

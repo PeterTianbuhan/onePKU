@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 mod auth;
+mod accounts;
 mod bookings;
 mod curriculum;
 mod downloads;
@@ -16,6 +17,7 @@ mod maintenance;
 mod materials;
 mod news;
 mod playback;
+mod platform;
 mod reminders;
 mod storage;
 mod study;
@@ -112,6 +114,8 @@ pub enum Request {
         video: String,
         #[serde(default)]
         refresh: bool,
+        #[serde(default)]
+        position: f64,
     },
     PlaybackStatus {
         id: String,
@@ -233,6 +237,9 @@ pub enum Request {
     DownloadCancel {
         id: String,
     },
+    DownloadRetry {
+        id: String,
+    },
     Open {
         target: String,
     },
@@ -256,6 +263,7 @@ pub struct Problem {
 pub struct Core {
     subtitles: Mutex<subtitles::SubtitleStore>,
     subtitle_account_lock: tokio::sync::Mutex<()>,
+    course_account_lock: tokio::sync::Mutex<()>,
     materials_lock: Mutex<()>,
     playback: Mutex<playback::PlaybackStore>,
     playback_prepare_lock: tokio::sync::Mutex<()>,
@@ -275,7 +283,10 @@ pub struct Core {
 fn owner(req: &Request) -> &'static str {
     match req {
         Request::BookingGrid { .. } | Request::BookingApplications => "bdkj",
-        Request::DownloadBatch { .. }
+        Request::Download { .. }
+        | Request::DownloadStatus { .. }
+        | Request::DownloadRetry { .. }
+        | Request::DownloadBatch { .. }
         | Request::OpenArchive { .. }
         | Request::LocalMaterials { .. }
         | Request::ReadLocalMaterial { .. }
@@ -571,7 +582,7 @@ impl Core {
             Request::OpenDownloadRoot => {
                 let dir = downloads::download_root()?;
                 std::fs::create_dir_all(&dir)?;
-                std::process::Command::new("/usr/bin/open").arg(dir).spawn()?;
+                platform::open(dir.as_os_str())?;
                 json!({"opened":true})
             }
             Request::SetKeepAlive { enabled } => {
@@ -582,9 +593,7 @@ impl Core {
             Request::SetProfile { profile } => self.save_profile(profile)?,
             Request::OpenArchive { course } => {
                 let dir = self.material_directory(course).await?;
-                std::process::Command::new("/usr/bin/open")
-                    .arg(dir)
-                    .spawn()?;
+                platform::open(dir.as_os_str())?;
                 json!({"opened":true})
             }
             Request::LocalMaterials { course } => self.local_materials(course).await?,
@@ -601,7 +610,8 @@ impl Core {
                 course,
                 video,
                 refresh,
-            } => self.playback_prepare(course, video, *refresh).await?,
+                position,
+            } => self.playback_prepare(course, video, *refresh, *position).await?,
             Request::SubtitleStatus { id } => self.subtitle_status(id)?,
             Request::SubtitleStart { id } => self.subtitle_start(id)?,
             Request::SubtitleCancel { id } => self.subtitle_cancel(id)?,
@@ -634,7 +644,7 @@ impl Core {
                     .list_courses(true)
                     .await?
                     .iter()
-                    .map(|c| json!({"id":c.id,"name":c.name()}))
+                    .map(study::course_value)
                     .collect::<Vec<_>>())
             }
             Request::PrepareSubmission {
@@ -684,8 +694,15 @@ impl Core {
                 let mut succeeded = 0;
                 for (name, res) in results {
                     match res {
-                        Ok(Ok(Value::Array(items))) => {
+                        Ok(Ok(Value::Array(mut items))) => {
                             succeeded += 1;
+                            for row in &mut items {
+                                if let Some(c) = courses.iter().find(|c| {
+                                    row["course_id"].as_str() == Some(c.id.as_str())
+                                }) {
+                                    study::apply_course_metadata(row, &study::course_value(c));
+                                }
+                            }
                             rows.extend(items)
                         }
                         _ => warnings.push(format!("{name} 未能更新")),
@@ -795,11 +812,10 @@ impl Core {
             Request::Download { id } => self.download(id)?,
             Request::DownloadStatus { id } => self.download_status(id)?,
             Request::DownloadCancel { id } => self.download_cancel(id)?,
+            Request::DownloadRetry { id } => self.download_retry(id).await?,
             Request::Open { target } => {
                 let url = official_target(target)?;
-                std::process::Command::new("/usr/bin/open")
-                    .arg(url)
-                    .spawn()?;
+                platform::open(std::ffi::OsStr::new(url))?;
                 json!({"opened":true})
             }
         };

@@ -4,7 +4,7 @@ OnePKU 是一个本地运行的北大校园桌面应用。欢迎修 bug、补培
 
 ## 开发环境
 
-需要 Node.js（20 以上）、Rust stable 与 Xcode Command Line Tools。
+需要 Node.js 24.15+（24 LTS；也支持 22.22.2+ 或 26+）和 Rust stable。macOS 需要 Xcode Command Line Tools；Windows 需要 C++ Build Tools、Windows SDK 和 WebView2，见 [Windows 开发说明](docs/WINDOWS.md)。
 
 ```sh
 npm ci
@@ -21,6 +21,7 @@ npm run typecheck
 npm run format:check
 npm run verify:tokens
 cargo test -p campus-core --lib
+cargo test -p pku-course --lib --locked
 ```
 
 ## 项目边界
@@ -49,3 +50,11 @@ cargo test -p campus-core --lib
 ## 与上游的关系
 
 `vendor/pkucli/` 是 [pkuinfo/pkucli](https://github.com/pkuinfo/pkucli) 的 MIT 快照加本地补丁，改动记录在 [docs/UPSTREAM.md](docs/UPSTREAM.md)。对上游普适的修复请同时整理成补丁放到 `contributions/`，方便回馈；不要把上游的完整 checkout 放进仓库。
+
+## 跨平台贡献
+
+macOS 与 Windows 在同一个仓库、同一条主线上维护。请从最新 `main` 建功能分支，通过 PR 合并，不建立长期分离的 Windows 分支或另复制一份前端。平台差异尽量放在 `crates/campus-core/src/platform.rs` 和 `src-tauri/tauri.{macos,windows}.conf.json`，业务命令和凭证边界保持共享。
+
+`.github/workflows/desktop.yml` 在 PR 中检查 Windows x64 和 macOS Apple Silicon，并上传测试安装包；不会自动发布 Release。两个平台的检查都通过、真实账号只读流程完成后，再由维护者发布。没有硬件或账号验证的部分要在 PR 中明确注明，不能把成功编译描述为完整功能验收。
+
+Windows 移植同时修改了 vendored 会话持久化与 ffmpeg 进程启动；可回馈的增量见 `contributions/pkucli-windows.patch`。不要把个人 Rust/C++ 工具链、安装缓存、账号数据、测试日志或构建产物提交进 Git。
