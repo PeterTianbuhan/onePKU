@@ -2,7 +2,7 @@
 
 # OnePKU
 
-一个本地运行的北大校园桌面应用。课程、作业、成绩、通知、校历、空闲教室、校园卡放在一个窗口里，数据只在你的电脑上。
+本地运行的北大校园应用，包含 macOS / Windows 桌面端与 Android 客户端。课程、作业、成绩、通知、校历、空闲教室、校园卡集中查看，数据只在你的设备上。
 
 ![OnePKU 今日页](docs/onepku-preview.png)
 
@@ -21,6 +21,15 @@
 - **设置**：统一账号密码登录、各服务扫码登录、保持登录、缓存管理、字幕组件。
 
 课程资料和回放默认保存在 `~/Downloads/OnePKU/`，可在设置里改到别的文件夹；按学期、课程整理，附来源与 SHA-256。
+
+## Android 版
+
+手机上是独立的 Kotlin + Jetpack Compose 实现，不是桌面版打包。覆盖：账号密码登录、今日、课程与课程通知/资料/成绩、作业查看与提交、成绩单与 GPA、本院通知、空闲教室、校历、校园卡。详见 [android/README.md](android/README.md)。
+
+与桌面版的差别是刻意的——手机只做便携场景：没有课程回放，没有培养方案，树洞与校园卡只查询不互动。两点不同值得单独说明：
+
+- **登录方式**：手机只有账号密码登录（密码用学校公钥加密后提交，与会话凭证一起存在系统 Keystore 加密的本地存储里，用于会话过期后自动重登）。桌面版的扫码登录在手机上不提供，也不会保存密码到任何第三方。
+- **本院通知**：手机会读校内门户的「单位」识别你所在院系，通知页据此显示本院通知；桌面版固定提供教务部与信科来源。
 
 ## 安装
 
@@ -42,6 +51,10 @@ xattr -cr /Applications/OnePKU.app
 
 可选组件：下载回放为 MP4 需要 `ffmpeg`（`brew install ffmpeg`）；本机生成字幕需要 macOS 14 以上并运行一次 `bash scripts/subtitles/install.sh`，见 [字幕说明](docs/SUBTITLES.md)。播放回放、导入 SRT/VTT 字幕不需要这些。
 
+### Android
+
+未上架应用商店。从 [Releases](../../releases) 下载 APK 直接安装；想看最新未发布的构建，可以在 Actions 的 `Android CI` 运行记录里取 `onepku-android.apk` 产物。调试签名包安装时系统会提示"未知来源"，需要手动允许。
+
 ## 第一次打开
 
 1. 在设置里选择「统一登录」，输入学号和统一身份认证密码，依次连接教学网、树洞和校园卡；也可单独连接某个服务或切换扫码登录。默认勾选记住密码，可取消；密码仅在登录成功后保存在本机系统钥匙串。
@@ -57,6 +70,7 @@ xattr -cr /Applications/OnePKU.app
 - 考试安排来源当前不可用，不显示推断结果。
 - 培养方案完成度以教务部公开 PDF 清洗后的数据计算，匹配不上的课程标"待确认"，不假装算清；以学校毕业审查为准。
 - 浏览器与应用的登录态目前互相独立，可能需要各自登录。
+- Android 版没有课程回放与培养方案，也不提供扫码登录；写操作只有作业提交。
 - 数据存放与不会做的事见 [SECURITY.md](SECURITY.md)。
 
 ## 本地开发
@@ -89,6 +103,15 @@ npm run tauri -- build --config src-tauri/tauri.test.conf.json --bundles nsis --
 
 浏览器里用真实后端验收：`npm run build && npm run preview:live`，打开 `http://127.0.0.1:1421`。
 
+Android 客户端在 `android/` 下，需要 JDK 17 与 Android SDK（`compileSdk 35`）：
+
+```bash
+cd android
+./gradlew assembleDebug      # 产物 app/build/outputs/apk/debug/app-debug.apk
+```
+
+推送 `Android` 分支时 CI 会构建调试 APK 并上传产物，见 `.github/workflows/android.yml`。
+
 验证：
 
 ```bash
@@ -101,6 +124,7 @@ npm test && npm run typecheck && npm run format:check && npm run verify:tokens &
 src/                 React 界面（页面、组件、样式 token）
 crates/campus-core/  Rust 核心：类型化命令、缓存、认证、下载、回放、写操作
 src-tauri/           macOS / Windows 容器与原文窗口
+android/             Android 客户端（Kotlin + Compose，独立实现）
 vendor/pkucli/       PKU CLI 快照与本地补丁（MIT）
 data/curriculum/     培养方案结构化数据（由脚本生成）
 scripts/             token 校验、PDF 资源、字幕安装、培养方案清洗
