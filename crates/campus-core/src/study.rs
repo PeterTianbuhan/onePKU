@@ -215,6 +215,11 @@ impl Core {
         let a = pku_campuscard::api::CardApi::new(&maintenance::card_token()?)?;
         Ok(match part {
             "total" => serde_json::to_value(a.get_turnover_count(&first, &last).await?)?,
+            "consumption" => {
+                let rows = a.get_category_stats(&first, &last, 2).await?;
+                let amount: f64 = rows.iter().map(|row| row.amount).sum();
+                json!({"amount": amount})
+            }
             "daily" => serde_json::to_value(a.get_daily_stats(month, 2).await?)?,
             "category" => serde_json::to_value(a.get_category_stats(&first, &last, 2).await?)?,
             _ => bail!("invalid statistics part"),
@@ -261,7 +266,9 @@ mod tests {
             "26271-x: 数据结构 (A)",
         ] {
             let value = course_value(&pku_course::api::CourseInfo {
-                id: "_1_1".into(), long_title: title.into(), is_current: true,
+                id: "_1_1".into(),
+                long_title: title.into(),
+                is_current: true,
             });
             assert_eq!(value["name"], "数据结构 (A)");
             assert_eq!(value["semester"], "26-27学年第1学期");
@@ -281,7 +288,9 @@ mod tests {
         for request in [
             Request::Download { id: "file".into() },
             Request::DownloadStatus { id: "job".into() },
-            Request::LocalMaterials { course: "_1_1".into() },
+            Request::LocalMaterials {
+                course: "_1_1".into(),
+            },
         ] {
             assert_eq!(owner(&request), "course");
         }

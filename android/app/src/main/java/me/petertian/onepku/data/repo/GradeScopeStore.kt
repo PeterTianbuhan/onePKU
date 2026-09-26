@@ -16,19 +16,26 @@ import javax.inject.Singleton
  * 只按课程类别自动统计会漏,所以允许逐门加入或移出。只存本机。
  */
 @Singleton
-class GradeScopeStore @Inject constructor(@ApplicationContext context: Context) {
+class GradeScopeStore @Inject constructor(@ApplicationContext context: Context, private val sessions: me.petertian.onepku.core.session.SessionStore) {
     private val prefs = context.getSharedPreferences("grades_scope", Context.MODE_PRIVATE)
 
     private val _state = MutableStateFlow(load())
     val state: StateFlow<ScopeOverride> = _state.asStateFlow()
 
+    private fun key(suffix: String): String {
+        val uid = sessions.session(me.petertian.onepku.core.session.Service.TREEHOLE)?.uid.orEmpty()
+        val hash = java.security.MessageDigest.getInstance("SHA-256").digest(uid.toByteArray()).joinToString("") { "%02x".format(it) }
+        return "$hash:$suffix"
+    }
+    fun reload() { _state.value = load() }
+
     private fun load(): ScopeOverride = ScopeOverride(
-        included = prefs.getStringSet(KEY_INCLUDED, emptySet()) ?: emptySet(),
-        excluded = prefs.getStringSet(KEY_EXCLUDED, emptySet()) ?: emptySet(),
+        included = prefs.getStringSet(key(KEY_INCLUDED), emptySet()) ?: emptySet(),
+        excluded = prefs.getStringSet(key(KEY_EXCLUDED), emptySet()) ?: emptySet(),
     )
 
     fun setIncluded(entry: ScoreEntry, want: Boolean) {
-        val current = _state.value
+        val current = load()
         val included = current.included.toMutableSet()
         val excluded = current.excluded.toMutableSet()
         if (want) {
@@ -45,8 +52,8 @@ class GradeScopeStore @Inject constructor(@ApplicationContext context: Context) 
 
     private fun save(value: ScopeOverride) {
         prefs.edit()
-            .putStringSet(KEY_INCLUDED, value.included)
-            .putStringSet(KEY_EXCLUDED, value.excluded)
+            .putStringSet(key(KEY_INCLUDED), value.included)
+            .putStringSet(key(KEY_EXCLUDED), value.excluded)
             .apply()
         _state.value = value
     }

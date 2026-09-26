@@ -16,18 +16,16 @@ class TreeholeRepository @Inject constructor(
     private val api: TreeholeApi,
     private val auth: AuthManager,
 ) {
-    private var scoresCache: CacheEntry<ScoreReport>? = null
+    private val scoresCache = ScopedCache<Unit, ScoreReport>({ auth.cacheScope(Service.TREEHOLE) }, TTL)
 
-    suspend fun scores(forceRefresh: Boolean = false): ScoreReport {
-        scoresCache?.takeIf { !forceRefresh && it.fresh(TTL) }?.let { return it.data }
-        return withReauth(auth, Service.TREEHOLE) { api.scores() }.also { scoresCache = CacheEntry(it) }
-    }
+    suspend fun scores(forceRefresh: Boolean = false): ScoreReport =
+        scoresCache.get(Unit, forceRefresh) { withReauth(auth, Service.TREEHOLE) { api.scores() } }
 
     suspend fun sendSms(): String = api.sendSmsCode()
 
     suspend fun verifySms(code: String) {
         api.verifySmsCode(code)
-        scoresCache = null
+        scores(true)
     }
 
     companion object {
@@ -40,12 +38,10 @@ class CardRepository @Inject constructor(
     private val api: CardApi,
     private val auth: AuthManager,
 ) {
-    private var balanceCache: CacheEntry<CardBalance>? = null
+    private val balanceCache = ScopedCache<Unit, CardBalance>({ auth.cacheScope(Service.CARD) }, TTL)
 
-    suspend fun balance(forceRefresh: Boolean = false): CardBalance {
-        balanceCache?.takeIf { !forceRefresh && it.fresh(TTL) }?.let { return it.data }
-        return withReauth(auth, Service.CARD) { api.balance() }.also { balanceCache = CacheEntry(it) }
-    }
+    suspend fun balance(forceRefresh: Boolean = false): CardBalance =
+        balanceCache.get(Unit, forceRefresh) { withReauth(auth, Service.CARD) { api.balance() } }
 
     suspend fun turnover(page: Int): TurnoverPage = withReauth(auth, Service.CARD) { api.turnover(page) }
 

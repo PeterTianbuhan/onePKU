@@ -133,3 +133,109 @@ it("prefers official GPA at each scope without replacing the locally calculated 
   expect(screen.getByText("0.00")).toBeInTheDocument();
   expect(screen.getByText("80.00")).toBeInTheDocument();
 });
+
+it("separates professional-course GPA from school GPA and persists explicit scope changes", async () => {
+  let overrides = { included: [] as string[], excluded: [] as string[] };
+  const rows = [
+    { ...course("100", "1", "专业课"), kclbmc: "专业必修" },
+    { ...course("80", "3", "任选专业课"), kclbmc: "任选" },
+  ];
+  const requests: Record<string, unknown>[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_u, o) => {
+      const request = JSON.parse(o.body);
+      requests.push(request);
+      if (request.kind === "setGradeScope")
+        overrides = { included: request.included, excluded: request.excluded };
+      return {
+        ok: true,
+        json: async () => ({
+          data:
+            request.kind === "scores"
+              ? {
+                  courses: rows,
+                  semester_gpas: [],
+                  overall_gpa: "3.60",
+                  total_credits: "42",
+                }
+              : overrides,
+          error: null,
+          warnings: [],
+          stale: false,
+          generation: "account-A",
+          updatedAt: "2026-09-26",
+        }),
+      };
+    }),
+  );
+  const client = new QueryClient();
+  const renderGrades = () => (
+    <QueryClientProvider client={client}>
+      <Grades login={() => {}} />
+    </QueryClientProvider>
+  );
+  const view = render(renderGrades());
+  expect(await screen.findByText("3.60")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("成绩统计范围"), {
+    target: { value: "major" },
+  });
+  expect(await screen.findByText("4.00")).toBeInTheDocument();
+  expect(screen.queryByText("3.60")).not.toBeInTheDocument();
+  expect(screen.queryByText("任选专业课")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "调整课程范围" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /任选专业课/ }));
+  fireEvent.click(screen.getByRole("button", { name: "保存范围" }));
+  expect(await screen.findByText("3.44")).toBeInTheDocument();
+  expect(requests.find((r) => r.kind === "setGradeScope")?.generation).toBe(
+    "account-A",
+  );
+  view.unmount();
+  render(renderGrades());
+  fireEvent.change(await screen.findByLabelText("成绩统计范围"), {
+    target: { value: "major" },
+  });
+  expect(await screen.findByText("3.44")).toBeInTheDocument();
+});
+
+it("does not display default professional statistics when saved scope cannot be read", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_u, o) => {
+      const r = JSON.parse(o.body);
+      return {
+        ok: true,
+        json: async () => ({
+          data:
+            r.kind === "scores"
+              ? {
+                  courses: [{ ...course("100"), kclbmc: "专业必修" }],
+                  semester_gpas: [],
+                  overall_gpa: "3.60",
+                  total_credits: "1",
+                }
+              : null,
+          error:
+            r.kind === "gradeScope"
+              ? { code: "auth", message: "账号已变化" }
+              : null,
+          warnings: [],
+          generation: "A",
+          stale: false,
+          updatedAt: null,
+        }),
+      };
+    }),
+  );
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <Grades login={() => {}} />
+    </QueryClientProvider>,
+  );
+  fireEvent.change(await screen.findByLabelText("成绩统计范围"), {
+    target: { value: "major" },
+  });
+  expect(await screen.findByText("账号已变化")).toBeInTheDocument();
+  expect(screen.queryByText("4.00")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "调整课程范围" })).toBeDisabled();
+});

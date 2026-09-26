@@ -56,6 +56,7 @@ enum class AssignmentFilter(val label: String) {
 
 data class AssignmentsUiState(
     val refreshing: Boolean = false,
+    val warnings: List<String> = emptyList(),
     val filter: AssignmentFilter = AssignmentFilter.PENDING,
     val items: UiData<List<AssignmentSummary>> = UiData.Loading,
 )
@@ -75,11 +76,11 @@ class AssignmentsViewModel @Inject constructor(
 
     private fun load(force: Boolean) {
         viewModelScope.launch {
-            _ui.update { it.copy(refreshing = true) }
+            _ui.update { it.copy(refreshing = true, warnings = emptyList()) }
             val result = try {
                 val list = repo.courses(force).filter { c -> c.isCurrent }
                 UiData.Ready(
-                    repo.assignments(list, force)
+                    repo.assignments(list, force).also { batch -> _ui.update { it.copy(warnings = batch.warnings) } }.items
                         .sortedBy { a -> a.deadlineEpochMs ?: Long.MAX_VALUE },
                 )
             } catch (e: Exception) {
@@ -120,6 +121,7 @@ fun AssignmentsScreen(nav: NavHostController, vm: AssignmentsViewModel = hiltVie
                     )
                 }
             }
+            if (ui.warnings.isNotEmpty()) Text(ui.warnings.joinToString("\n"), modifier = Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error)
             PullToRefreshBox(
                 isRefreshing = ui.refreshing,
                 onRefresh = vm::refresh,

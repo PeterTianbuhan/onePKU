@@ -28,23 +28,23 @@ import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 
+data class AssignmentBatch(val items: List<AssignmentSummary>, val warnings: List<String>)
+
 @Singleton
 class CourseRepository @Inject constructor(
     private val api: CourseApi,
     private val auth: AuthManager,
     @ApplicationContext private val context: Context,
 ) {
-    private var coursesCache: CacheEntry<List<CourseInfo>>? = null
-    private val assignmentsCache = mutableMapOf<String, CacheEntry<List<AssignmentSummary>>>()
+    private val coursesCache = ScopedCache<Unit, List<CourseInfo>>({ auth.cacheScope(Service.COURSE) }, TTL)
+    private val assignmentsCache = ScopedCache<String, List<AssignmentSummary>>({ auth.cacheScope(Service.COURSE) }, TTL)
 
     private suspend fun <T> run(block: suspend CourseApi.() -> T): T = withReauth(auth, Service.COURSE) {
         api.block()
     }
 
-    suspend fun courses(forceRefresh: Boolean = false): List<CourseInfo> {
-        coursesCache?.takeIf { !forceRefresh && it.fresh(TTL) }?.let { return it.data }
-        return run { listCourses() }.also { coursesCache = CacheEntry(it) }
-    }
+    suspend fun courses(forceRefresh: Boolean = false): List<CourseInfo> =
+        coursesCache.get(Unit, forceRefresh) { run { listCourses() } }
 
     suspend fun announcements(courseId: String, courseName: String): List<Announcement> =
         run { listAnnouncements(courseId, courseName) }
@@ -59,49 +59,46 @@ class CourseRepository @Inject constructor(
 
     suspend fun learningGrades(courseId: String): List<LearningGrade> = run { learningGrades(courseId) }
 
-    /** 多门课作业汇总;逐门失败不拖垮整体。 */
-    suspend fun assignments(courses: List<CourseInfo>, forceRefresh: Boolean = false): List<AssignmentSummary> =
-        coroutineScope {
-            val sem = Semaphore(3)
-            courses.map { course ->
-                async {
-                    val cached = assignmentsCache[course.id]
-                        ?.takeIf { !forceRefresh && it.fresh(TTL) }
-                        ?.data
-                    if (cached != null) {
-                        cached
-                    } else {
-                        sem.acquire()
-                        try {
-                            val fresh = try {
-                                withReauth(auth, Service.COURSE) { api.listAssignmentsForCourse(course) }
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                emptyList()
-                            }
-                            fresh.also { assignmentsCache[course.id] = CacheEntry(it) }
-                        } finally {
-                            sem.release()
-                        }
-                    }
-                }
-            }.flatMap { it.await() }
-        }
+    /** Preserve successful courses and report failures; do not turn them into empty caches. */
+    suspend fun assignments(courses: List<CourseInfo>, forceRefresh: Boolean = false): AssignmentBatch = coroutineScope {
+        val expected = auth.cacheScope(Service.COURSE)
+        val sem = Semaphore(3)
+        val results = courses.map { course -> async {
+            sem.acquire()
+            try {
+                val items = assignmentsCache.get(course.id, forceRefresh) { this@CourseRepository.run { listAssignmentsForCourse(course) } }
+                items to null
+            } catch (e: CancellationException) { throw e
+            } catch (e: AccountChangedException) { throw e
+            } catch (e: Exception) { emptyList<AssignmentSummary>() to "${course.name}：作业未能读取，请重试"
+            } finally { sem.release() }
+        }}.map { it.await() }
+        if (auth.cacheScope(Service.COURSE) != expected) throw AccountChangedException()
+        AssignmentBatch(results.flatMap { it.first }, results.mapNotNull { it.second })
+    }
 
     /** 单门课的作业列表(课程详情页用)。 */
     suspend fun assignmentsForCourse(courseId: String, courseName: String): List<AssignmentSummary> =
         run { listAssignmentsForCourse(CourseInfo(courseId, courseName, true)) }
 
-    /** 下载附件到 应用专属 Download/OnePKU/<courseName>/,返回文件。 */
+    /** 按账号和来源 URL 隔离附件，完成下载后才复用。 */
     suspend fun download(courseName: String, attachment: Attachment): File {
+        val expected = auth.cacheScope(Service.COURSE)
         val dir = File(
             context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
-            "OnePKU/${sanitize(courseName)}",
+            "OnePKU/${sha256(auth.accountKey(Service.COURSE).toByteArray()).take(24)}/${sanitize(courseName)}/${sha256(attachment.url.toByteArray()).take(24)}",
         )
         val dest = File(dir, sanitize(attachment.name))
+        if (auth.cacheScope(Service.COURSE) != expected) throw AccountChangedException()
         if (dest.exists() && dest.length() > 0) return dest
-        return run { downloadFile(attachment.url, dest) }
+        dir.mkdirs()
+        val partial = File.createTempFile("download-", ".part", dir)
+        try {
+            run { downloadFile(attachment.url, partial) }
+            if (auth.cacheScope(Service.COURSE) != expected) throw AccountChangedException()
+            if (!partial.renameTo(dest)) throw CourseApiException("附件未能保存，请重试")
+            return dest
+        } finally { partial.delete() }
     }
 
     private fun sanitize(name: String): String =

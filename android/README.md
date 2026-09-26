@@ -25,19 +25,23 @@
 
 ```bash
 cd android
-./gradlew assembleDebug
+./gradlew testDebugUnitTest assembleDebug
 ```
 
 产物在 `app/build/outputs/apk/debug/`。Release 构建需自行配置签名。
 
 ## 从 GitHub 下载 APK
 
-推送到 `Android` 分支后，GitHub Actions（`.github/workflows/android.yml`）自动构建并在运行产物（Artifacts）中提供 `onepku-android.apk`；发布 Release 时 APK 会附加到 Release 页面。
+Android 改动的 PR、`main` / `Android` 分支推送及手动运行会执行单元测试并构建 APK，在 Actions 的 `Android APK` 运行产物（`onepku-android-apk`）中提供 `onepku-android.apk`。当前为调试签名测试包，不随桌面 Release 自动发布。
+
+整合前的贡献者版本可在 [Northodieart 的 v0.2.0 Release](https://github.com/Northodieart/onePKU/releases/tag/onepku-for-android-v0.2.0) 下载。
 
 ## 隐私
 
 - 账号密码只用于登录学校服务，保存在本机 EncryptedSharedPreferences（AES256-GCM，密钥由 Android Keystore 托管）。
-- 各服务会话 Cookie 存于应用私有目录；退出登录即全部清除。
+- 各服务会话 Cookie 存于应用私有目录；断开服务会清除该服务会话及自动重登凭证，退出登录清除全部。课程、作业、成绩、余额缓存随账号变化失效，旧请求结果不写入新账号缓存。
+- 专业课范围与院系选择按对应服务账号保存。升级前的全局密码和手动课程范围不自动分配给某个账号；旧用户需要重新登录，并重新确认专业课范围。
+- 作业列表读取失败会列出失败课程，不缓存成“没有作业”。
 - 不接入任何第三方统计或广告 SDK，网络请求只发往学校域名。
 
 ## 协议来源

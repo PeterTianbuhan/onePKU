@@ -712,6 +712,7 @@ dependencies = [
  "dunce",
  "fs2",
  "futures",
+ "keyring",
  "libc",
  "lopdf",
  "mime_guess",
@@ -735,6 +736,7 @@ dependencies = [
  "trash",
  "url",
  "windows-sys 0.61.2",
+ "zeroize",
 ]
 
 [[package]]

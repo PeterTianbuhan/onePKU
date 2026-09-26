@@ -187,7 +187,17 @@ export function serviceFor(request: Request): Service | undefined {
     ].includes(request.kind)
   )
     return "course";
-  if (["timetable", "holes", "hole", "scores", "exams"].includes(request.kind))
+  if (
+    [
+      "timetable",
+      "holes",
+      "hole",
+      "scores",
+      "exams",
+      "gradeScope",
+      "setGradeScope",
+    ].includes(request.kind)
+  )
     return "treehole";
   if (["card", "transactions", "cardStats"].includes(request.kind))
     return "campuscard";

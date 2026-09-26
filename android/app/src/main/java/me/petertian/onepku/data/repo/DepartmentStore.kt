@@ -24,25 +24,27 @@ class DepartmentStore @Inject constructor(
     private val _state = MutableStateFlow(read())
     val state: StateFlow<String?> = _state.asStateFlow()
 
-    fun current(): String? = _state.value
+    fun current(): String? = read().also { _state.value = it }
+
+    private fun key(name: String): String = "${sessionStore.session(Service.PORTAL)?.uid.orEmpty()}:$name"
 
     fun select(school: String?) {
-        prefs.edit().apply { if (school == null) remove(KEY_MANUAL) else putString(KEY_MANUAL, school) }.apply()
+        prefs.edit().apply { if (school == null) remove(key(KEY_MANUAL)) else putString(key(KEY_MANUAL), school) }.apply()
         _state.value = read()
     }
 
     /** 登录门户成功后缓存学校返回的「单位」。 */
     fun cacheDetected(department: String) {
         if (department.isNotBlank()) {
-            prefs.edit().putString(KEY_DETECTED, department).apply()
+            prefs.edit().putString(key(KEY_DETECTED), department).apply()
             _state.value = read()
         }
     }
 
     private fun read(): String? =
-        prefs.getString(KEY_MANUAL, null)
+        prefs.getString(key(KEY_MANUAL), null)
             ?: sessionStore.session(Service.PORTAL)?.extra?.get("department")?.takeIf { it.isNotBlank() }
-            ?: prefs.getString(KEY_DETECTED, null)
+            ?: prefs.getString(key(KEY_DETECTED), null)
 
     private companion object {
         const val KEY_MANUAL = "manual"

@@ -98,6 +98,7 @@ class GradesViewModel @Inject constructor(
     fun resetScope() = scopeStore.reset()
 
     fun load(force: Boolean) {
+        scopeStore.reload()
         viewModelScope.launch {
             _ui.update { it.copy(refreshing = true) }
             val result = try {

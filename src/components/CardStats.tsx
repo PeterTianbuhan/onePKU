@@ -28,6 +28,10 @@ export default function CardStats({
     { kind: "cardStats", month, part: "daily" },
     !!month && view === "statistics",
   );
+  const consumption = useResource<{ amount: number }>(
+    { kind: "cardStats", month, part: "consumption" },
+    !!month,
+  );
   const category = useResource<
     { turnoverType: string | null; amount: number }[]
   >(
@@ -66,12 +70,29 @@ export default function CardStats({
             {(d) => (
               <div className="study-metrics">
                 <div>
-                  <span>支出</span>
+                  <span>全部转出</span>
                   <strong>¥{money(d.expenses)}</strong>
                 </div>
                 <div>
-                  <span>收入</span>
+                  <span>全部转入</span>
                   <strong>¥{money(d.income)}</strong>
+                </div>
+              </div>
+            )}
+          </Resource>
+          <Resource
+            title="月度消费"
+            className="resource-plain"
+            q={consumption}
+            login={login}
+            service="campuscard"
+          >
+            {(d) => (
+              <div className="study-metrics">
+                <div>
+                  <span>消费支出</span>
+                  <strong>¥{money(d.amount)}</strong>
+                  <span>与下方消费统计口径一致</span>
                 </div>
               </div>
             )}

@@ -6,12 +6,19 @@ import me.petertian.onepku.data.auth.AuthManager
 
 /** 会话过期时用已存凭证自动重登一次并重试。 */
 suspend fun <T> withReauth(auth: AuthManager, service: Service, block: suspend () -> T): T {
+    val before = auth.cacheScope(service)
     return try {
-        block()
+        val result = block()
+        if (auth.cacheScope(service) != before) throw AccountChangedException()
+        result
     } catch (e: SessionExpiredException) {
-        if (!auth.hasCredentials()) throw e
+        if (auth.cacheScope(service) != before) throw AccountChangedException()
+        if (!auth.hasCredentials(service)) throw e
         auth.relogin(service)
-        block()
+        val restored = auth.cacheScope(service)
+        val result = block()
+        if (auth.cacheScope(service) != restored) throw AccountChangedException()
+        result
     }
 }
 

@@ -38,12 +38,17 @@ class AuthManager @Inject constructor(
 
     fun loggedInServices(): Set<Service> = Service.entries.filter { isLoggedIn(it) }.toSet()
 
-    fun hasCredentials(): Boolean = sessionStore.credentials() != null
+    fun hasCredentials(): Boolean = Service.entries.any { hasCredentials(it) }
 
-    fun storedUsername(): String? = sessionStore.credentials()?.username
+    fun hasCredentials(service: Service): Boolean = sessionStore.credentials(service) != null
+
+    fun cacheScope(service: Service): String = sessionStore.cacheScope(service)
+
+    fun accountKey(service: Service): String = sessionStore.session(service)?.uid?.takeIf { it.isNotBlank() } ?: throw SessionExpiredException("请先登录")
+
+    fun storedUsername(): String? = sessionStore.storedUsername()
 
     suspend fun login(service: Service, username: String, password: String, otpCode: String? = null) {
-        sessionStore.saveCredentials(Credentials(username, password))
         try {
             when (service) {
                 Service.COURSE -> loginCourse(username, password, otpCode)
@@ -51,6 +56,8 @@ class AuthManager @Inject constructor(
                 Service.CARD -> loginCard(username, password, otpCode)
                 Service.PORTAL -> loginPortal(username, password, otpCode)
             }
+            sessionStore.session(service)?.let { sessionStore.saveSession(service, it.copy(account = username)) }
+            sessionStore.saveCredentials(service, Credentials(username, password))
         } catch (e: Exception) {
             sessionStore.clear(service)
             throw e
@@ -59,8 +66,9 @@ class AuthManager @Inject constructor(
 
     /** 用已存凭证重登;无凭证抛 SessionExpiredException。 */
     suspend fun relogin(service: Service) {
-        val cred = sessionStore.credentials()
+        val cred = sessionStore.credentials(service)
             ?: throw SessionExpiredException("请先登录")
+        if (sessionStore.session(service)?.account?.let { it != cred.username } == true) throw SessionExpiredException("账号已变化，请重新登录")
         login(service, cred.username, cred.password)
     }
 
@@ -152,7 +160,7 @@ class AuthManager @Inject constructor(
                 StoredSession(
                     token = jwt,
                     expiresAt = expiresIn,
-                    uid = uid,
+                    uid = uid.ifBlank { username },
                     extra = mapOf("device_uuid" to deviceUuid, "full_uuid" to fullUuid),
                 ),
             )

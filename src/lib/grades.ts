@@ -14,6 +14,47 @@ export type Scores = {
   total_credits: string;
 };
 
+export type GradeScope = "all" | "major";
+export type GradeOverrides = { included: string[]; excluded: string[] };
+export const emptyGradeOverrides: GradeOverrides = {
+  included: [],
+  excluded: [],
+};
+export const gradeCourseKey = (course: GradeCourse) =>
+  JSON.stringify([
+    course.xnd,
+    course.xq,
+    course.kcmc,
+    course.kclbmc,
+    course.xf,
+  ]);
+export const isMajorCourse = (course: GradeCourse) =>
+  /专业必修|专业限选/.test(course.kclbmc);
+export function countsAsMajor(course: GradeCourse, overrides: GradeOverrides) {
+  const key = gradeCourseKey(course);
+  return (
+    !overrides.excluded.includes(key) &&
+    (isMajorCourse(course) || overrides.included.includes(key))
+  );
+}
+export function setGradeIncluded(
+  overrides: GradeOverrides,
+  course: GradeCourse,
+  included: boolean,
+): GradeOverrides {
+  const key = gradeCourseKey(course);
+  return {
+    included: [
+      ...overrides.included.filter((k) => k !== key),
+      ...(included && !isMajorCourse(course) ? [key] : []),
+    ],
+    excluded: [
+      ...overrides.excluded.filter((k) => k !== key),
+      ...(!included && isMajorCourse(course) ? [key] : []),
+    ],
+  };
+}
+
 export const gradeRulesUrl =
   "https://dean.pku.edu.cn/web/rules_info.php?id=173";
 

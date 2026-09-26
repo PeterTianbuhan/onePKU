@@ -39,7 +39,7 @@ class TodayViewModel @Inject constructor(
     val ui: StateFlow<TodayUiState> = _ui.asStateFlow()
 
     init {
-        if (!auth.hasCredentials()) {
+        if (!auth.hasCredentials() && auth.loggedInServices().isEmpty()) {
             _ui.update { it.copy(loggedOut = true) }
         } else {
             refresh()
@@ -48,7 +48,7 @@ class TodayViewModel @Inject constructor(
 
     fun refresh() {
         if (_ui.value.refreshing) return
-        _ui.update { it.copy(refreshing = true) }
+        _ui.update { it.copy(refreshing = true, loggedOut = !auth.hasCredentials() && auth.loggedInServices().isEmpty()) }
         viewModelScope.launch {
             coroutineScope {
                 val assignmentsJob = async { loadAssignments() }
@@ -61,12 +61,18 @@ class TodayViewModel @Inject constructor(
     }
 
     private suspend fun loadAssignments() {
-        if (!auth.isLoggedIn(Service.COURSE) && !auth.hasCredentials()) return
+        if (!auth.isLoggedIn(Service.COURSE) && !auth.hasCredentials(Service.COURSE)) {
+            _ui.update { it.copy(assignments = UiData.Failure("请先连接教学网")) }
+            return
+        }
         _ui.update {
             it.copy(
                 assignments = try {
                     val list = courses.courses().filter { c -> c.isCurrent }
-                    courses.assignments(list)
+                    courses.assignments(list).let { batch ->
+                            if (batch.warnings.isNotEmpty()) throw IllegalStateException(batch.warnings.joinToString("；"))
+                            batch.items
+                        }
                         .filter { a -> !a.submitted && (a.deadlineEpochMs ?: Long.MAX_VALUE) >= System.currentTimeMillis() }
                         .sortedBy { a -> a.deadlineEpochMs ?: Long.MAX_VALUE }
                         .let { ready -> UiData.Ready(ready) }
@@ -78,7 +84,10 @@ class TodayViewModel @Inject constructor(
     }
 
     private suspend fun loadAnnouncements() {
-        if (!auth.isLoggedIn(Service.COURSE) && !auth.hasCredentials()) return
+        if (!auth.isLoggedIn(Service.COURSE) && !auth.hasCredentials(Service.COURSE)) {
+            _ui.update { it.copy(announcements = UiData.Failure("请先连接教学网")) }
+            return
+        }
         _ui.update {
             it.copy(
                 announcements = try {
@@ -99,7 +108,10 @@ class TodayViewModel @Inject constructor(
     }
 
     private suspend fun loadCard() {
-        if (!auth.isLoggedIn(Service.CARD) && !auth.hasCredentials()) return
+        if (!auth.isLoggedIn(Service.CARD) && !auth.hasCredentials(Service.CARD)) {
+            _ui.update { it.copy(cardBalance = UiData.Failure("请先连接校园卡")) }
+            return
+        }
         _ui.update {
             it.copy(
                 cardBalance = try {

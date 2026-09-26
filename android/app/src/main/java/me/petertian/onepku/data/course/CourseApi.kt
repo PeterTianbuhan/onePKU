@@ -229,7 +229,7 @@ class CourseApi @Inject constructor(
     /** 一次抓取同时取到作业说明与当前提交情况。 */
     suspend fun assignmentOverview(courseId: String, contentId: String): Pair<AssignmentDetail, SubmissionSnapshot> {
         val doc = getDoc(assignmentUrl(courseId, contentId))
-        return parseAssignment(doc) to runCatching { parseSubmission(doc) }.getOrDefault(SubmissionSnapshot(null, emptyList()))
+        return parseAssignment(doc) to parseSubmission(doc)
     }
 
     /** 汇总一门课的全部作业(递归发现 + 逐个详情)。 */
@@ -243,7 +243,7 @@ class CourseApi @Inject constructor(
         assignments.map { item ->
             async(Dispatchers.IO) {
                 sem.withPermit {
-                    runCatching { assignmentOverview(course.id, item.id) }.getOrNull()?.let { (detail, submission) ->
+                    assignmentOverview(course.id, item.id).let { (detail, submission) ->
                         val title = detail.title.ifEmpty { item.title }
                         val grade = gradeCenter[title.trim()]
                         val graded = grade?.score?.trim()?.takeUnless { it.isEmpty() || it == "-" || it == "—" }

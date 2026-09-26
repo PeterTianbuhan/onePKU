@@ -137,8 +137,9 @@ class CardApi @Inject constructor(
      */
     suspend fun monthlyStat(): MonthlyStat {
         val now = Date()
-        val from = SimpleDateFormat("yyyy-MM-01", Locale.US).format(now)
-        val to = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(now)
+        val zone = java.util.TimeZone.getTimeZone("Asia/Shanghai")
+        val from = SimpleDateFormat("yyyy-MM-01", Locale.US).apply { timeZone = zone }.format(now)
+        val to = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = zone }.format(now)
 
         val categories = apiGet("/berserker-search/statistics/turnover?type=2&timeFrom=$from&timeTo=$to")
         val rows = categories["data"]?.jsonArray.orEmpty().mapNotNull { el ->

@@ -1,9 +1,9 @@
 //! Local resource snapshots. Cache-first/TTL/stale conventions follow PkuClaw's
 //! pku3b cache contract; credentials remain in PKU CLI, never in this snapshot.
+use super::*;
 use crate::platform::PrivateOpenOptions;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use super::*;
 use std::{
     fs,
     io::Write,
@@ -45,6 +45,7 @@ pub(crate) fn cacheable(req: &Request) -> bool {
             | Request::Holes { .. }
             | Request::Hole { .. }
             | Request::CalendarPdf { .. }
+            | Request::FacultyNews { .. }
             | Request::News { .. }
             | Request::NewsDetail { .. }
     )

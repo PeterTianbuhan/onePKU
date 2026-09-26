@@ -4301,3 +4301,25 @@ input[type="checkbox"] {
 .connection-state {
   font-size: 12px;
 }
+
+.grade-scope-toolbar {
+  margin-bottom: 12px;
+}
+.grade-scope-list {
+  max-height: 50vh;
+  overflow-y: auto;
+  margin-block: 12px;
+}
+.grade-scope-course {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-block: 8px;
+}
+.grade-scope-course span {
+  display: grid;
+  gap: 4px;
+}
+.grade-scope-course small {
+  color: var(--muted);
+}

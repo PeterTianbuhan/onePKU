@@ -14,6 +14,8 @@ mod bookings;
 mod credentials;
 mod curriculum;
 mod downloads;
+mod faculty;
+mod grade_scope;
 mod maintenance;
 mod materials;
 mod news;
@@ -43,6 +45,10 @@ pub enum Request {
         source: String,
         page: u32,
     },
+    FacultyNews {
+        school: String,
+        page: u32,
+    },
     NewsDetail {
         source: String,
         id: String,
@@ -69,6 +75,14 @@ pub enum Request {
     ResetDownloadRoot,
     OpenDownloadRoot,
     Profile,
+    GradeScope {
+        generation: String,
+    },
+    SetGradeScope {
+        generation: String,
+        included: Vec<String>,
+        excluded: Vec<String>,
+    },
     SetProfile {
         profile: Value,
     },
@@ -324,6 +338,8 @@ fn owner(req: &Request) -> &'static str {
         | Request::AssignmentFeedback { .. }
         | Request::Content { .. } => "course",
         Request::Scores
+        | Request::GradeScope { .. }
+        | Request::SetGradeScope { .. }
         | Request::Exams
         | Request::Timetable
         | Request::Holes { .. }
@@ -538,6 +554,7 @@ impl Core {
                     | Request::Rooms { .. }
                     | Request::Calendar
                     | Request::CalendarPdf { .. }
+                    | Request::FacultyNews { .. }
                     | Request::News { .. }
                     | Request::NewsDetail { .. }
             )
@@ -577,6 +594,11 @@ impl Core {
                 json!({"cleared":true})
             }
             Request::News { source, page } => news::list(source, *page).await?,
+            Request::FacultyNews { school, page } => {
+                let (value, notes) = faculty::list(school, *page).await?;
+                warnings.extend(notes);
+                value
+            }
             Request::NewsDetail { source, id } => {
                 let item = self.news_item(source, id)?;
                 news::detail(source, &item).await?
@@ -617,6 +639,18 @@ impl Core {
                 json!({"keepAlive":enabled})
             }
             Request::Profile => self.profile()?,
+            Request::GradeScope { generation } => {
+                let _guard = self.login_lock.lock().await;
+                grade_scope::read(generation)?
+            }
+            Request::SetGradeScope {
+                generation,
+                included,
+                excluded,
+            } => {
+                let _guard = self.login_lock.lock().await;
+                grade_scope::save(generation, included, excluded)?
+            }
             Request::SetProfile { profile } => self.save_profile(profile)?,
             Request::OpenArchive { course } => {
                 let dir = self.material_directory(course).await?;

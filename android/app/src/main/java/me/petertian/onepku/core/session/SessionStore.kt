@@ -21,6 +21,7 @@ data class StoredSession(
     val token: String,
     val expiresAt: Long? = null,
     val uid: String? = null,
+    val account: String? = null,
     val extra: Map<String, String> = emptyMap(),
 ) {
     fun isExpired(nowSec: Long = System.currentTimeMillis() / 1000): Boolean =
@@ -36,6 +37,11 @@ data class Credentials(val username: String, val password: String)
 @Singleton
 class SessionStore @Inject constructor(@ApplicationContext context: Context) {
 
+    private val revisions = java.util.concurrent.ConcurrentHashMap<Service, Long>()
+
+    @Synchronized
+    fun cacheScope(service: Service): String = "${revisions[service] ?: 0}:${session(service)?.uid.orEmpty()}"
+
     private val json = Json { ignoreUnknownKeys = true }
 
     private val prefs = EncryptedSharedPreferences.create(
@@ -46,17 +52,27 @@ class SessionStore @Inject constructor(@ApplicationContext context: Context) {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
     )
 
-    fun saveCredentials(c: Credentials) {
-        prefs.edit().putString("cred_username", c.username).putString("cred_password", c.password).apply()
+    init { prefs.edit().remove("cred_password").apply() }
+
+    fun saveCredentials(service: Service, c: Credentials) {
+        prefs.edit()
+            .putString("cred_${service.key}_username", c.username)
+            .putString("cred_${service.key}_password", c.password)
+            .putString("cred_username", c.username)
+            .apply()
     }
 
-    fun credentials(): Credentials? {
-        val u = prefs.getString("cred_username", null) ?: return null
-        val p = prefs.getString("cred_password", null) ?: return null
+    fun credentials(service: Service): Credentials? {
+        val u = prefs.getString("cred_${service.key}_username", null) ?: return null
+        val p = prefs.getString("cred_${service.key}_password", null) ?: return null
         return Credentials(u, p)
     }
 
+    fun storedUsername(): String? = prefs.getString("cred_username", null)
+
+    @Synchronized
     fun saveSession(service: Service, session: StoredSession) {
+        if (this.session(service)?.uid != session.uid) revisions.merge(service, 1L, Long::plus)
         prefs.edit().putString("session_${service.key}", json.encodeToString(StoredSession.serializer(), session)).apply()
     }
 
@@ -70,11 +86,16 @@ class SessionStore @Inject constructor(@ApplicationContext context: Context) {
         return !s.isExpired()
     }
 
+    @Synchronized
     fun clear(service: Service) {
+        revisions.merge(service, 1L, Long::plus)
+        prefs.edit().remove("cred_${service.key}_username").remove("cred_${service.key}_password").apply()
         prefs.edit().remove("session_${service.key}").apply()
     }
 
+    @Synchronized
     fun clearAll() {
+        Service.entries.forEach { revisions.merge(it, 1L, Long::plus) }
         prefs.edit().clear().apply()
     }
 }
