@@ -1,5 +1,11 @@
 # PKU CLI fork boundary
 
+## 桌面统一登录
+
+交互参考 Northodieart 的 [Android PR #2](https://github.com/PeterTianbuhan/onePKU/pull/2)，审阅版本 `25662d9c0fab99081e76192808349405a328c948`。沿用现有 Rust IAAA RSA 和各服务回调，不引入 Kotlin 网络层。桌面增量包括逐服务结果、可选系统钥匙串、只读认证恢复和原生密码 IPC。
+
+`pkucli-login-identity.patch`：教学网用全新 Cookie 容器建立 SSO，通过 `/learn/api/public/v1/users/me` 确认身份，密码登录须与输入账号一致，再保存会话；树洞 GUI 登录也不继承旧 Cookie，避免回调失败时读到旧 token。补丁基于 OnePKU `bbdec7f` 的两个登录文件，可独立应用；尚未回馈上游。
+
 ## v0.2 integration
 
 - [pku-coe-notice-helper](https://github.com/ha0xin/pku-coe-notice-helper): portal and dean request contracts adapted into Rust. MIT license retained in `licenses/pku-coe-notice-helper-LICENSE.txt`.

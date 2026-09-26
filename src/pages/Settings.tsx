@@ -14,6 +14,7 @@ import {
   action,
   fmtTime,
   chooseDownloadFolder,
+  forgetPasswords,
   type Preferences,
 } from "../lib/api";
 import {
@@ -71,6 +72,8 @@ export default function Settings({
   const prefs = useResource<Preferences>({ kind: "preferences" });
   const [keepAliveBusy, setKeepAliveBusy] = useState(false);
   const [keepAliveError, setKeepAliveError] = useState("");
+  const [passwordMessage, setPasswordMessage] = useState("");
+  const [passwordBusy, setPasswordBusy] = useState(false);
   const [storageMessage, setStorageMessage] = useState("");
   const [storageError, setStorageError] = useState("");
   const [cacheMessage, setCacheMessage] = useState("");
@@ -138,7 +141,12 @@ export default function Settings({
       </header>
 
       <section className="resource settings-section" aria-label="账号">
-        <h2>账号</h2>
+        <div className="settings-account-heading">
+          <h2>账号</h2>
+          <Button variant="primary" onClick={() => login("all")}>
+            统一登录
+          </Button>
+        </div>
         <div className="connections">
           {(["course", "treehole", "campuscard"] as Service[]).map((s) => {
             const session = sessions?.find((x) => x.service === s);
@@ -179,7 +187,7 @@ export default function Settings({
         </div>
         <SettingRow
           label="保持登录"
-          description="运行时每 15 分钟做一次轻量会话检查；学校要求验证或令牌到期时仍需重新登录。"
+          description="定期检查会话；已记住密码时，会话失效可自动重登。短信和动态口令仍需手动验证。"
           control={
             <button
               type="button"
@@ -198,6 +206,38 @@ export default function Settings({
             (prefs.error || prefs.data?.error ? "设置暂时无法读取" : undefined)
           }
         />
+        {inApp && (
+          <SettingRow
+            label="已保存的密码"
+            description="删除系统钥匙串中 OnePKU 保存的密码，当前已连接的会话继续可用。"
+            control={
+              <Button
+                disabled={passwordBusy}
+                onClick={async () => {
+                  setPasswordBusy(true);
+                  setPasswordMessage("");
+                  try {
+                    await forgetPasswords();
+                    setPasswordMessage("已删除保存的密码");
+                  } catch (e) {
+                    setPasswordMessage(
+                      e instanceof Error ? e.message : String(e),
+                    );
+                  } finally {
+                    setPasswordBusy(false);
+                  }
+                }}
+              >
+                {passwordBusy ? "正在删除…" : "忘记密码"}
+              </Button>
+            }
+          />
+        )}
+        {passwordMessage && (
+          <p className="subtle" role="status">
+            {passwordMessage}
+          </p>
+        )}
       </section>
 
       <section className="resource settings-section" aria-label="年级与专业">

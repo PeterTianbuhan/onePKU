@@ -8,21 +8,23 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-mod auth;
 mod accounts;
+mod auth;
 mod bookings;
+mod credentials;
 mod curriculum;
 mod downloads;
 mod maintenance;
 mod materials;
 mod news;
-mod playback;
 mod platform;
+mod playback;
 mod reminders;
 mod storage;
 mod study;
 mod subtitles;
 mod writes;
+pub use auth::PasswordLoginResult;
 pub use downloads::safe_filename;
 pub use study::CourseBrowserCookie;
 
@@ -276,6 +278,8 @@ pub struct Core {
     health: Mutex<HashMap<String, maintenance::Health>>,
     keep_alive: std::sync::atomic::AtomicBool,
     auth: Mutex<HashMap<String, auth::Attempt>>,
+    login_lock: tokio::sync::Mutex<()>,
+    relogins: Mutex<HashMap<String, auth::ReloginAttempt>>,
     files: Mutex<HashMap<String, downloads::FileRef>>,
     jobs: Mutex<HashMap<String, downloads::Job>>,
     download_queue: Mutex<Option<std::sync::mpsc::SyncSender<downloads::Task>>>,
@@ -424,12 +428,35 @@ impl Core {
     }
     async fn execute(self: &Arc<Self>, req: Request) -> Envelope {
         let service = owner(&req);
-        let generation = fingerprint(service);
-        let key = format!("{}:{}", generation, serde_json::to_string(&req).unwrap());
-        let result = tokio::time::timeout(Duration::from_secs(75), self.dispatch(&req))
+        let mut generation = fingerprint(service);
+        let mut result = tokio::time::timeout(Duration::from_secs(75), self.dispatch(&req))
             .await
             .map_err(|_| anyhow!("超时"))
             .and_then(|v| v);
+        // Retry a read once after explicit authentication failure, never writes,
+        // SMS, playback controls, downloads, or arbitrary actions.
+        if auth::recoverable_read(&req)
+            && result
+                .as_ref()
+                .err()
+                .is_some_and(|e| problem(anyhow!("{e:#}")).code == "auth")
+            && self.try_relogin(service, &generation).await
+        {
+            generation = fingerprint(service);
+            result = tokio::time::timeout(Duration::from_secs(75), self.dispatch(&req))
+                .await
+                .map_err(|_| anyhow!("超时"))
+                .and_then(|v| v);
+            // A successful login followed by auth failure must not spin on reads.
+            if result
+                .as_ref()
+                .err()
+                .is_some_and(|e| problem(anyhow!("{e:#}")).code == "auth")
+            {
+                self.block_relogin(service, &generation);
+            }
+        }
+        let key = format!("{}:{}", generation, serde_json::to_string(&req).unwrap());
         if generation != fingerprint(service) {
             return Envelope {
                 data: None,
@@ -597,7 +624,9 @@ impl Core {
                 json!({"opened":true})
             }
             Request::LocalMaterials { course } => self.local_materials(course).await?,
-            Request::ReadLocalMaterial { course, id } => self.read_local_material(course, id).await?,
+            Request::ReadLocalMaterial { course, id } => {
+                self.read_local_material(course, id).await?
+            }
             Request::OpenLocalMaterial { course, id } => {
                 self.open_local_material(course, id).await?
             }
@@ -611,7 +640,10 @@ impl Core {
                 video,
                 refresh,
                 position,
-            } => self.playback_prepare(course, video, *refresh, *position).await?,
+            } => {
+                self.playback_prepare(course, video, *refresh, *position)
+                    .await?
+            }
             Request::SubtitleStatus { id } => self.subtitle_status(id)?,
             Request::SubtitleStart { id } => self.subtitle_start(id)?,
             Request::SubtitleCancel { id } => self.subtitle_cancel(id)?,
@@ -697,9 +729,10 @@ impl Core {
                         Ok(Ok(Value::Array(mut items))) => {
                             succeeded += 1;
                             for row in &mut items {
-                                if let Some(c) = courses.iter().find(|c| {
-                                    row["course_id"].as_str() == Some(c.id.as_str())
-                                }) {
+                                if let Some(c) = courses
+                                    .iter()
+                                    .find(|c| row["course_id"].as_str() == Some(c.id.as_str()))
+                                {
                                     study::apply_course_metadata(row, &study::course_value(c));
                                 }
                             }

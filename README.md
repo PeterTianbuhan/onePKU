@@ -18,7 +18,7 @@
 - **通知**：课程、学校、各单位、教务部、信科，以及图书馆活动，可订阅、搜索、已读，内置原文窗口。
 - **校历**：学校官方整张 PDF，学年切换与缩放。
 - **校园卡与空闲教室**：余额、月度收支与流水、充值入口；按教学楼、日期、节次查空闲教室。
-- **设置**：各服务分别扫码登录、保持登录、缓存管理、字幕组件。
+- **设置**：统一账号密码登录、各服务扫码登录、保持登录、缓存管理、字幕组件。
 
 课程资料和回放默认保存在 `~/Downloads/OnePKU/`，可在设置里改到别的文件夹；按学期、课程整理，附来源与 SHA-256。
 
@@ -44,9 +44,9 @@ xattr -cr /Applications/OnePKU.app
 
 ## 第一次打开
 
-1. 在设置里分别连接教学网、树洞、校园卡。全部是扫码或短信验证，应用不保存密码。
+1. 在设置里选择「统一登录」，输入学号和统一身份认证密码，依次连接教学网、树洞和校园卡；也可单独连接某个服务或切换扫码登录。默认勾选记住密码，可取消；密码仅在登录成功后保存在本机系统钥匙串。
 2. 应用会根据成绩和课程推断你的入学年份、院系和专业，你可以改，之后随时在设置里改。
-3. 回到今日页。默认开启保持登录，应用运行期间每 15 分钟做一次轻量会话检查。
+3. 回到今日页。默认开启保持登录，应用运行期间每 15 分钟做一次轻量会话检查；读取时发现会话失效且记住了密码，会尝试自动重登一次。动态口令与短信验证仍由你完成。设置中可「忘记密码」。
 
 登录凭证保存在按平台选择的用户配置目录（macOS：`~/Library/Application Support/info/<服务>/`；Windows：`%APPDATA%\info\config\<服务>\`），与 [PKU CLI](https://github.com/pkuinfo/pkucli) 共用。如果你已经在用 PKU CLI，打开应用直接复用会话。
 
@@ -109,7 +109,7 @@ docs/research/       调研与验收记录：能力盘点、服务探查、培�
 contributions/       待回馈上游的补丁文件
 ```
 
-前端只能调用 `campus-core::Request` 里列出的命令；凭证不进入 JavaScript。架构细节见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，产品取舍见 [docs/PRODUCT.md](docs/PRODUCT.md) 与 [docs/ADOPTION.md](docs/ADOPTION.md)，版本记录见 [CHANGELOG.md](CHANGELOG.md)。
+前端只能调用白名单命令；会话 Cookie、令牌和钥匙串中的密码不返回 JavaScript。密码输入仅通过独立原生登录命令提交，不经过资源缓存或浏览器预览 HTTP 接口。架构细节见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，产品取舍见 [docs/PRODUCT.md](docs/PRODUCT.md) 与 [docs/ADOPTION.md](docs/ADOPTION.md)，版本记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 参与
 

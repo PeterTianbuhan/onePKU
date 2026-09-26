@@ -23,7 +23,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
-import { call, resetService, type Service } from "./lib/api";
+import { call, resetService, type LoginTarget } from "./lib/api";
 import type { Login } from "./components/ui";
 import Auth from "./components/Auth";
 import Downloads from "./components/Downloads";
@@ -114,7 +114,7 @@ export default function App() {
   const [, tick] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
   const [auth, setAuth] = useState<{
-    service: Service;
+    service: LoginTarget;
     scope?: "treehole" | "timetable";
   }>();
   const queryClient = useQueryClient();

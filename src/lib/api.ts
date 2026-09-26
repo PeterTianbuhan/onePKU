@@ -1,5 +1,33 @@
 import { useQuery, type QueryClient } from "@tanstack/react-query";
 export type Service = "course" | "treehole" | "campuscard" | "bdkj";
+export type LoginTarget = Service | "all";
+export type PasswordLoginResult = {
+  service: Service;
+  success: boolean;
+  message?: string | null;
+  warning?: string | null;
+};
+// Passwords use a dedicated native command, never resource/query-cache keys or HTTP preview.
+export async function loginPassword(input: {
+  service: Service;
+  username: string;
+  password: string;
+  otp: string;
+  remember: boolean;
+}): Promise<PasswordLoginResult> {
+  if (!("__TAURI_INTERNALS__" in window))
+    throw Error(
+      "请在 OnePKU 桌面应用中使用账号密码登录，浏览器预览可使用扫码登录",
+    );
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<PasswordLoginResult>("login_password", input);
+}
+export async function forgetPasswords() {
+  if (!("__TAURI_INTERNALS__" in window))
+    throw Error("请在桌面应用中管理已保存的密码");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke("forget_passwords");
+}
 export type Request = {
   kind: string;
   [key: string]:
