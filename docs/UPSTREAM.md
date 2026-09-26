@@ -1,5 +1,11 @@
 # PKU CLI fork boundary
 
+## 桌面统一登录
+
+交互参考 Northodieart 的 [Android PR #2](https://github.com/PeterTianbuhan/onePKU/pull/2)，审阅版本 `25662d9c0fab99081e76192808349405a328c948`。沿用现有 Rust IAAA RSA 和各服务回调，不引入 Kotlin 网络层。桌面增量包括逐服务结果、可选系统钥匙串、只读认证恢复和原生密码 IPC。
+
+`pkucli-login-identity.patch`：教学网用全新 Cookie 容器建立 SSO，通过 `/learn/api/public/v1/users/me` 确认身份，密码登录须与输入账号一致，再保存会话；树洞 GUI 登录也不继承旧 Cookie，避免回调失败时读到旧 token。补丁基于 OnePKU `bbdec7f` 的两个登录文件，可独立应用；尚未回馈上游。
+
 ## v0.2 integration
 
 - [pku-coe-notice-helper](https://github.com/ha0xin/pku-coe-notice-helper): portal and dean request contracts adapted into Rust. MIT license retained in `licenses/pku-coe-notice-helper-LICENSE.txt`.
@@ -45,3 +51,14 @@ Core error classification now recognizes the campus-card library's exact `登录
 ### 课程通知与作业反馈
 
 在 vendored PKU CLI 上保留公告原始 ID、课程 ID 和原文地址；课程原文通过原生 WebView 的 Cookie API 复用目标域会话，JavaScript 无凭证接口。根据 PkuClaw 公开 Blackboard 选择器与实际页面独立编写反馈读取模块，按 mode=view 查询分数、反馈、历史尝试与已交文件。历史 URL 重新构建并限制课程/作业范围及只读参数；已交文件只允许明确的 assignment/download 路径，按课程注册后复用下载队列。未复制上游提交实现、未改全局 CLI 或贡献候选。
+### 学期分组识别
+
+教学网当前课程分组补充识别「本学期」与不区分大小写、允许换行的英文标题；「非当前」和历史分组不再因包含 Current/当前而误判。增量及合成标题回归测试见 `contributions/pkucli-semester-labels.patch`，以本次修改前的 OnePKU vendor 快照为基线，回馈上游前需核对上游版本。此修复仍以学校分组为准，不按最新课程年份猜测在修状态。
+
+### 回放下载恢复
+
+`course/src/api/media.rs` 为桌面下载接收独立的恢复目录：完整 TS 分片原子落盘，失败/取消保留；缓存标识绑定播放列表并忽略临时 URL 查询签名，不落盘 URL 或密钥。短暂网络失败、429、5xx 最多尝试三次，401/403 保留明确提示；启动下载前检查 ffmpeg。新增中断恢复、损坏/HTML 分片拒收、临时签名更新和错误脱敏测试。仅修改 OnePKU 的 vendored 实现，未更新全局 CLI 或提交上游。
+
+播放与 MP4 下载现在共用恢复目录及播放列表指纹，通过进程内的异步分片锁合并并发请求；原子落盘后供两者读取，取消等待不会锁死后续请求。旧播放缓存只在账号、课程、视频及指纹匹配时导入，校验完整 TS 后优先硬链接；播放状态同步读取下载缓存。新增并发仅请求一次、取消恢复、旧缓存复用及下载分片无网络播放回归测试。
+
+完整 vendored 增量整理在 `contributions/pkucli-replay-cache.patch`，基线为 OnePKU `31beb7c`；其中已包含学期分组修复，不能再叠加独立学期补丁。可在该基线运行 `cargo test -p pku-course --lib --locked`，覆盖共享下载与恢复逻辑；主工作区测试本身不会运行依赖包的单元测试。

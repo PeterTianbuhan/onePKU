@@ -277,6 +277,72 @@ describe("computeProgress", () => {
     expect(progress.ignored.map((c) => c.name)).toContain("量子计算");
     expect(sectionChoices(progress).map((c) => c.id)).toContain("3-2");
   });
+  it("keeps matched credits when manually assigning exact, alternative and variant courses", () => {
+    for (const [name, credits] of [
+      ["高等数学 A（一）", 5],
+      ["数学分析（Ⅰ）", 5],
+      ["计算概论 A（实验班）", 3],
+    ] as const) {
+      const overrides = { [normalizeCourseName(name)]: "3-2" };
+      const progress = computeProgress(
+        plan,
+        [],
+        [{ id: "current", name, current: true }],
+        overrides,
+      );
+      const assigned = progress.sections
+        .flatMap((s) => s.children)
+        .find((s) => s.id === "3-2")!;
+      expect(assigned.courses[0]).toMatchObject({
+        credits,
+        via: "override",
+        sectionId: "3-2",
+      });
+      expect(progress.totals.inProgress).toBe(credits);
+      expect(progress.totals.unknownCredits).toBe(0);
+      const graded = computeProgress(
+        plan,
+        [score(name, "2", "P", "任选")],
+        [],
+        overrides,
+      );
+      expect(graded.totals.earned).toBe(2);
+      const missing = computeProgress(
+        plan,
+        [score(name, "", "P", "任选")],
+        [],
+        overrides,
+      );
+      expect(missing.totals.earned).toBe(credits);
+      const ignored = computeProgress(
+        plan,
+        [],
+        [{ id: "current", name, current: true }],
+        {
+          [normalizeCourseName(name)]: "ignore",
+        },
+      );
+      expect(ignored.totals.inProgress).toBe(0);
+      expect(ignored.ignored[0].credits).toBe(credits);
+    }
+  });
+  it("does not invent credits from a public-course keyword or a manual category", () => {
+    const courses = [
+      { id: "sport", name: "太极拳", current: true },
+      { id: "unknown", name: "待确认测试课程", current: true },
+    ];
+    const progress = computeProgress(plan, [], courses);
+    expect(progress.totals).toMatchObject({ inProgress: 0, unknownCredits: 1 });
+    expect(progress.pending[0]).toMatchObject({
+      name: "待确认测试课程",
+      credits: null,
+    });
+    const manual = computeProgress(plan, [], courses, {
+      待确认测试课程: "3-2",
+    });
+    expect(manual.totals).toMatchObject({ inProgress: 0, unknownCredits: 2 });
+    expect(manual.pending).toEqual([]);
+  });
   it("fixes English credits by level and adds the shortfall to general education", () => {
     const progress = computeProgress(
       plan,

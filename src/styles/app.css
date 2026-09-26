@@ -882,6 +882,24 @@ select {
   flex: 1;
   overflow-wrap: anywhere;
 }
+.attachment-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.attachment-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.attachment-preview .search-file-preview canvas {
+  height: auto !important;
+  flex: none;
+}
+.attachment-preview .search-file-preview img {
+  max-width: 100%;
+}
 .attachment-line > svg {
   color: var(--primary);
 }
@@ -1272,6 +1290,160 @@ tbody tr:last-child td {
 .qr-area {
   text-align: center;
   padding: 6px 0;
+}
+.auth-methods {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--sidebar);
+  border-radius: var(--radius-default);
+  margin-bottom: 20px;
+}
+.auth-methods button {
+  flex: 1;
+  padding: 9px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+}
+.auth-methods button[aria-pressed="true"] {
+  color: var(--primary);
+  background: var(--background);
+  border-color: var(--border);
+}
+.password-login > label,
+.login-otp label {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 7px;
+}
+.password-login > input,
+.password-field,
+.login-otp input {
+  width: 100%;
+  margin-bottom: 16px;
+}
+.password-field {
+  position: relative;
+}
+.password-field input {
+  width: 100%;
+  padding-right: 44px;
+}
+.password-field button {
+  position: absolute;
+  right: 5px;
+  top: 4px;
+}
+.login-otp {
+  margin-bottom: 18px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.login-otp summary {
+  cursor: pointer;
+  margin-bottom: 10px;
+}
+.login-services {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-default);
+  padding: 0 14px;
+  margin: 0 0 18px;
+}
+.login-services legend {
+  padding: 0 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.login-service {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 0;
+}
+.login-service + .login-service {
+  border-top: 1px solid var(--border);
+}
+.login-service label {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+.login-service strong {
+  display: inline;
+  font-size: 13px;
+  font-weight: 500;
+}
+.login-service label > span {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 9px;
+}
+.login-service small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.login-service p {
+  flex-basis: 100%;
+  margin: 2px 0 0 24px;
+}
+.login-service input,
+.remember-login input {
+  accent-color: var(--primary);
+}
+.login-result {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.login-result.connected {
+  color: var(--success);
+}
+.login-result.failed {
+  color: var(--danger);
+}
+.password-login .remember-login {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.login-privacy {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.7;
+  margin: 8px 0 18px;
+}
+.login-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.settings-account-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.settings-account-heading h2 {
+  margin: 0;
+}
+.qr-service-choice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  margin-bottom: 20px;
+}
+.qr-service-choice select {
+  flex: 1;
 }
 .qr-area img {
   width: 210px;

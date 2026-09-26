@@ -21,13 +21,14 @@ npm run typecheck
 npm run format:check
 npm run verify:tokens
 cargo test -p campus-core --lib
+cargo test -p pku-course --lib --locked
 ```
 
 ## 项目边界
 
 改动前请读 [docs/PRODUCT.md](docs/PRODUCT.md)、[docs/ADOPTION.md](docs/ADOPTION.md) 和 [docs/UX-CONTRACT.md](docs/UX-CONTRACT.md)。几条不会放松的约束：
 
-- 凭证只保存在 PKU CLI 的会话目录，不进入前端 JavaScript，不写进仓库。
+- 会话凭证只保存在 PKU CLI 的会话目录，可选记住的密码只存系统钥匙串；两者均不返回前端或写进仓库。密码输入仅经独立原生 IPC，不加入可序列化的资源 Request 或缓存。
 - 前端只能调用 `campus-core::Request` 里显式列出的命令，没有任意 shell、支付、发帖、选退课接口。
 - 读操作要能区分"学校返回空"与"读取失败"；写操作要有确认、回执核对与持久记录。
 - 新能力先用真实账号走通，再展示入口。保留底层代码不等于已发布。

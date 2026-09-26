@@ -618,12 +618,8 @@ fn generate(
     fs::remove_file(partial_path(session)?)?;
     Ok(())
 }
-fn account_key(id: &str) -> String {
-    format!(
-        "{:x}",
-        Sha256::digest(format!("course.pku.edu.cn/blackboard-user/{id}"))
-    )
-}
+#[cfg(test)]
+use crate::accounts::account_key;
 fn migrate_legacy(root: &Path, generation: &str, account: &str) -> Result<usize> {
     let old = root.join("subtitles-v1").join(generation);
     if !old.is_dir() || old.is_symlink() {
@@ -680,18 +676,15 @@ impl Core {
 
     pub(crate) async fn subtitle_account(&self, generation: &str) -> Result<String> {
         let _guard = self.subtitle_account_lock.lock().await;
+        let account = self.course_account(generation).await?;
+        self.prepare_subtitle_account(generation, &account)?;
+        Ok(account)
+    }
+    pub(crate) fn prepare_subtitle_account(&self, generation: &str, account: &str) -> Result<()> {
         let root = root()?;
         let binding = root
             .join("subtitle-accounts")
             .join(format!("{generation}.json"));
-        let saved = fs::read(&binding)
-            .ok()
-            .and_then(|b| serde_json::from_slice::<String>(&b).ok())
-            .filter(|s| s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()));
-        let account = match saved {
-            Some(account) => account,
-            None => account_key(&self.course_api()?.account_id().await?),
-        };
         if generation != fingerprint("course") {
             bail!("账号已更新，请重试");
         }
@@ -702,7 +695,7 @@ impl Core {
         fs::set_permissions(&account_dir, fs::Permissions::from_mode(0o700))?;
         migrate_legacy(&root, generation, &account)?;
         write_private(&binding, &serde_json::to_vec(&account)?)?;
-        Ok(account)
+        Ok(())
     }
     pub(crate) fn ensure_subtitle_key_idle(
         &self,

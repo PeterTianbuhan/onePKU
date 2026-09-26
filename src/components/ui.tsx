@@ -2,6 +2,8 @@ import {
   useEffect,
   useState,
   useRef,
+  lazy,
+  Suspense,
   type ReactNode,
   type ButtonHTMLAttributes,
 } from "react";
@@ -28,9 +30,11 @@ import {
   type Request,
   type Envelope,
   type Service,
+  type LoginTarget,
 } from "../lib/api";
+const AttachmentPreview = lazy(() => import("./AttachmentPreview"));
 export type Login = (
-  service: Service,
+  service: LoginTarget,
   scope?: "treehole" | "timetable",
 ) => void;
 export function Button({
@@ -226,6 +230,7 @@ export function Modal({
   onClose,
   children,
   wide = false,
+  dismissible = true,
 }: {
   title: string;
   description?: string;
@@ -233,15 +238,22 @@ export function Modal({
   onClose: () => void;
   children: ReactNode;
   wide?: boolean;
+  dismissible?: boolean;
 }) {
   const trigger = useRef(document.activeElement as HTMLElement | null);
   return (
-    <Dialog.Root open={open} onOpenChange={(o) => !o && onClose()}>
+    <Dialog.Root
+      open={open}
+      onOpenChange={(o) => !o && dismissible && onClose()}
+    >
       <Dialog.Portal>
         <Dialog.Overlay className="overlay" />
         <Dialog.Content
           onEscapeKeyDown={(e) => {
-            if (document.fullscreenElement) e.preventDefault();
+            if (document.fullscreenElement || !dismissible) e.preventDefault();
+          }}
+          onPointerDownOutside={(e) => {
+            if (!dismissible) e.preventDefault();
           }}
           onCloseAutoFocus={(e) => {
             e.preventDefault();
@@ -251,7 +263,11 @@ export function Modal({
         >
           <div className="modal-head">
             <Dialog.Title>{title}</Dialog.Title>
-            <Dialog.Close className="icon-button" aria-label="关闭">
+            <Dialog.Close
+              className="icon-button"
+              aria-label="关闭"
+              disabled={!dismissible}
+            >
               <X />
             </Dialog.Close>
           </div>
@@ -330,16 +346,21 @@ export function Pager({
 }
 export function AttachmentRow({
   file,
+  course,
+  onPreview,
   request,
   extra,
   icon,
 }: {
   file: Attachment;
+  course?: string;
+  onPreview?: () => void;
   request?: Request;
   extra?: ReactNode;
   icon?: ReactNode;
 }) {
   const client = useQueryClient();
+  const [preview, setPreview] = useState(false);
   const [job, setJob] = useState<string>();
   const [state, setState] = useState<{
     state: string;
@@ -400,7 +421,17 @@ export function AttachmentRow({
     <div className="attachment">
       <div className="attachment-line">
         {icon ?? <FileText size={18} />}
-        <span>{file.name}</span>
+        {course && file.downloadId ? (
+          <button
+            className="attachment-name text-button"
+            onClick={() => (onPreview ? onPreview() : setPreview(true))}
+            title="打开预览"
+          >
+            {file.name}
+          </button>
+        ) : (
+          <span>{file.name}</span>
+        )}
         {extra}
         {(file.downloadId || request) && (
           <Button
@@ -445,6 +476,13 @@ export function AttachmentRow({
         <p className="inline-error" role="alert">
           {error || state?.message}
         </p>
+      )}
+      {preview && course && file.downloadId && (
+        <Modal title={file.name} open wide onClose={() => setPreview(false)}>
+          <Suspense fallback={<p className="subtle">正在打开预览…</p>}>
+            <AttachmentPreview course={course} downloadId={file.downloadId} />
+          </Suspense>
+        </Modal>
       )}
     </div>
   );

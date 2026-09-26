@@ -1,0 +1,105 @@
+diff --git a/vendor/pkucli/crates/course/src/login.rs b/vendor/pkucli/crates/course/src/login.rs
+index 5a1301a..6e71efe 100644
+--- a/vendor/pkucli/crates/course/src/login.rs
++++ b/vendor/pkucli/crates/course/src/login.rs
+@@ -68,9 +68,21 @@ pub async fn login_with_qrcode(qr_mode: pkuinfo_common::qr::QrDisplayMode) -> Re
+ 
+ /// IAAA 认证成功后，完成 Blackboard SSO 登录
+ pub async fn complete_bb_login(store: &Store, iaaa_token: &str) -> Result<()> {
++    complete_bb_login_for_user(store, iaaa_token, None).await
++}
++
++/// Start a fresh cookie jar and verify the authenticated user before replacing
++/// an existing session. Failed SSO must not appear successful via old cookies.
++pub async fn complete_bb_login_for_user(
++    store: &Store,
++    iaaa_token: &str,
++    username: Option<&str>,
++) -> Result<()> {
+     println!("{} 完成教学网登录...", "[+]".green());
+ 
+-    let cookie_store = store.load_cookie_store()?;
++    let cookie_store = std::sync::Arc::new(reqwest_cookie_store::CookieStoreMutex::new(
++        cookie_store::CookieStore::default(),
++    ));
+     let client = client::build(cookie_store.clone())?;
+ 
+     // 用 IAAA token 访问 SSO 回调 URL，建立 Blackboard 会话
+@@ -89,23 +101,25 @@ pub async fn complete_bb_login(store: &Store, iaaa_token: &str) -> Result<()> {
+     // 消费 body，确保 cookies 被存储
+     let _ = resp.bytes().await?;
+ 
+-    // 验证登录是否成功：访问主页
+-    let home_resp = client
++    // A login page can also return HTTP 200. Require the actual account identity.
++    let identity_response = client
+         .get(format!(
+-            "{}/webapps/portal/execute/tabs/tabAction?tab_tab_group_id=_1_1",
++            "{}/learn/api/public/v1/users/me",
+             client::COURSE_BASE
+         ))
+         .send()
+         .await
+-        .context("访问教学网主页失败")?;
+-
+-    if !home_resp.status().is_success() {
+-        return Err(anyhow!("教学网登录验证失败: HTTP {}", home_resp.status()));
++        .context("验证教学网账号失败")?
++        .error_for_status()?;
++    if identity_response.url().host_str() != Some("course.pku.edu.cn") {
++        return Err(anyhow!("教学网登录验证失败"));
+     }
+-    let _ = home_resp.bytes().await?;
++    let identity: serde_json::Value = identity_response.json().await?;
++    verify_identity(&identity, username)?;
+ 
+     // 保存会话（cookie-based session，默认 24 小时过期）
+     let mut session = Session::new(iaaa_token.to_string());
++    session.uid = identity["userName"].as_str().map(str::to_owned);
+     session.expires_at = Some(chrono::Utc::now().timestamp() + 24 * 3600);
+     store.save_session(&session)?;
+     store.save_cookie_store(&cookie_store)?;
+@@ -116,6 +130,28 @@ pub async fn complete_bb_login(store: &Store, iaaa_token: &str) -> Result<()> {
+     Ok(())
+ }
+ 
++fn verify_identity(identity: &serde_json::Value, expected: Option<&str>) -> Result<()> {
++    let id = identity["id"].as_str().filter(|s| !s.is_empty());
++    let user = identity["userName"].as_str().filter(|s| !s.is_empty());
++    if id.is_none() || user.is_none() || expected.is_some_and(|expected| user != Some(expected)) {
++        return Err(anyhow!("教学网未确认当前登录账号"));
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn login_requires_the_expected_authenticated_identity() {
++        let user = serde_json::json!({"id":"_1_1", "userName":"20260001"});
++        assert!(verify_identity(&user, Some("20260001")).is_ok());
++        assert!(verify_identity(&user, None).is_ok());
++        assert!(verify_identity(&user, Some("20260002")).is_err());
++        assert!(verify_identity(&serde_json::json!({"status":200}), None).is_err());
++    }
++}
++
+ fn check_existing_session(store: &Store) -> Result<()> {
+     if let Some(old) = store.load_session()? {
+         if !old.is_expired() {
+diff --git a/vendor/pkucli/crates/treehole/src/login.rs b/vendor/pkucli/crates/treehole/src/login.rs
+index 2e68945..f235929 100644
+--- a/vendor/pkucli/crates/treehole/src/login.rs
++++ b/vendor/pkucli/crates/treehole/src/login.rs
+@@ -169,7 +169,9 @@ pub async fn complete_treehole_login(
+     Ok(())
+ }
+ pub async fn complete_gui_login(store: &Store, iaaa_token: &str, device_uuid: &str) -> Result<()> {
+-    let cookie_store = store.load_cookie_store()?;
++    let cookie_store = std::sync::Arc::new(reqwest_cookie_store::CookieStoreMutex::new(
++        cookie_store::CookieStore::default(),
++    ));
+     let client = client::build(cookie_store.clone())?;
+ 
+     // 构造回调 URL

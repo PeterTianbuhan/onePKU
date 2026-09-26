@@ -1,0 +1,46 @@
+diff --git a/vendor/pkucli/crates/course/src/api.rs b/vendor/pkucli/crates/course/src/api.rs
+index 02f43c6..12249eb 100644
+--- a/vendor/pkucli/crates/course/src/api.rs
++++ b/vendor/pkucli/crates/course/src/api.rs
+@@ -25,6 +25,16 @@ pub use recordings::RecordingSession;
+ 
+ const APP_NAME: &str = "course";
+ 
++fn current_course_module(title: &str) -> bool {
++    let title = title.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
++    if ["非当前", "历史", "以往", "past", "previous", "not current"]
++        .iter().any(|s| title.contains(s))
++    {
++        return false;
++    }
++    title.contains("当前") || title.contains("本学期") || title.contains("current semester")
++}
++
+ // ─── 数据模型 ──────────────────────────────────────────────────
+ 
+ /// 课程基础信息
+@@ -580,7 +590,7 @@ impl CourseApi {
+                 .map(|el| el.text().collect::<String>())
+                 .unwrap_or_default();
+ 
+-            let is_current = title_text.contains("当前") || title_text.contains("Current Semester");
++            let is_current = current_course_module(&title_text);
+ 
+             for ul in portlet.select(&ul_sel) {
+                 for a in ul.select(&li_a_sel) {
+@@ -1617,6 +1627,15 @@ fn get_mime_type(extension: &str) -> &'static str {
+ mod onepku_tests {
+     use super::*;
+     #[test]
++    fn current_semester_module_labels() {
++        for title in ["当前学期课程", "本学期课程", "Current Semester", "CURRENT\n SEMESTER Courses"] {
++            assert!(current_course_module(title), "{title}");
++        }
++        for title in ["非当前学期课程", "历史课程", "Previous Semester", "Not Current Semester", "全部课程", ""] {
++            assert!(!current_course_module(title), "{title}");
++        }
++    }
++    #[test]
+     fn document_title_is_downloadable_and_assignment_id_is_normalized() {
+         let doc = Html::parse_document(
+             r#"<ul id="content_listContainer"><li id="contentListItem:_7_1"><h3><a href="/webapps/assignment/uploadAssignment?content_id=_7_1&amp;course_id=_1_1">Lab</a></h3></li><li id="contentListItem:_8_1"><h3><a href="/bbcswebdav/xid-8_1">lecture.pdf</a></h3></li></ul>"#,

@@ -1,16 +1,96 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, RefreshCw } from "lucide-react";
-import { action, serviceNames, resetService, type Service } from "../lib/api";
+import {
+  action,
+  serviceNames,
+  resetService,
+  type Service,
+  type LoginTarget,
+} from "../lib/api";
 import { Button, Modal } from "./ui";
+import PasswordLogin from "./PasswordLogin";
 export default function Auth({
   service,
   scope,
   onClose,
 }: {
+  service: LoginTarget;
+  scope?: "treehole" | "timetable";
+  onClose: () => void;
+}) {
+  const [method, setMethod] = useState<"password" | "qr">("password");
+  const [qrService, setQrService] = useState<Service>(
+    service === "all" ? "course" : service,
+  );
+  const methods = (busy = false) => (
+    <div className="auth-methods" aria-label="登录方式">
+      <button
+        type="button"
+        aria-pressed={method === "password"}
+        disabled={busy}
+        onClick={() => setMethod("password")}
+      >
+        账号密码
+      </button>
+      <button
+        type="button"
+        aria-pressed={method === "qr"}
+        disabled={busy}
+        onClick={() => setMethod("qr")}
+      >
+        扫码登录
+      </button>
+    </div>
+  );
+  if (!scope && method === "password")
+    return (
+      <PasswordLogin service={service} onClose={onClose} methods={methods} />
+    );
+  return (
+    <QrAuth
+      key={`${qrService}:${scope}`}
+      service={qrService}
+      scope={scope}
+      onClose={onClose}
+      methods={
+        !scope && (
+          <>
+            {methods()}
+            {service === "all" && (
+              <label className="qr-service-choice">
+                扫码连接
+                <select
+                  aria-label="扫码连接的服务"
+                  value={qrService}
+                  onChange={(e) => setQrService(e.target.value as Service)}
+                >
+                  {(["course", "treehole", "campuscard"] as Service[]).map(
+                    (s) => (
+                      <option key={s} value={s}>
+                        {serviceNames[s]}
+                      </option>
+                    ),
+                  )}
+                </select>
+              </label>
+            )}
+          </>
+        )
+      }
+    />
+  );
+}
+function QrAuth({
+  service,
+  scope,
+  onClose,
+  methods,
+}: {
   service: Service;
   scope?: "treehole" | "timetable";
   onClose: () => void;
+  methods?: ReactNode;
 }) {
   const client = useQueryClient();
   const [qr, setQr] = useState<{ id: string; qr: string }>();
@@ -19,12 +99,14 @@ export default function Auth({
   const [code, setCode] = useState("");
   const [cooldown, setCooldown] = useState(0);
   const active = useRef(true);
+  const requestVersion = useRef(0);
   const smsInput = useRef<HTMLInputElement>(null);
   const currentId = useRef<string | undefined>(undefined);
   useEffect(() => {
     active.current = true;
     return () => {
       active.current = false;
+      requestVersion.current++;
       if (currentId.current)
         void action({ kind: "authCancel", id: currentId.current });
     };
@@ -42,6 +124,7 @@ export default function Auth({
     return () => clearTimeout(t);
   }, [cooldown]);
   async function begin() {
+    const version = ++requestVersion.current;
     setState("loading");
     setError("");
     if (currentId.current)
@@ -51,7 +134,7 @@ export default function Auth({
         kind: "authBegin",
         service,
       });
-      if (!active.current) {
+      if (!active.current || version !== requestVersion.current) {
         void action({ kind: "authCancel", id: q.id });
         return;
       }
@@ -59,6 +142,7 @@ export default function Auth({
       setQr(q);
       setState("pending");
     } catch (e) {
+      if (!active.current || version !== requestVersion.current) return;
       setError((e as Error).message);
       setState("failed");
     }
@@ -139,6 +223,7 @@ export default function Auth({
       open
       onClose={onClose}
     >
+      {methods}
       {state === "success" ? (
         <div className="auth-success">
           <CheckCircle2 size={40} />

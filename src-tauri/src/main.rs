@@ -2,6 +2,41 @@ use std::sync::Arc;
 use tauri::Manager;
 mod browser;
 #[tauri::command]
+async fn login_password(
+    window: tauri::WebviewWindow,
+    service: String,
+    username: String,
+    password: String,
+    otp: String,
+    remember: bool,
+    state: tauri::State<'_, Arc<campus_core::Core>>,
+) -> Result<campus_core::PasswordLoginResult, String> {
+    if window.label() != "main" {
+        return Err("此窗口不可执行登录".into());
+    }
+    let core = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        core.login_password(&service, username, password, otp, remember)
+    })
+    .await
+    .map_err(|_| "登录未完成，请重试".into())
+}
+
+#[tauri::command]
+async fn forget_passwords(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Arc<campus_core::Core>>,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("此窗口不可执行本地操作".into());
+    }
+    let core = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || core.forget_passwords())
+        .await
+        .map_err(|_| "密码删除未完成".to_string())?
+}
+
+#[tauri::command]
 async fn campus(
     window: tauri::WebviewWindow,
     request: campus_core::Request,
@@ -179,6 +214,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             campus,
+            login_password,
+            forget_passwords,
             choose_assignment_file,
             choose_course_files,
             choose_download_folder,

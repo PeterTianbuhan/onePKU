@@ -512,7 +512,10 @@ export default function SearchWorkspace({
                       </p>
                     )}
                     {selected.attachment && (
-                      <AttachmentRow file={selected.attachment} />
+                      <AttachmentRow
+                        file={selected.attachment}
+                        course={selected.course.id}
+                      />
                     )}
                   </div>
                   <footer className="search-preview-actions">
