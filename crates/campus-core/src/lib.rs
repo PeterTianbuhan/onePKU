@@ -8,19 +8,25 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
+mod accounts;
 mod auth;
 mod bookings;
+mod credentials;
 mod curriculum;
 mod downloads;
+mod faculty;
+mod grade_scope;
 mod maintenance;
 mod materials;
 mod news;
+mod platform;
 mod playback;
 mod reminders;
 mod storage;
 mod study;
 mod subtitles;
 mod writes;
+pub use auth::PasswordLoginResult;
 pub use downloads::safe_filename;
 pub use study::CourseBrowserCookie;
 
@@ -37,6 +43,10 @@ pub enum Request {
     ClearCache,
     News {
         source: String,
+        page: u32,
+    },
+    FacultyNews {
+        school: String,
         page: u32,
     },
     NewsDetail {
@@ -65,6 +75,14 @@ pub enum Request {
     ResetDownloadRoot,
     OpenDownloadRoot,
     Profile,
+    GradeScope {
+        generation: String,
+    },
+    SetGradeScope {
+        generation: String,
+        included: Vec<String>,
+        excluded: Vec<String>,
+    },
     SetProfile {
         profile: Value,
     },
@@ -112,6 +130,8 @@ pub enum Request {
         video: String,
         #[serde(default)]
         refresh: bool,
+        #[serde(default)]
+        position: f64,
     },
     PlaybackStatus {
         id: String,
@@ -233,6 +253,9 @@ pub enum Request {
     DownloadCancel {
         id: String,
     },
+    DownloadRetry {
+        id: String,
+    },
     Open {
         target: String,
     },
@@ -256,6 +279,7 @@ pub struct Problem {
 pub struct Core {
     subtitles: Mutex<subtitles::SubtitleStore>,
     subtitle_account_lock: tokio::sync::Mutex<()>,
+    course_account_lock: tokio::sync::Mutex<()>,
     materials_lock: Mutex<()>,
     playback: Mutex<playback::PlaybackStore>,
     playback_prepare_lock: tokio::sync::Mutex<()>,
@@ -268,6 +292,8 @@ pub struct Core {
     health: Mutex<HashMap<String, maintenance::Health>>,
     keep_alive: std::sync::atomic::AtomicBool,
     auth: Mutex<HashMap<String, auth::Attempt>>,
+    login_lock: tokio::sync::Mutex<()>,
+    relogins: Mutex<HashMap<String, auth::ReloginAttempt>>,
     files: Mutex<HashMap<String, downloads::FileRef>>,
     jobs: Mutex<HashMap<String, downloads::Job>>,
     download_queue: Mutex<Option<std::sync::mpsc::SyncSender<downloads::Task>>>,
@@ -275,7 +301,10 @@ pub struct Core {
 fn owner(req: &Request) -> &'static str {
     match req {
         Request::BookingGrid { .. } | Request::BookingApplications => "bdkj",
-        Request::DownloadBatch { .. }
+        Request::Download { .. }
+        | Request::DownloadStatus { .. }
+        | Request::DownloadRetry { .. }
+        | Request::DownloadBatch { .. }
         | Request::OpenArchive { .. }
         | Request::LocalMaterials { .. }
         | Request::ReadLocalMaterial { .. }
@@ -309,6 +338,8 @@ fn owner(req: &Request) -> &'static str {
         | Request::AssignmentFeedback { .. }
         | Request::Content { .. } => "course",
         Request::Scores
+        | Request::GradeScope { .. }
+        | Request::SetGradeScope { .. }
         | Request::Exams
         | Request::Timetable
         | Request::Holes { .. }
@@ -413,12 +444,35 @@ impl Core {
     }
     async fn execute(self: &Arc<Self>, req: Request) -> Envelope {
         let service = owner(&req);
-        let generation = fingerprint(service);
-        let key = format!("{}:{}", generation, serde_json::to_string(&req).unwrap());
-        let result = tokio::time::timeout(Duration::from_secs(75), self.dispatch(&req))
+        let mut generation = fingerprint(service);
+        let mut result = tokio::time::timeout(Duration::from_secs(75), self.dispatch(&req))
             .await
             .map_err(|_| anyhow!("超时"))
             .and_then(|v| v);
+        // Retry a read once after explicit authentication failure, never writes,
+        // SMS, playback controls, downloads, or arbitrary actions.
+        if auth::recoverable_read(&req)
+            && result
+                .as_ref()
+                .err()
+                .is_some_and(|e| problem(anyhow!("{e:#}")).code == "auth")
+            && self.try_relogin(service, &generation).await
+        {
+            generation = fingerprint(service);
+            result = tokio::time::timeout(Duration::from_secs(75), self.dispatch(&req))
+                .await
+                .map_err(|_| anyhow!("超时"))
+                .and_then(|v| v);
+            // A successful login followed by auth failure must not spin on reads.
+            if result
+                .as_ref()
+                .err()
+                .is_some_and(|e| problem(anyhow!("{e:#}")).code == "auth")
+            {
+                self.block_relogin(service, &generation);
+            }
+        }
+        let key = format!("{}:{}", generation, serde_json::to_string(&req).unwrap());
         if generation != fingerprint(service) {
             return Envelope {
                 data: None,
@@ -500,6 +554,7 @@ impl Core {
                     | Request::Rooms { .. }
                     | Request::Calendar
                     | Request::CalendarPdf { .. }
+                    | Request::FacultyNews { .. }
                     | Request::News { .. }
                     | Request::NewsDetail { .. }
             )
@@ -539,6 +594,11 @@ impl Core {
                 json!({"cleared":true})
             }
             Request::News { source, page } => news::list(source, *page).await?,
+            Request::FacultyNews { school, page } => {
+                let (value, notes) = faculty::list(school, *page).await?;
+                warnings.extend(notes);
+                value
+            }
             Request::NewsDetail { source, id } => {
                 let item = self.news_item(source, id)?;
                 news::detail(source, &item).await?
@@ -571,7 +631,7 @@ impl Core {
             Request::OpenDownloadRoot => {
                 let dir = downloads::download_root()?;
                 std::fs::create_dir_all(&dir)?;
-                std::process::Command::new("/usr/bin/open").arg(dir).spawn()?;
+                platform::open(dir.as_os_str())?;
                 json!({"opened":true})
             }
             Request::SetKeepAlive { enabled } => {
@@ -579,16 +639,28 @@ impl Core {
                 json!({"keepAlive":enabled})
             }
             Request::Profile => self.profile()?,
+            Request::GradeScope { generation } => {
+                let _guard = self.login_lock.lock().await;
+                grade_scope::read(generation)?
+            }
+            Request::SetGradeScope {
+                generation,
+                included,
+                excluded,
+            } => {
+                let _guard = self.login_lock.lock().await;
+                grade_scope::save(generation, included, excluded)?
+            }
             Request::SetProfile { profile } => self.save_profile(profile)?,
             Request::OpenArchive { course } => {
                 let dir = self.material_directory(course).await?;
-                std::process::Command::new("/usr/bin/open")
-                    .arg(dir)
-                    .spawn()?;
+                platform::open(dir.as_os_str())?;
                 json!({"opened":true})
             }
             Request::LocalMaterials { course } => self.local_materials(course).await?,
-            Request::ReadLocalMaterial { course, id } => self.read_local_material(course, id).await?,
+            Request::ReadLocalMaterial { course, id } => {
+                self.read_local_material(course, id).await?
+            }
             Request::OpenLocalMaterial { course, id } => {
                 self.open_local_material(course, id).await?
             }
@@ -601,7 +673,11 @@ impl Core {
                 course,
                 video,
                 refresh,
-            } => self.playback_prepare(course, video, *refresh).await?,
+                position,
+            } => {
+                self.playback_prepare(course, video, *refresh, *position)
+                    .await?
+            }
             Request::SubtitleStatus { id } => self.subtitle_status(id)?,
             Request::SubtitleStart { id } => self.subtitle_start(id)?,
             Request::SubtitleCancel { id } => self.subtitle_cancel(id)?,
@@ -634,7 +710,7 @@ impl Core {
                     .list_courses(true)
                     .await?
                     .iter()
-                    .map(|c| json!({"id":c.id,"name":c.name()}))
+                    .map(study::course_value)
                     .collect::<Vec<_>>())
             }
             Request::PrepareSubmission {
@@ -684,8 +760,16 @@ impl Core {
                 let mut succeeded = 0;
                 for (name, res) in results {
                     match res {
-                        Ok(Ok(Value::Array(items))) => {
+                        Ok(Ok(Value::Array(mut items))) => {
                             succeeded += 1;
+                            for row in &mut items {
+                                if let Some(c) = courses
+                                    .iter()
+                                    .find(|c| row["course_id"].as_str() == Some(c.id.as_str()))
+                                {
+                                    study::apply_course_metadata(row, &study::course_value(c));
+                                }
+                            }
                             rows.extend(items)
                         }
                         _ => warnings.push(format!("{name} 未能更新")),
@@ -795,11 +879,10 @@ impl Core {
             Request::Download { id } => self.download(id)?,
             Request::DownloadStatus { id } => self.download_status(id)?,
             Request::DownloadCancel { id } => self.download_cancel(id)?,
+            Request::DownloadRetry { id } => self.download_retry(id).await?,
             Request::Open { target } => {
                 let url = official_target(target)?;
-                std::process::Command::new("/usr/bin/open")
-                    .arg(url)
-                    .spawn()?;
+                platform::open(std::ffi::OsStr::new(url))?;
                 json!({"opened":true})
             }
         };

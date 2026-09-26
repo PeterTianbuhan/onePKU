@@ -1,3 +1,4 @@
+import FacultyNotices from "../components/FacultyNotices";
 import { useEffect, useMemo, useState } from "react";
 import {
   CheckCheck,
@@ -126,7 +127,12 @@ export default function Notices({ login }: { login: Login }) {
     [news.items, source, search, unreadOnly, news.isRead],
   );
   useEffect(() => {
-    if (source !== "all" && !news.enabled.includes(source)) setSource("all");
+    if (
+      source !== "all" &&
+      source !== "faculty" &&
+      !news.enabled.includes(source)
+    )
+      setSource("all");
   }, [source, news.enabled]);
   async function select(n: NewsItem) {
     try {
@@ -151,22 +157,26 @@ export default function Notices({ login }: { login: Login }) {
             <SlidersHorizontal size={16} />
             订阅来源
           </Button>
-          <Button onClick={() => void news.refresh()} disabled={news.busy}>
-            <RefreshCw size={16} className={news.busy ? "spin" : ""} />
-            刷新
-          </Button>
+          {source !== "faculty" && (
+            <Button onClick={() => void news.refresh()} disabled={news.busy}>
+              <RefreshCw size={16} className={news.busy ? "spin" : ""} />
+              刷新
+            </Button>
+          )}
         </div>
       </header>
       <div className="news-filters">
         <div className="news-tools">
-          <Search
-            value={search}
-            onChange={(value) => {
-              setSearch(value);
-              setSelected(undefined);
-            }}
-            placeholder="搜索已加载的通知"
-          />
+          {source !== "faculty" && (
+            <Search
+              value={search}
+              onChange={(value) => {
+                setSearch(value);
+                setSelected(undefined);
+              }}
+              placeholder="搜索已加载的通知"
+            />
+          )}
           <select
             aria-label="通知来源"
             value={source}
@@ -176,6 +186,7 @@ export default function Notices({ login }: { login: Login }) {
             }}
           >
             <option value="all">全部来源</option>
+            <option value="faculty">本院通知</option>
             {sources
               .filter((s) => news.enabled.includes(s.id))
               .map((s) => (
@@ -184,32 +195,36 @@ export default function Notices({ login }: { login: Login }) {
                 </option>
               ))}
           </select>
-          <label className="check-label">
-            <input
-              type="checkbox"
-              checked={unreadOnly}
-              onChange={(e) => {
-                setUnreadOnly(e.target.checked);
-                setSelected(undefined);
-              }}
-            />
-            只看未读
-          </label>
-          <span className="news-count" aria-live="polite">
-            {items.length} 条 ·{" "}
-            {items.filter((n) => !news.isRead(n.key)).length} 条未读
-          </span>
-          <button
-            className="text-button"
-            disabled={!items.some((n) => !news.isRead(n.key))}
-            onClick={() => news.markRead(items.map((n) => n.key))}
-          >
-            <CheckCheck size={16} />
-            本页已读
-          </button>
+          {source !== "faculty" && (
+            <>
+              <label className="check-label">
+                <input
+                  type="checkbox"
+                  checked={unreadOnly}
+                  onChange={(e) => {
+                    setUnreadOnly(e.target.checked);
+                    setSelected(undefined);
+                  }}
+                />
+                只看未读
+              </label>
+              <span className="news-count" aria-live="polite">
+                {items.length} 条 ·{" "}
+                {items.filter((n) => !news.isRead(n.key)).length} 条未读
+              </span>
+              <button
+                className="text-button"
+                disabled={!items.some((n) => !news.isRead(n.key))}
+                onClick={() => news.markRead(items.map((n) => n.key))}
+              >
+                <CheckCheck size={16} />
+                本页已读
+              </button>
+            </>
+          )}
         </div>
       </div>
-      {news.issues.length > 0 && (
+      {source !== "faculty" && news.issues.length > 0 && (
         <div className="feed-issues" role="status">
           {news.issues.map((i) => (
             <span key={i.source}>
@@ -229,83 +244,87 @@ export default function Notices({ login }: { login: Login }) {
           ))}
         </div>
       )}
-      <div
-        className={`news-workspace ${selected ? "has-selection" : "index-only"}`}
-      >
-        <section className="news-index" aria-label="通知列表">
-          {items.length ? (
-            <div className="news-rows">
-              {items.map((n) => (
-                <button
-                  key={n.key}
-                  className={`news-row ${news.isRead(n.key) ? "read" : "unread"} ${selected?.key === n.key ? "selected" : ""}`}
-                  onClick={() => void select(n)}
-                >
-                  <span className="unread-dot" aria-hidden="true" />
-                  <span className="sr-only">
-                    {news.isRead(n.key) ? "已读" : "未读"}
-                  </span>
-                  <div className="grow">
-                    <div className="news-row-meta">
-                      <span>{n.department}</span>
-                      <time>
-                        {n.dateLabel} {newsDate(n.date).slice(5)}
-                      </time>
+      {source === "faculty" ? (
+        <FacultyNotices login={login} select={(n) => void select(n)} />
+      ) : (
+        <div
+          className={`news-workspace ${selected ? "has-selection" : "index-only"}`}
+        >
+          <section className="news-index" aria-label="通知列表">
+            {items.length ? (
+              <div className="news-rows">
+                {items.map((n) => (
+                  <button
+                    key={n.key}
+                    className={`news-row ${news.isRead(n.key) ? "read" : "unread"} ${selected?.key === n.key ? "selected" : ""}`}
+                    onClick={() => void select(n)}
+                  >
+                    <span className="unread-dot" aria-hidden="true" />
+                    <span className="sr-only">
+                      {news.isRead(n.key) ? "已读" : "未读"}
+                    </span>
+                    <div className="grow">
+                      <div className="news-row-meta">
+                        <span>{n.department}</span>
+                        <time>
+                          {n.dateLabel} {newsDate(n.date).slice(5)}
+                        </time>
+                      </div>
+                      <strong>{n.title}</strong>
+                      {n.eventStart && (
+                        <span className="news-event-time">
+                          活动 · {n.eventStart}（北京）
+                        </span>
+                      )}
                     </div>
-                    <strong>{n.title}</strong>
-                    {n.eventStart && (
-                      <span className="news-event-time">
-                        活动 · {n.eventStart}（北京）
-                      </span>
-                    )}
-                  </div>
-                </button>
-              ))}
-            </div>
-          ) : news.busy ? (
-            <div className="skeleton">
-              <i />
-              <i />
-              <i />
-            </div>
-          ) : (
-            <Empty icon={<Inbox />}>
-              {search
-                ? "没有找到匹配的通知"
-                : unreadOnly
-                  ? "未读通知已看完"
-                  : "这个来源暂无已加载通知"}
-            </Empty>
-          )}
-          {source !== "all" && news.hasMore(source) && (
-            <div className="load-more">
-              <Button
-                disabled={news.busy}
-                onClick={() =>
-                  void news
-                    .loadMore(source)
-                    .catch(() => setError("更多通知未能加载，请重试"))
-                }
-              >
-                加载更早通知
-              </Button>
-            </div>
-          )}
-          {source === "all" && (
-            <p className="footnote index-footnote">
-              汇集各来源最新通知；选择来源可继续查看。
-            </p>
-          )}
-        </section>
-        {selected ? (
-          <NoticeReader
-            key={selected.key}
-            item={selected}
-            close={() => setSelected(undefined)}
-            login={login}
-          />
-        ) : null}
-      </div>
+                  </button>
+                ))}
+              </div>
+            ) : news.busy ? (
+              <div className="skeleton">
+                <i />
+                <i />
+                <i />
+              </div>
+            ) : (
+              <Empty icon={<Inbox />}>
+                {search
+                  ? "没有找到匹配的通知"
+                  : unreadOnly
+                    ? "未读通知已看完"
+                    : "这个来源暂无已加载通知"}
+              </Empty>
+            )}
+            {source !== "all" && news.hasMore(source) && (
+              <div className="load-more">
+                <Button
+                  disabled={news.busy}
+                  onClick={() =>
+                    void news
+                      .loadMore(source)
+                      .catch(() => setError("更多通知未能加载，请重试"))
+                  }
+                >
+                  加载更早通知
+                </Button>
+              </div>
+            )}
+            {source === "all" && (
+              <p className="footnote index-footnote">
+                汇集各来源最新通知；选择来源可继续查看。
+              </p>
+            )}
+          </section>
+          {selected ? (
+            <NoticeReader
+              key={selected.key}
+              item={selected}
+              close={() => setSelected(undefined)}
+              login={login}
+            />
+          ) : null}
+        </div>
+      )}
       {(error || news.storageError) && (
         <p role="status">{error || news.storageError}</p>
       )}

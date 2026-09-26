@@ -89,7 +89,13 @@ it("keeps monthly totals readable when categories fail and requests the selected
               ...envelope(null),
               error: { code: "network", message: "分类暂不可用" },
             }
-          : envelope(r.part === "total" ? { income: 0, expenses: 1234 } : {}),
+          : envelope(
+              r.part === "total"
+                ? { income: 0, expenses: 1234 }
+                : r.part === "consumption"
+                  ? { amount: 1000 }
+                  : {},
+            ),
     };
   });
   vi.stubGlobal("fetch", fetch);
@@ -101,6 +107,8 @@ it("keeps monthly totals readable when categories fail and requests the selected
     />,
   );
   expect(await screen.findByText("¥12.34")).toBeInTheDocument();
+  expect(await screen.findByText("¥10.00")).toBeInTheDocument();
+  expect(screen.getByText("全部转出")).toBeInTheDocument();
   expect(screen.getByText("近期交易")).toBeInTheDocument();
   expect(
     fetch.mock.calls.some(([, o]) => JSON.parse(o.body).part === "category"),
@@ -115,7 +123,7 @@ it("keeps monthly totals readable when categories fail and requests the selected
       fetch.mock.calls.filter(
         ([, o]) => JSON.parse(o.body).month === "2025-02",
       ),
-    ).toHaveLength(3),
+    ).toHaveLength(4),
   );
 });
 it("clears private study and card resources on their account change", async () => {

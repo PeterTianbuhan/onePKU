@@ -367,6 +367,14 @@ function ProgressView({
 }) {
   const { plan, sections, pending, ignored, totals } = progress;
   const choices = sectionChoices(progress);
+  const unknownCourses = sections
+    .flatMap((s) => [s, ...s.children])
+    .flatMap((s) => s.courses)
+    .filter(
+      (c) =>
+        c.credits === null &&
+        (c.status === "passed" || c.status === "inProgress"),
+    );
   const [selected, setSelected] = useState<string>("total");
   const [sourceOpen, setSourceOpen] = useState(false);
   const inferredTitle = plan.titleInference;
@@ -455,7 +463,9 @@ function ProgressView({
       </div>
       {totals.unknownCredits > 0 && (
         <p className="subtle">
-          有 {totals.unknownCredits} 门课的学分未知，未计入合计。
+          已归类课程中有 {totals.unknownCredits} 门课的学分未知，未计入合计：
+          {unknownCourses.map((c) => c.name).join("、")}。
+          学分优先使用成绩记录，缺失时使用当前方案的匹配课程；教学网在修课程列表不提供学分，无法匹配时保留未知。
         </p>
       )}
       {hasEnglishRange && !englishChosen && (
@@ -483,7 +493,7 @@ function ProgressView({
         <div className="curriculum-pending">
           <h3>待确认（{pending.length}）</h3>
           <p className="subtle">
-            这些课在方案课程表里没有同名条目，也无法按类别判断。归类只保存在本机，可随时改。
+            这些课在方案课程表里没有同名条目，也无法按类别判断。归类只保存在本机，可随时改；归类不会自动补齐未知学分。
           </p>
           <ul>
             {pending.map((c) => (
@@ -492,7 +502,9 @@ function ProgressView({
                   <strong>{c.name}</strong>
                   <span className="subtle">
                     {c.term} · {c.category} · {statusLabel[c.status]}
-                    {c.credits !== null ? ` · ${fmt(c.credits)} 学分` : ""}
+                    {c.credits !== null
+                      ? ` · ${fmt(c.credits)} 学分`
+                      : " · 学分未知"}
                   </span>
                 </div>
                 <select
@@ -711,7 +723,15 @@ function CourseList({ courses }: { courses: MatchedCourse[] }) {
             {statusLabel[c.status]}
             {c.score && c.status !== "inProgress" ? ` ${c.score}` : ""}
           </span>
-          <strong className="course-credits">
+          <strong
+            className="course-credits"
+            aria-label={c.credits === null ? `${c.name}：学分未知` : undefined}
+            title={
+              c.credits === null
+                ? "成绩记录与当前培养方案均未提供可用学分，未计入合计"
+                : undefined
+            }
+          >
             {c.credits !== null ? fmt(c.credits) : "?"}
           </strong>
         </li>

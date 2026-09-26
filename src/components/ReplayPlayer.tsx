@@ -76,6 +76,7 @@ export default function ReplayPlayer({
   const surface = useRef<HTMLDivElement>(null);
   const storageKey = `onepku.playback.${generation}.${course}.${video.hash_id}`;
   const position = useRef(savedPosition(storageKey));
+  const mediaReady = useRef(false);
   const lastSaved = useRef(0);
   const [playback, setPlayback] = useState<Playback>();
   const subtitles = useReplaySubtitles(playback?.id);
@@ -151,6 +152,7 @@ export default function ReplayPlayer({
       course,
       video: video.hash_id,
       refresh: retry > 0,
+      position: position.current,
     })
       .then(async (p) => {
         id = p.id;
@@ -207,11 +209,16 @@ export default function ReplayPlayer({
     if (!playback || !el) return;
     let live = true;
     let destroy: (() => void) | undefined;
+    mediaReady.current = false;
+    const startPosition =
+      position.current > 0 && position.current < playback.duration - 5
+        ? position.current
+        : 0;
     setNeedsPlay(false);
     const start = () => {
       if (!live) return;
-      if (position.current > 0 && position.current < playback.duration - 5)
-        el.currentTime = position.current;
+      if (startPosition > 0) el.currentTime = startPosition;
+      mediaReady.current = true;
       el.playbackRate = rate;
       if (autoPlay)
         void el.play().catch(() => {
@@ -235,6 +242,7 @@ export default function ReplayPlayer({
             return;
           }
           const hls = new Hls({
+            startPosition,
             maxBufferLength: 60,
             backBufferLength: 30,
             enableWorker: true,
@@ -259,6 +267,7 @@ export default function ReplayPlayer({
       live = false;
       if (Number.isFinite(el.currentTime) && el.currentTime > 0)
         position.current = el.currentTime;
+      mediaReady.current = false;
       el.removeEventListener("loadedmetadata", start);
       el.pause();
       destroy?.();
@@ -268,7 +277,7 @@ export default function ReplayPlayer({
   }, [playback]);
   function remember() {
     const el = element.current;
-    if (!el || !Number.isFinite(el.currentTime)) return;
+    if (!el || !mediaReady.current || !Number.isFinite(el.currentTime)) return;
     position.current = el.currentTime;
     setCurrent(el.currentTime);
     if (Math.abs(el.currentTime - lastSaved.current) >= 5 || el.paused) {
@@ -311,7 +320,7 @@ export default function ReplayPlayer({
     }
   }
   const percent = status?.segments
-    ? Math.round((status.completed / status.segments) * 100)
+    ? Math.round((status.completed / status.segments) * 1000) / 10
     : 0;
   return (
     <section className="replay-player" aria-label="本地回放播放器">
@@ -564,7 +573,7 @@ export default function ReplayPlayer({
                     <span>
                       {status.complete
                         ? "整节已缓存，可离线播放"
-                        : `已缓存 ${percent}%`}{" "}
+                        : `已缓存 ${percent}%（${status.completed} / ${status.segments} 个分片）`}{" "}
                       · {(status.bytes / 1024 / 1024).toFixed(1)} MB
                     </span>
                     {!status.complete && (

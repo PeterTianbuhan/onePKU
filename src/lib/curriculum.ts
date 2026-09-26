@@ -429,14 +429,19 @@ function assign(
   index: SectionIndex,
   overrides: Overrides,
 ): MatchedCourse {
+  // 归类覆盖只改变学分系列，不应丢掉课程表中已经匹配到的学分。
+  const assigned = assignByPlan(course, index);
+  const override = overrides[normalizeCourseName(course.name)];
+  return override
+    ? { ...assigned, sectionId: override, via: "override" }
+    : assigned;
+}
+
+function assignByPlan(
+  course: MatchedCourse,
+  index: SectionIndex,
+): MatchedCourse {
   const key = normalizeCourseName(course.name);
-  const override = overrides[key];
-  if (override)
-    return {
-      ...course,
-      sectionId: override === IGNORE ? IGNORE : override,
-      via: "override",
-    };
   const exact = index.byName.get(key);
   if (exact)
     return {

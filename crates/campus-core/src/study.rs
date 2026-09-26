@@ -1,11 +1,28 @@
 use super::*;
 use chrono::{Datelike, NaiveDate};
-fn course_value(c: &pku_course::api::CourseInfo) -> Value {
-    let re = regex::Regex::new(r"[（(](\d{2}-\d{2}学年第[123]学期)[）)]$").unwrap();
-    let title = c.title();
+pub(crate) fn course_value(c: &pku_course::api::CourseInfo) -> Value {
+    let re = regex::Regex::new(r"[（(]\s*((?:20)?[0-9]{2})\s*[-—–－]\s*((?:20)?[0-9]{2})\s*学年\s*第\s*([123一二三])\s*学期\s*[）)]\s*$").unwrap();
+    let title = c
+        .long_title
+        .split_once([':', '：'])
+        .map(|(_, t)| t.trim())
+        .unwrap_or(c.long_title.trim());
     let semester = re
         .captures(title)
-        .map(|m| m[1].to_string())
+        .map(|m| {
+            let term = match &m[3] {
+                "一" => "1",
+                "二" => "2",
+                "三" => "3",
+                n => n,
+            };
+            format!(
+                "{}-{}学年第{}学期",
+                &m[1][m[1].len() - 2..],
+                &m[2][m[2].len() - 2..],
+                term
+            )
+        })
         .or_else(|| {
             let prefix = regex::Regex::new(r"^(\d{2})(\d{2})([123])-").unwrap();
             prefix
@@ -119,7 +136,7 @@ impl Core {
             .map(|a| serde_json::to_value(a).unwrap())
             .collect::<Vec<_>>();
         for row in &mut rows {
-            row["semester"] = metadata["semester"].clone();
+            apply_course_metadata(row, &metadata);
             if row["detail_error"] == true {
                 warnings.push(format!(
                     "{} 的详情尚未获取",
@@ -198,11 +215,21 @@ impl Core {
         let a = pku_campuscard::api::CardApi::new(&maintenance::card_token()?)?;
         Ok(match part {
             "total" => serde_json::to_value(a.get_turnover_count(&first, &last).await?)?,
+            "consumption" => {
+                let rows = a.get_category_stats(&first, &last, 2).await?;
+                let amount: f64 = rows.iter().map(|row| row.amount).sum();
+                json!({"amount": amount})
+            }
             "daily" => serde_json::to_value(a.get_daily_stats(month, 2).await?)?,
             "category" => serde_json::to_value(a.get_category_stats(&first, &last, 2).await?)?,
             _ => bail!("invalid statistics part"),
         })
     }
+}
+pub(crate) fn apply_course_metadata(row: &mut Value, metadata: &Value) {
+    row["course_id"] = metadata["id"].clone();
+    row["course_name"] = metadata["name"].clone();
+    row["semester"] = metadata["semester"].clone();
 }
 #[cfg(test)]
 mod tests {
@@ -229,6 +256,43 @@ mod tests {
         assert_eq!(month_range("2026-12").unwrap().1.to_string(), "2026-12-31");
         for s in ["2026-13", "2026-1", "../test", "0000-01"] {
             assert!(month_range(s).is_err());
+        }
+    }
+    #[test]
+    fn full_year_and_full_width_titles_share_the_same_semester() {
+        for title in [
+            "26271-x：数据结构 (A) （2026-2027学年第1学期）",
+            "26271-x: 数据结构 (A) (26－27 学年第一学期) ",
+            "26271-x: 数据结构 (A)",
+        ] {
+            let value = course_value(&pku_course::api::CourseInfo {
+                id: "_1_1".into(),
+                long_title: title.into(),
+                is_current: true,
+            });
+            assert_eq!(value["name"], "数据结构 (A)");
+            assert_eq!(value["semester"], "26-27学年第1学期");
+        }
+    }
+    #[test]
+    fn assignment_metadata_matches_course_material_archive() {
+        let metadata = json!({"id":"_1_1","name":"数据结构 (A)","semester":"26-27学年第1学期"});
+        let mut row = json!({"course_name":"数据结构","attachments":[]});
+        apply_course_metadata(&mut row, &metadata);
+        assert_eq!(row["course_name"], metadata["name"]);
+        assert_eq!(row["course_id"], metadata["id"]);
+        assert_eq!(row["semester"], metadata["semester"]);
+    }
+    #[test]
+    fn attachment_preview_requests_share_the_course_account() {
+        for request in [
+            Request::Download { id: "file".into() },
+            Request::DownloadStatus { id: "job".into() },
+            Request::LocalMaterials {
+                course: "_1_1".into(),
+            },
+        ] {
+            assert_eq!(owner(&request), "course");
         }
     }
 }

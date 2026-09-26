@@ -1,9 +1,11 @@
 //! Durable subtitles, independent of the video cache and replaceable ASR engines.
+use crate::platform::PrivateOpenOptions;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use super::*;
 use std::{
     fs,
     io::Write,
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::atomic::{AtomicBool, Ordering},
@@ -145,13 +147,19 @@ fn selected_model(p: &Provider, hub: &Path) -> String {
                 && p.engine == spec.engine
                 && (p.model == spec.repo
                     || cached_model(hub, spec)
-                        .is_some_and(|path| path.to_string_lossy() == p.model))
+                        .is_some_and(|path| path == Path::new(&p.model)))
         })
         .map_or_else(|| "custom".into(), |spec| spec.id.into())
 }
+fn native_install_supported() -> bool {
+    cfg!(all(target_os = "macos", target_arch = "aarch64"))
+}
 fn provider_problem(p: &Provider) -> Option<&'static str> {
+    if p.adapter.is_none() && !native_install_supported() {
+        return Some("此平台暂不提供内置字幕识别模型；仍可导入 SRT / VTT、播放和保存字幕。");
+    }
     if [&p.python, &p.ffmpeg].iter().any(|path| {
-        !path.is_file() || fs::metadata(path).map_or(true, |m| m.permissions().mode() & 0o111 == 0)
+        !platform::executable(path)
     }) {
         return Some("本机字幕组件尚未安装，仍可导入 SRT / VTT。可在设置中查看安装步骤。");
     }
@@ -187,7 +195,7 @@ fn model_settings(p: &Provider, hub: &Path) -> Value {
     if !models.iter().any(|m| m["id"] == current) {
         models.insert(0, json!({"id":current,"label":p.label,"hint":"当前配置"}));
     }
-    json!({"model":current,"models":models,"available":provider_problem(p).is_none(),"custom":p.adapter.is_some(),"setupMessage":provider_problem(p)})
+    json!({"model":current,"models":models,"available":provider_problem(p).is_none(),"custom":p.adapter.is_some(),"nativeInstallSupported":native_install_supported(),"setupMessage":provider_problem(p)})
 }
 fn select_model(mut p: Provider, id: &str, hub: &Path) -> Result<Provider> {
     if id == selected_model(&p, hub) {
@@ -213,13 +221,13 @@ fn key(account: &str, course: &str, video: &str) -> String {
 fn disk_claim(name: &str) -> Result<fs::File> {
     let directory = root()?.join("subtitle-locks");
     fs::create_dir_all(&directory)?;
-    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+    platform::private_directory(&directory)?;
     let file = fs::OpenOptions::new()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
-        .mode(0o600)
+        .private_mode()
         .open(directory.join(format!("{:x}.lock", Sha256::digest(name))))?;
     fs2::FileExt::try_lock_exclusive(&file).map_err(|_| anyhow!("已有字幕正在处理，请稍后重试"))?;
     Ok(file)
@@ -241,13 +249,13 @@ fn document_path(session: &playback::Session) -> Result<PathBuf> {
 fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path.parent().ok_or_else(|| anyhow!("字幕目录无效"))?;
     fs::create_dir_all(parent)?;
-    fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+    platform::private_directory(parent)?;
     let temporary = path.with_extension(format!("{:016x}.part", rand::random::<u64>()));
     let result = (|| {
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .private_mode()
             .open(&temporary)?;
         file.write_all(bytes)?;
         file.sync_all()?;
@@ -399,11 +407,12 @@ fn read_document(path: &Path, signature: &str, duration: f64) -> Result<Option<D
     Ok(Some(doc))
 }
 fn run_child(mut command: Command, job: &Job, generation: &str, log: &Path) -> Result<()> {
+    platform::quiet_command(&mut command);
     let output = fs::OpenOptions::new()
         .create(true)
         .truncate(true)
         .write(true)
-        .mode(0o600)
+        .private_mode()
         .open(log)?;
     command
         .stdin(Stdio::null())
@@ -484,7 +493,7 @@ fn generate(
     directory: &Path,
 ) -> Result<()> {
     fs::create_dir_all(directory)?;
-    fs::set_permissions(directory, fs::Permissions::from_mode(0o700))?;
+    platform::private_directory(directory)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
@@ -528,7 +537,7 @@ fn generate(
         let audio_end = (end + 1.0).min(total);
         let piece = directory.join("piece");
         fs::create_dir_all(&piece)?;
-        fs::set_permissions(&piece, fs::Permissions::from_mode(0o700))?;
+        platform::private_directory(&piece)?;
         *job.state.lock().unwrap() = json!({"state":"preparing","message":"正在下载下一段音频，已完成的字幕可观看","completed":start,"total":total});
         let (media, origin) = runtime.block_on(session.subtitle_media_range(
             &piece,
@@ -578,8 +587,9 @@ fn generate(
             .arg(&adapter)
             .arg(request)
             .env("HF_HUB_OFFLINE", "1")
-            .env("TOKENIZERS_PARALLELISM", "false")
-            .env("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
+            .env("TOKENIZERS_PARALLELISM", "false");
+        #[cfg(target_os = "macos")]
+        command.env("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
         run_child(
             command,
             job,
@@ -618,12 +628,8 @@ fn generate(
     fs::remove_file(partial_path(session)?)?;
     Ok(())
 }
-fn account_key(id: &str) -> String {
-    format!(
-        "{:x}",
-        Sha256::digest(format!("course.pku.edu.cn/blackboard-user/{id}"))
-    )
-}
+#[cfg(test)]
+use crate::accounts::account_key;
 fn migrate_legacy(root: &Path, generation: &str, account: &str) -> Result<usize> {
     let old = root.join("subtitles-v1").join(generation);
     if !old.is_dir() || old.is_symlink() {
@@ -680,18 +686,15 @@ impl Core {
 
     pub(crate) async fn subtitle_account(&self, generation: &str) -> Result<String> {
         let _guard = self.subtitle_account_lock.lock().await;
+        let account = self.course_account(generation).await?;
+        self.prepare_subtitle_account(generation, &account)?;
+        Ok(account)
+    }
+    pub(crate) fn prepare_subtitle_account(&self, generation: &str, account: &str) -> Result<()> {
         let root = root()?;
         let binding = root
             .join("subtitle-accounts")
             .join(format!("{generation}.json"));
-        let saved = fs::read(&binding)
-            .ok()
-            .and_then(|b| serde_json::from_slice::<String>(&b).ok())
-            .filter(|s| s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()));
-        let account = match saved {
-            Some(account) => account,
-            None => account_key(&self.course_api()?.account_id().await?),
-        };
         if generation != fingerprint("course") {
             bail!("账号已更新，请重试");
         }
@@ -699,10 +702,10 @@ impl Core {
         let _claim = disk_claim("account-subtitle-migration")?;
         let account_dir = root.join("subtitles-v2").join(&account);
         fs::create_dir_all(&account_dir)?;
-        fs::set_permissions(&account_dir, fs::Permissions::from_mode(0o700))?;
+        platform::private_directory(&account_dir)?;
         migrate_legacy(&root, generation, &account)?;
         write_private(&binding, &serde_json::to_vec(&account)?)?;
-        Ok(account)
+        Ok(())
     }
     pub(crate) fn ensure_subtitle_key_idle(
         &self,
@@ -871,7 +874,7 @@ mod tests {
         assert_eq!(next.python, original.python);
         assert_eq!(next.ffmpeg, original.ffmpeg);
         assert_eq!(next.engine, "mlx-whisper");
-        assert_eq!(next.model, model.to_string_lossy());
+        assert_eq!(Path::new(&next.model), model.as_path());
         assert_eq!(model_settings(&next, hub.path())["model"], "whisper-tiny");
         for id in ["../../adapter.py", "/tmp/model", "unknown"] {
             assert!(select_model(original.clone(), id, hub.path()).is_err());
@@ -882,6 +885,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let binary = directory.path().join("python");
         fs::write(&binary, "#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
         let model = directory.path().join("model");
         fs::create_dir(&model).unwrap();
@@ -898,7 +902,7 @@ mod tests {
         };
         assert!(provider_problem(&p).unwrap().contains("模型"));
         fs::write(model.join("model.safetensors"), "weights").unwrap();
-        assert!(provider_problem(&p).is_none());
+        assert_eq!(provider_problem(&p).is_none(), native_install_supported());
         fs::remove_file(model.join("model.safetensors")).unwrap();
         assert!(provider_problem(&p).is_some());
         assert_eq!(fs::read_to_string(saved).unwrap(), "saved captions");
@@ -1064,8 +1068,11 @@ mod tests {
             cancel: AtomicBool::new(true),
             active: AtomicBool::new(true),
         };
-        let mut command = Command::new("/bin/sleep");
-        command.arg("30");
+        #[cfg(unix)]
+        let mut command = { let mut command = Command::new("/bin/sleep"); command.arg("30"); command };
+        #[cfg(windows)]
+        let mut command = { let mut command = Command::new("ping.exe"); command.args(["-n", "30", "127.0.0.1"]); command };
+        platform::quiet_command(&mut command);
         let start = Instant::now();
         assert!(run_child(
             command,
@@ -1101,6 +1108,7 @@ mod tests {
             "课堂字幕"
         );
         assert!(read_document(&path, "recording-b", 10.0).unwrap().is_none());
+        #[cfg(unix)]
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600

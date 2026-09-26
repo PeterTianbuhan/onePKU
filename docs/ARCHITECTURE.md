@@ -32,7 +32,7 @@ React 页面  ──useResource({kind:"scores"})──▶  src/lib/api.ts  call(
 - `lib/grades.ts`：GPA 与加权平均的官方公式。`lib/curriculum.ts`（培养方案匹配）与此并列。
 - `styles/tokens.css` 由 `docs/DESIGN.md` 头部的 YAML 生成，`npm run verify:tokens` 校验漂移。
 
-前端拿不到任何凭证。它能做的只有：调用允许的命令、打开系统文件选择器、请求打开原文窗口。
+前端拿不到已保存的密码、会话 Cookie 或令牌。用户输入的密码经独立原生 IPC 交给 Rust，不进入资源 Request、查询缓存、日志或浏览器预览 HTTP；其余操作通过白名单命令、系统文件选择器和原文窗口完成。
 
 ### 桌面容器 `src-tauri/`
 
@@ -47,7 +47,7 @@ React 页面  ──useResource({kind:"scores"})──▶  src/lib/api.ts  call(
 | 模块                          | 职责                                                                       |
 | ----------------------------- | -------------------------------------------------------------------------- |
 | `lib.rs`                      | 请求枚举、`execute()` 的超时（75 秒）、缓存读写与旧数据回退、错误分类      |
-| `auth.rs`                     | 扫码登录状态机、短信二次验证，凭证写入 PKU CLI 的会话目录                  |
+| `auth.rs`                     | 账号密码与扫码登录、短信二次验证、只读认证恢复，会话写入 PKU CLI 目录                  |
 | `maintenance.rs`              | 保持登录：15 分钟一次的空闲会话检查、失败退避、偏好持久化                  |
 | `storage.rs`                  | `resources-v1.json` 持久缓存，30 天上限，按账号隔离，启动时恢复            |
 | `study.rs`                    | 课程、回放列表、教学网成绩、课程通知，以及给原文窗口的 Cookie 提取         |
@@ -72,21 +72,25 @@ MIT 快照，提交 0ad6dea。本地补丁只做四类事：暴露类型化查�
 
 ## 数据与目录
 
-| 内容                       | 位置                                                                 |
-| -------------------------- | -------------------------------------------------------------------- |
-| 会话与 Cookie              | `~/.config/info/<course                                              | treehole | campuscard | bdkj>/`，0600 |
-| 资源缓存                   | `~/Library/Caches/me.petertian.OnePKU/resources-v1.json`             |
-| 偏好                       | `~/Library/Application Support/me.petertian.OnePKU/preferences.json` |
-| 已读、订阅、观看位置、字幕 | 同上目录下的各自文件                                                 |
-| 下载                       | `~/Downloads/OnePKU/<学期>/<课程>/`                                  |
-| 作业暂存与操作记录         | 应用私有目录，记录保留 90 天                                         |
+应用程序安装位置与用户数据目录分开。具体平台路径见 [SECURITY.md](../SECURITY.md)，不要按安装路径推断数据路径，也不要把开发仓库当成用户数据目录。
+
+| 内容                     | Windows 默认位置                                     |
+| ------------------------ | ---------------------------------------------------- |
+| PKU CLI 会话与 Cookie    | `%APPDATA%\info\config\<服务>\`                      |
+| 资源与回放分片缓存       | `%LOCALAPPDATA%\petertian\OnePKU\cache\`             |
+| 偏好、用户资料           | `%APPDATA%\petertian\OnePKU\config\preferences.json` |
+| 字幕、操作记录与作业暂存 | `%LOCALAPPDATA%\petertian\OnePKU\data\`              |
+| 下载与课程资料           | 系统下载目录下 `OnePKU/<学期>/<课程>/`               |
+| WebView2 网页运行数据    | `%LOCALAPPDATA%\me.petertian.onepku\EBWebView\`      |
+
+Rust 核心使用 `directories` 查询操作系统目录；Tauri/WebView2 有单独的网页运行数据目录。Windows 私有文件继承当前用户目录的 ACL，Unix 私有文件权限另行设置。登录凭证和网页会话均不得提交或作为公开诊断附件。
 
 ## 不变量
 
 这些是代码评审时要守住的：
 
 1. 前端只调用 `Request` 里的命令；新增命令要同时决定 `owner()`、是否 `cacheable()`、是否需要登录。
-2. 凭证只在核心与 PKU CLI 会话目录之间流动。原文窗口的 Cookie 注入是唯一例外，且只对目标域。
+2. 会话凭证只在核心与 PKU CLI 会话目录之间流动；可选记住的密码只存系统钥匙串，不返回前端。原文窗口的 Cookie 注入只对目标域。
 3. 读失败保留同账号旧数据并标 `stale`；认证失败清空私有缓存并让 `Resource` 显示重新登录。
 4. 写操作要有持久记录、幂等 ID、回执核对；不自动重发。
 5. 空状态只来自成功的空结果。部分失败要进 `warnings`。

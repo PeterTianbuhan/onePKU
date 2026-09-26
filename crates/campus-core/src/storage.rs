@@ -1,10 +1,12 @@
 //! Local resource snapshots. Cache-first/TTL/stale conventions follow PkuClaw's
 //! pku3b cache contract; credentials remain in PKU CLI, never in this snapshot.
 use super::*;
+use crate::platform::PrivateOpenOptions;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::{
     fs,
     io::Write,
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
@@ -43,6 +45,7 @@ pub(crate) fn cacheable(req: &Request) -> bool {
             | Request::Holes { .. }
             | Request::Hole { .. }
             | Request::CalendarPdf { .. }
+            | Request::FacultyNews { .. }
             | Request::News { .. }
             | Request::NewsDetail { .. }
     )
@@ -81,7 +84,7 @@ fn atomic_write(p: &Path, data: &[u8]) -> Result<()> {
         .parent()
         .ok_or_else(|| anyhow!("invalid cache directory"))?;
     fs::create_dir_all(dir)?;
-    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+    platform::private_directory(dir)?;
     let temp = dir.join(format!(
         ".cache-{}-{}.tmp",
         std::process::id(),
@@ -91,7 +94,7 @@ fn atomic_write(p: &Path, data: &[u8]) -> Result<()> {
         let mut f = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .private_mode()
             .open(&temp)?;
         f.write_all(data)?;
         f.sync_all()?;
@@ -191,6 +194,7 @@ mod tests {
         atomic_write(&p, b"old").unwrap();
         atomic_write(&p, b"new").unwrap();
         assert_eq!(fs::read(&p).unwrap(), b"new");
+        #[cfg(unix)]
         assert_eq!(fs::metadata(p).unwrap().permissions().mode() & 0o777, 0o600);
     }
     #[test]
