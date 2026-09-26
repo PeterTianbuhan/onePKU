@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与桌面版图标方块同色:前景缩小后,背景层会从圆形遮罩边缘露出 -->
+    <color name="ic_launcher_background">#8F2338</color>
+</resources>
