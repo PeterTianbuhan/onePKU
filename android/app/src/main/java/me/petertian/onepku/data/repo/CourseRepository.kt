@@ -35,17 +35,15 @@ class CourseRepository @Inject constructor(
     private val auth: AuthManager,
     @ApplicationContext private val context: Context,
 ) {
-    private var coursesCache: CacheEntry<List<CourseInfo>>? = null
-    private val assignmentsCache = mutableMapOf<String, CacheEntry<List<AssignmentSummary>>>()
+    private val coursesCache = ScopedCache<Unit, List<CourseInfo>>({ auth.cacheScope(Service.COURSE) }, TTL)
+    private val assignmentsCache = ScopedCache<String, List<AssignmentSummary>>({ auth.cacheScope(Service.COURSE) }, TTL)
 
     private suspend fun <T> run(block: suspend CourseApi.() -> T): T = withReauth(auth, Service.COURSE) {
         api.block()
     }
 
-    suspend fun courses(forceRefresh: Boolean = false): List<CourseInfo> {
-        coursesCache?.takeIf { !forceRefresh && it.fresh(TTL) }?.let { return it.data }
-        return run { listCourses() }.also { coursesCache = CacheEntry(it) }
-    }
+    suspend fun courses(forceRefresh: Boolean = false): List<CourseInfo> =
+        coursesCache.get(Unit, forceRefresh) { run { listCourses() } }
 
     suspend fun announcements(courseId: String, courseName: String): List<Announcement> =
         run { listAnnouncements(courseId, courseName) }
@@ -61,31 +59,27 @@ class CourseRepository @Inject constructor(
 
     suspend fun learningGrades(courseId: String): List<LearningGrade> = run { learningGrades(courseId) }
 
-    /** 多门课作业汇总;逐门失败不拖垮整体。 */
+    /** 多门课作业汇总;逐门失败不拖垮整体,失败也不写成空缓存。 */
     suspend fun assignments(courses: List<CourseInfo>, forceRefresh: Boolean = false): List<AssignmentSummary> =
         coroutineScope {
             val sem = Semaphore(3)
             courses.map { course ->
                 async {
-                    val cached = assignmentsCache[course.id]
-                        ?.takeIf { !forceRefresh && it.fresh(TTL) }
-                        ?.data
-                    if (cached != null) {
-                        cached
-                    } else {
-                        sem.acquire()
-                        try {
-                            val fresh = try {
+                    try {
+                        assignmentsCache.get(course.id, forceRefresh) {
+                            sem.acquire()
+                            try {
                                 withReauth(auth, Service.COURSE) { api.listAssignmentsForCourse(course) }
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                emptyList()
+                            } finally {
+                                sem.release()
                             }
-                            fresh.also { assignmentsCache[course.id] = CacheEntry(it) }
-                        } finally {
-                            sem.release()
                         }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: AccountChangedException) {
+                        throw e
+                    } catch (e: Exception) {
+                        emptyList()
                     }
                 }
             }.flatMap { it.await() }
@@ -95,23 +89,28 @@ class CourseRepository @Inject constructor(
     suspend fun assignmentsForCourse(courseId: String, courseName: String): List<AssignmentSummary> =
         run { listAssignmentsForCourse(CourseInfo(courseId, courseName, true)) }
 
-    /** 下载附件到 应用专属 Download/OnePKU/<courseName>/,返回文件。 */
+    /** 下载附件到 应用专属 Download/OnePKU/<账号>/<courseName>/,换账号看不到上一账号的文件。 */
     suspend fun download(courseName: String, attachment: Attachment): File {
         val dir = File(
             context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
-            "OnePKU/${sanitize(courseName)}",
+            "OnePKU/${accountDir()}/${sanitize(courseName)}",
         )
         val dest = File(dir, sanitize(attachment.name))
         if (dest.exists() && dest.length() > 0) return dest
         return run { downloadFile(attachment.url, dest) }
     }
 
-    /** 预览用:落到缓存的 previews 目录,不混进课程资料;同名文件不重复下载。 */
+    /** 预览用:落到缓存的 previews/<账号> 目录,不混进课程资料;同名文件不重复下载。 */
     suspend fun cachedFile(attachment: Attachment): File {
-        val dir = File(context.cacheDir, "previews").apply { mkdirs() }
+        val dir = File(context.cacheDir, "previews/${accountDir()}").apply { mkdirs() }
         val dest = File(dir, sanitize(attachment.name))
         if (dest.exists() && dest.length() > 0) return dest
         return run { downloadFile(attachment.url, dest) }
+    }
+
+    private fun accountDir(): String {
+        val uid = auth.sessionUid(Service.COURSE).ifBlank { "anonymous" }
+        return sha256(uid.toByteArray()).take(24)
     }
 
     private fun sanitize(name: String): String =
