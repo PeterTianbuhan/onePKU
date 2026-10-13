@@ -40,6 +40,10 @@ class AuthManager @Inject constructor(
 
     fun hasCredentials(): Boolean = sessionStore.credentials() != null
 
+    fun cacheScope(service: Service): String = sessionStore.cacheScope(service)
+
+    fun sessionUid(service: Service): String = sessionStore.session(service)?.uid?.trim().orEmpty()
+
     fun storedUsername(): String? = sessionStore.credentials()?.username
 
     suspend fun login(service: Service, username: String, password: String, otpCode: String? = null) {

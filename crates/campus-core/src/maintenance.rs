@@ -1,4 +1,5 @@
 use super::*;
+use sha2::{Digest, Sha256};
 use std::sync::atomic::Ordering;
 
 const INTERVAL: i64 = 15 * 60;
@@ -211,14 +212,30 @@ impl Core {
         Ok(profile.clone())
     }
     /// 成绩口径：手动纳入与排除的课程键（「学期|课名」）。只存本机，不含凭证。
+    /// 按当前树洞账号分桶；未登录时仍用旧的全局键。
     pub(crate) fn grades_scope() -> Value {
-        read_preferences()
+        let prefs = read_preferences();
+        let key = grade_scope_storage_key(treehole_uid().as_deref());
+        if let Some(value) = prefs.get(&key).cloned().filter(Value::is_object) {
+            return value;
+        }
+        let legacy = prefs
             .get("gradesScope")
             .cloned()
             .filter(Value::is_object)
-            .unwrap_or_else(|| json!({ "included": [], "excluded": [] }))
+            .unwrap_or_else(|| json!({ "included": [], "excluded": [] }));
+        if key != "gradesScope" {
+            if let Some(saved) = prefs.get("gradesScope").cloned().filter(Value::is_object) {
+                if write_preference(&key, saved.clone()).is_ok() {
+                    let _ = write_preference("gradesScope", Value::Null);
+                }
+                return saved;
+            }
+        }
+        legacy
     }
     pub(crate) fn save_grades_scope(&self, scope: &Value) -> Result<Value> {
+        let key = grade_scope_storage_key(treehole_uid().as_deref());
         if !scope.is_object() {
             bail!("成绩口径格式不正确");
         }
@@ -255,8 +272,32 @@ impl Core {
             bail!("成绩口径调整过多，请先清理");
         }
         let clean = json!({ "included": included, "excluded": excluded });
-        write_preference("gradesScope", clean.clone())?;
+        if grade_scope_storage_key(treehole_uid().as_deref()) != key {
+            bail!("账号已变化，请刷新后重试");
+        }
+        write_preference(&key, clean.clone())?;
+        if key != "gradesScope" {
+            let _ = write_preference("gradesScope", Value::Null);
+        }
         Ok(clean)
+    }
+}
+fn treehole_uid() -> Option<String> {
+    Store::new("treehole")
+        .ok()
+        .and_then(|store| store.load_session().ok().flatten())
+        .and_then(|session| session.uid)
+        .map(|uid| uid.trim().to_string())
+        .filter(|uid| !uid.is_empty())
+}
+/// 有树洞 uid 时按账号分桶，否则保留升级前的全局键 `gradesScope`。
+pub(crate) fn grade_scope_storage_key(uid: Option<&str>) -> String {
+    match uid.map(str::trim).filter(|uid| !uid.is_empty()) {
+        Some(uid) => format!(
+            "gradesScope:{:x}",
+            Sha256::digest(format!("treehole-grade-scope:{uid}"))
+        ),
+        None => "gradesScope".into(),
     }
 }
 pub(crate) fn read_preferences() -> serde_json::Map<String, Value> {
@@ -296,6 +337,16 @@ mod tests {
         assert_eq!(clean["excluded"][0], "25-26-2|体育");
         assert!(core.save_grades_scope(&json!("nope")).is_err());
         assert!(core.save_grades_scope(&json!({"included": "x"})).is_err());
+    }
+    #[test]
+    fn grade_scope_keys_follow_the_treehole_account() {
+        assert_eq!(grade_scope_storage_key(None), "gradesScope");
+        assert_eq!(grade_scope_storage_key(Some("  ")), "gradesScope");
+        let a = grade_scope_storage_key(Some("2200012345"));
+        let b = grade_scope_storage_key(Some("2300012345"));
+        assert_ne!(a, b);
+        assert!(a.starts_with("gradesScope:"));
+        assert_eq!(a, grade_scope_storage_key(Some(" 2200012345 ")));
     }
     #[test]
     fn synthetic_deadlines_do_not_force_desktop_logout() {

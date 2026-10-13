@@ -36,6 +36,7 @@ data class Credentials(val username: String, val password: String)
 @Singleton
 class SessionStore @Inject constructor(@ApplicationContext context: Context) {
 
+    private val revisions = java.util.concurrent.ConcurrentHashMap<Service, Long>()
     private val json = Json { ignoreUnknownKeys = true }
 
     private val prefs = EncryptedSharedPreferences.create(
@@ -56,7 +57,16 @@ class SessionStore @Inject constructor(@ApplicationContext context: Context) {
         return Credentials(u, p)
     }
 
+    /** 内存缓存用的账号代际。进程重启后缓存本身是空的，所以代际只放内存里。 */
+    @Synchronized
+    fun cacheScope(service: Service): String =
+        "${revisions[service] ?: 0L}:${session(service)?.uid?.trim().orEmpty()}"
+
+    @Synchronized
     fun saveSession(service: Service, session: StoredSession) {
+        val previous = session(service)?.uid?.trim().orEmpty()
+        val next = session.uid?.trim().orEmpty()
+        if (previous != next) revisions.merge(service, 1L, Long::plus)
         prefs.edit().putString("session_${service.key}", json.encodeToString(StoredSession.serializer(), session)).apply()
     }
 
@@ -70,11 +80,15 @@ class SessionStore @Inject constructor(@ApplicationContext context: Context) {
         return !s.isExpired()
     }
 
+    @Synchronized
     fun clear(service: Service) {
+        revisions.merge(service, 1L, Long::plus)
         prefs.edit().remove("session_${service.key}").apply()
     }
 
+    @Synchronized
     fun clearAll() {
+        Service.entries.forEach { revisions.merge(it, 1L, Long::plus) }
         prefs.edit().clear().apply()
     }
 }
