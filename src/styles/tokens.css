@@ -24,3 +24,21 @@
   --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, monospace;
 }
+
+[data-theme="dark"] {
+  --primary: #C75E71;
+  --primary-soft: #2B2124;
+  --text: #E6E8EC;
+  --muted: #9BA0AA;
+  --background: #16181C;
+  --sidebar: #1E2126;
+  --border: #33373F;
+  --success: #63A985;
+  --success-soft: #1D2A23;
+  --warning: #C79A54;
+  --warning-soft: #2A2418;
+  --danger: #DC6C79;
+  --hover: #24282F;
+  --overlay: #000000A6;
+  --scrollbar: #4A4F58;
+}

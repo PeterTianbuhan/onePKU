@@ -1,19 +1,63 @@
 use super::*;
 use chrono::{Datelike, NaiveDate};
-fn course_value(c: &pku_course::api::CourseInfo) -> Value {
-    let re = regex::Regex::new(r"[（(](\d{2}-\d{2}学年第[123]学期)[）)]$").unwrap();
-    let title = c.title();
-    let semester = re
-        .captures(title)
-        .map(|m| m[1].to_string())
-        .or_else(|| {
-            let prefix = regex::Regex::new(r"^(\d{2})(\d{2})([123])-").unwrap();
-            prefix
-                .captures(&c.long_title)
-                .map(|m| format!("{}-{}学年第{}学期", &m[1], &m[2], &m[3]))
+/// 结尾括号里的学期写法统一成「26-27学年第1学期」。教学网的学期后缀不止一种写法
+/// （「26-27学年第1学期」「26-27-1」「2026-2027 学年第一学期」），只认一种就会把
+/// 整串带进培养方案的课程名匹配，在修课程因此认不出来；不像学期的括号原样保留。
+fn term_label(inner: &str) -> Option<String> {
+    let text = inner.trim();
+    let years = regex::Regex::new(r"(\d{2,4})\s*[-—–－]\s*(\d{2,4})").unwrap();
+    let caps = years.captures(text)?;
+    let short = |value: &str| value[value.len() - 2..].to_string();
+    let number = regex::Regex::new(r"第\s*([0-9一二三])\s*学期")
+        .unwrap()
+        .captures(text)
+        .map(|found| {
+            match &found[1] {
+                "一" => "1",
+                "二" => "2",
+                "三" => "3",
+                other => other,
+            }
+            .to_string()
         })
-        .unwrap_or_else(|| "未标注学期".into());
-    json!({"id":c.id,"name":re.replace(title, "").trim(),"semester":semester,"current":c.is_current})
+        .or_else(|| {
+            regex::Regex::new(r"[-—–－]\s*([123])\s*$")
+                .unwrap()
+                .captures(text)
+                .map(|found| found[1].to_string())
+        });
+    Some(match number {
+        Some(number) => format!("{}-{}学年第{}学期", short(&caps[1]), short(&caps[2]), number),
+        None => format!("{}-{}学年", short(&caps[1]), short(&caps[2])),
+    })
+}
+pub(crate) fn course_value(c: &pku_course::api::CourseInfo) -> Value {
+    // 「26271-x: 数据结构 (26-27学年第1学期)」：冒号前是课程编号，结尾括号是学期。
+    let title = c
+        .long_title
+        .split_once([':', '：'])
+        .map(|(_, t)| t.trim())
+        .unwrap_or(c.long_title.trim());
+    let suffix = regex::Regex::new(r"[（(]([^（）()]*)[）)]\s*$").unwrap();
+    let tail = suffix.captures(title).map(|found| found[1].to_string());
+    let term = tail.as_deref().and_then(term_label);
+    let name = if term.is_some() {
+        suffix.replace(title, "").trim().to_string()
+    } else {
+        title.to_string()
+    };
+    let semester = term.or_else(|| {
+        let prefix = regex::Regex::new(r"^(\d{2})(\d{2})([123])-").unwrap();
+        prefix
+            .captures(&c.long_title)
+            .map(|m| format!("{}-{}学年第{}学期", &m[1], &m[2], &m[3]))
+    });
+    json!({
+        "id": c.id,
+        "name": name,
+        "semester": semester.unwrap_or_else(|| "未标注学期".into()),
+        "current": c.is_current,
+    })
 }
 fn month_range(month: &str) -> Result<(NaiveDate, NaiveDate)> {
     if month.len() != 7
@@ -119,7 +163,7 @@ impl Core {
             .map(|a| serde_json::to_value(a).unwrap())
             .collect::<Vec<_>>();
         for row in &mut rows {
-            row["semester"] = metadata["semester"].clone();
+            apply_course_metadata(row, &metadata);
             if row["detail_error"] == true {
                 warnings.push(format!(
                     "{} 的详情尚未获取",
@@ -150,16 +194,17 @@ impl Core {
             .cloned()
             .ok_or_else(|| anyhow!("课程不在当前账号列表中"))
     }
-    pub(crate) async fn videos(&self, course: &str, warnings: &mut Vec<String>) -> Result<Value> {
-        let c = self.find_course(course).await?;
-        let videos = self
-            .course_api()?
-            .list_videos(course, c["name"].as_str().unwrap_or(""))
-            .await?;
-        if videos.len() >= 100 {
-            warnings.push("当前显示前 100 条回放，完整列表请在教学网查看".into());
+    /// 回放只要好学源：直接拿课名去课堂实录里查，不再经过教学网账号。
+    pub(crate) async fn videos(&self, name: &str, warnings: &mut Vec<String>) -> Result<Value> {
+        let name = name.trim();
+        if name.is_empty() || name.chars().count() > 200 {
+            bail!("invalid course");
         }
-        Ok(serde_json::to_value(videos)?)
+        let (rows, waiting) = crate::haoxue::replays(name).await?;
+        if waiting > 0 {
+            warnings.push(format!("另有 {waiting} 节课堂记录没有可播放回放"));
+        }
+        Ok(Value::Array(rows))
     }
     pub(crate) async fn exams(&self) -> Result<Value> {
         let rows = pku_treehole::api::TreeholeApi::from_session_noninteractive()
@@ -204,6 +249,11 @@ impl Core {
         })
     }
 }
+pub(crate) fn apply_course_metadata(row: &mut Value, metadata: &Value) {
+    row["course_id"] = metadata["id"].clone();
+    row["course_name"] = metadata["name"].clone();
+    row["semester"] = metadata["semester"].clone();
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,11 +274,70 @@ mod tests {
         assert_eq!(course_value(&c)["semester"], "25-26学年第1学期");
     }
     #[test]
+    fn every_term_spelling_leaves_a_bare_course_name() {
+        // 学期后缀写法不统一，认不全就会把整串带进培养方案匹配，在修课程少一类。
+        for (title, name, semester) in [
+            ("26271-x: 高等数学A (2026-2027 学年第一学期)", "高等数学A", "26-27学年第1学期"),
+            ("26271-x: 大学物理 (26-27-2)", "大学物理", "26-27学年第2学期"),
+            ("26271-x: 综合英语（三）(26-27学年第3学期)", "综合英语（三）", "26-27学年第3学期"),
+            ("26271-x: 代数与数论 (26-27)", "代数与数论", "26-27学年"),
+        ] {
+            let value = course_value(&pku_course::api::CourseInfo {
+                id: "_1_1".into(),
+                long_title: title.into(),
+                is_current: true,
+            });
+            assert_eq!(value["name"], name, "{title}");
+            assert_eq!(value["semester"], semester, "{title}");
+        }
+        // 不像学期的括号是课程名的一部分，必须留着。
+        let value = course_value(&pku_course::api::CourseInfo {
+            id: "_1_1".into(),
+            long_title: "26271-x: 综合英语 (上)".into(),
+            is_current: true,
+        });
+        assert_eq!(value["name"], "综合英语 (上)");
+        assert_eq!(value["semester"], "26-27学年第1学期");
+    }
+    #[test]
     fn month_boundaries() {
         assert_eq!(month_range("2024-02").unwrap().1.to_string(), "2024-02-29");
         assert_eq!(month_range("2026-12").unwrap().1.to_string(), "2026-12-31");
         for s in ["2026-13", "2026-1", "../test", "0000-01"] {
             assert!(month_range(s).is_err());
+        }
+    }
+    #[test]
+    fn full_year_and_full_width_titles_share_the_same_semester() {
+        for title in [
+            "26271-x：数据结构 (A) （2026-2027学年第1学期）",
+            "26271-x: 数据结构 (A) (26－27 学年第一学期) ",
+            "26271-x: 数据结构 (A)",
+        ] {
+            let value = course_value(&pku_course::api::CourseInfo {
+                id: "_1_1".into(), long_title: title.into(), is_current: true,
+            });
+            assert_eq!(value["name"], "数据结构 (A)");
+            assert_eq!(value["semester"], "26-27学年第1学期");
+        }
+    }
+    #[test]
+    fn assignment_metadata_matches_course_material_archive() {
+        let metadata = json!({"id":"_1_1","name":"数据结构 (A)","semester":"26-27学年第1学期"});
+        let mut row = json!({"course_name":"数据结构","attachments":[]});
+        apply_course_metadata(&mut row, &metadata);
+        assert_eq!(row["course_name"], metadata["name"]);
+        assert_eq!(row["course_id"], metadata["id"]);
+        assert_eq!(row["semester"], metadata["semester"]);
+    }
+    #[test]
+    fn attachment_preview_requests_share_the_course_account() {
+        for request in [
+            Request::Download { id: "file".into() },
+            Request::DownloadStatus { id: "job".into() },
+            Request::LocalMaterials { course: "_1_1".into() },
+        ] {
+            assert_eq!(owner(&request), "course");
         }
     }
 }

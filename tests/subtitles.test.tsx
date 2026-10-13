@@ -234,3 +234,39 @@ it("offers resume after reopening a partial track, including a silent completed 
     screen.queryByRole("button", { name: "导入 SRT / VTT" }),
   ).not.toBeInTheDocument();
 });
+
+it("does not offer the macOS subtitle installer on Windows", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        data: {
+          available: false,
+          nativeInstallSupported: false,
+          custom: false,
+          model: "custom",
+          models: [],
+          setupMessage: "此平台暂不提供内置字幕识别模型；仍可导入 SRT / VTT。",
+        },
+      }),
+    })),
+  );
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <SubtitleSettings />
+    </QueryClientProvider>,
+  );
+  expect(
+    await screen.findByText(/此平台暂不提供内置字幕识别模型/),
+  ).toBeVisible();
+  expect(
+    screen.queryByText("bash scripts/subtitles/install.sh"),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  expect(screen.getByText(/已有字幕继续保留/)).toBeVisible();
+  client.clear();
+});

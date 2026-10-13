@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Maximize2, Minus, Plus, RefreshCw } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Maximize2,
+  Minus,
+  Plus,
+  RefreshCw,
+} from "lucide-react";
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 // WKWebView's custom tauri: origin cannot reliably start a module Worker.
@@ -18,11 +25,15 @@ type CalendarData = { year: string; pdf: string; url: string };
 function Document({
   data,
   zoom,
+  page,
   onReady,
+  onPages,
 }: {
   data: CalendarData;
   zoom: number;
+  page: number;
   onReady: (v: boolean) => void;
+  onPages: (n: number) => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const container = useRef<HTMLDivElement>(null);
@@ -32,9 +43,12 @@ function Document({
   useEffect(() => {
     const el = container.current;
     if (!el) return;
-    const resize = new ResizeObserver((entries) =>
-      setWidth(entries[0].contentRect.width),
-    );
+    const resize = new ResizeObserver((entries) => {
+      const next = entries[0].contentRect.width;
+      // 亚像素的变化不重排：画布宽度回头影响内容宽度时，一点点抖动就会被放大成
+      // 高频的重渲染循环。
+      setWidth((current) => (Math.abs(current - next) < 1 ? current : next));
+    });
     resize.observe(el);
     return () => resize.disconnect();
   }, []);
@@ -47,7 +61,10 @@ function Document({
     const task = pdfjs.getDocument({ data: bytes, useSystemFonts: true });
     task.promise
       .then((d) => {
-        if (!stopped) setDoc(d);
+        if (!stopped) {
+          setDoc(d);
+          onPages(d.numPages);
+        }
       })
       .catch(() => {
         if (!stopped) setError("校历文件未能显示，请重新获取或打开 PDF 原件");
@@ -56,13 +73,14 @@ function Document({
       stopped = true;
       void task.destroy();
     };
-  }, [data.pdf, onReady]);
+  }, [data.pdf, onReady, onPages]);
   useEffect(() => {
     if (!doc || !canvas.current) return;
     let cancelled = false;
     let render: pdfjs.RenderTask | undefined;
+    // 学校的校历通常一页；页数多的年份按当前页渲染。
     void doc
-      .getPage(1)
+      .getPage(page)
       .then((page) => {
         if (cancelled || !canvas.current) return;
         const original = page.getViewport({ scale: 1 });
@@ -95,7 +113,7 @@ function Document({
       cancelled = true;
       render?.cancel();
     };
-  }, [doc, width, zoom, onReady]);
+  }, [doc, width, zoom, page, onReady]);
   return (
     <div
       className="calendar-viewport"
@@ -105,7 +123,7 @@ function Document({
     >
       <canvas
         ref={canvas}
-        aria-label={`${data.year} 学年官方校历，第一及第二学期完整图表`}
+        aria-label={`${data.year} 学年官方校历，第 ${page} 页`}
       />
       {error && <p role="alert">{error}</p>}
     </div>
@@ -114,6 +132,8 @@ function Document({
 export default function Calendar() {
   const [year, setYear] = useState("2026-2027");
   const [zoom, setZoom] = useState(1);
+  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState(1);
   const [ready, setReady] = useState(false);
   const [openError, setOpenError] = useState("");
   const q = useResource<CalendarData>({ kind: "calendarPdf", year });
@@ -147,6 +167,8 @@ export default function Calendar() {
             onChange={(e) => {
               setYear(e.target.value);
               setZoom(1);
+              setPage(1);
+              setPages(1);
             }}
           >
             <option>2026-2027</option>
@@ -175,6 +197,30 @@ export default function Calendar() {
           <Maximize2 size={15} />
           适合宽度
         </Button>
+        {pages > 1 && (
+          <>
+            <span className="calendar-control-separator" />
+            <button
+              className="icon-button"
+              aria-label="上一页"
+              disabled={page <= 1}
+              onClick={() => setPage((n) => Math.max(1, n - 1))}
+            >
+              <ChevronLeft size={17} />
+            </button>
+            <span className="zoom-value">
+              {page} / {pages}
+            </span>
+            <button
+              className="icon-button"
+              aria-label="下一页"
+              disabled={page >= pages}
+              onClick={() => setPage((n) => Math.min(pages, n + 1))}
+            >
+              <ChevronRight size={17} />
+            </button>
+          </>
+        )}
         <span className="grow" />
         <span className="subtle">第一、第二学期</span>
         <button
@@ -195,7 +241,13 @@ export default function Calendar() {
       )}
       {q.data?.data ? (
         <>
-          <Document data={q.data.data} zoom={zoom} onReady={setReady} />
+          <Document
+            data={q.data.data}
+            zoom={zoom}
+            page={page}
+            onReady={setReady}
+            onPages={setPages}
+          />
           {!ready && (
             <p className="footnote" role="status">
               正在显示官方校历…

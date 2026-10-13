@@ -1,10 +1,12 @@
 //! Local resource snapshots. Cache-first/TTL/stale conventions follow PkuClaw's
 //! pku3b cache contract; credentials remain in PKU CLI, never in this snapshot.
+use crate::platform::PrivateOpenOptions;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use super::*;
 use std::{
     fs,
     io::Write,
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
@@ -14,6 +16,9 @@ struct Saved {
     entries: HashMap<String, Envelope>,
     files: HashMap<String, downloads::FileRef>,
 }
+/// 回放列表改用好学的课程与课次标识之后，旧快照里的行既播不出也对不上缓存，
+/// 整体作废比混合显示更安全；下一次写入会用新版本号覆盖同一个文件。
+const SNAPSHOT_VERSION: u32 = 2;
 fn path() -> Result<PathBuf> {
     Ok(directories::ProjectDirs::from("me", "petertian", "OnePKU")
         .ok_or_else(|| anyhow!("无法定位缓存目录"))?
@@ -81,7 +86,7 @@ fn atomic_write(p: &Path, data: &[u8]) -> Result<()> {
         .parent()
         .ok_or_else(|| anyhow!("invalid cache directory"))?;
     fs::create_dir_all(dir)?;
-    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+    platform::private_directory(dir)?;
     let temp = dir.join(format!(
         ".cache-{}-{}.tmp",
         std::process::id(),
@@ -91,7 +96,7 @@ fn atomic_write(p: &Path, data: &[u8]) -> Result<()> {
         let mut f = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .private_mode()
             .open(&temp)?;
         f.write_all(data)?;
         f.sync_all()?;
@@ -113,7 +118,7 @@ impl Core {
         }) else {
             return;
         };
-        if saved.version != 1 {
+        if saved.version != SNAPSHOT_VERSION {
             return;
         }
         let now = chrono::Utc::now().timestamp();
@@ -191,6 +196,7 @@ mod tests {
         atomic_write(&p, b"old").unwrap();
         atomic_write(&p, b"new").unwrap();
         assert_eq!(fs::read(&p).unwrap(), b"new");
+        #[cfg(unix)]
         assert_eq!(fs::metadata(p).unwrap().permissions().mode() & 0o777, 0o600);
     }
     #[test]

@@ -271,10 +271,56 @@ pub async fn open_browser(
     Ok(())
 }
 
+/// Windows 与 Linux 不装菜单栏：那条横条里只有系统菜单，桌面端用不上，还白占一行高度。
+/// Tauri 只在 macOS 生成默认菜单，所以非 macOS 什么都不设就不会有横条。
 pub fn install_menu(app: &tauri::App) -> tauri::Result<()> {
-    use tauri::menu::{Menu, MenuItem, Submenu};
-    let menu = Menu::default(app.handle())?;
-    menu.append(&Submenu::with_items(
+    #[cfg(target_os = "macos")]
+    return macos_menu(app);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Ok(())
+    }
+}
+
+/// macOS 的应用菜单在屏幕顶部，是「关于/退出」与网页快捷键的入口，不能省。
+/// 只留应用、编辑与网页三项：默认菜单里的 File/View/Window/Help 是多余的横条。
+#[cfg(target_os = "macos")]
+fn macos_menu(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+    let app_menu = Submenu::with_items(
+        app,
+        "OnePKU",
+        true,
+        &[
+            &PredefinedMenuItem::about(app, Some("关于 OnePKU"), None)?,
+            &PredefinedMenuItem::separator(app)?,
+            #[cfg(target_os = "macos")]
+            &PredefinedMenuItem::hide(app, Some("隐藏"))?,
+            #[cfg(target_os = "macos")]
+            &PredefinedMenuItem::hide_others(app, Some("隐藏其他"))?,
+            #[cfg(target_os = "macos")]
+            &PredefinedMenuItem::show_all(app, Some("显示全部"))?,
+            #[cfg(target_os = "macos")]
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::quit(app, Some("退出 OnePKU"))?,
+        ],
+    )?;
+    let edit_menu = Submenu::with_items(
+        app,
+        "编辑",
+        true,
+        &[
+            &PredefinedMenuItem::undo(app, Some("撤销"))?,
+            &PredefinedMenuItem::redo(app, Some("重做"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::cut(app, Some("剪切"))?,
+            &PredefinedMenuItem::copy(app, Some("复制"))?,
+            &PredefinedMenuItem::paste(app, Some("粘贴"))?,
+            &PredefinedMenuItem::select_all(app, Some("全选"))?,
+        ],
+    )?;
+    let page_menu = Submenu::with_items(
         app,
         "网页",
         true,
@@ -283,7 +329,11 @@ pub fn install_menu(app: &tauri::App) -> tauri::Result<()> {
             &MenuItem::with_id(app, "reader-forward", "前进", true, Some("CmdOrCtrl+]"))?,
             &MenuItem::with_id(app, "reader-reload", "刷新网页", true, Some("CmdOrCtrl+R"))?,
         ],
-    )?)?;
+    )?;
+    let menu = Menu::new(app.handle())?;
+    for item in [&app_menu, &edit_menu, &page_menu] {
+        menu.append(item)?;
+    }
     app.set_menu(menu)?;
     app.on_menu_event(|app, event| {
         let Some(window) = app

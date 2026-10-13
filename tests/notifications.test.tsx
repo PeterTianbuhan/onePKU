@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  htmlToText,
   NotificationProvider,
   useNotifications,
 } from "../src/lib/notifications";
@@ -203,4 +204,14 @@ it("subscribes to library activities and opens the original page without replaci
       "library:lecture-2026",
     ),
   );
+});
+
+it("htmlToText keeps paragraphs and strips tags, scripts and entities", () => {
+  expect(
+    htmlToText(
+      "<p>第一段&nbsp;<b>加粗</b></p><script>alert(1)</script><p>第二段 &amp; 第三段</p>",
+    ),
+  ).toBe("第一段 加粗\n\n第二段 & 第三段");
+  expect(htmlToText("纯文本")).toBe("纯文本");
+  expect(htmlToText("<div><br>只有换行</div>")).toBe("只有换行");
 });

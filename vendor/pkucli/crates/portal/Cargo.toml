@@ -32,4 +32,5 @@ scraper.workspace = true
 regex.workspace = true
 urlencoding = "2"
 url.workspace = true
+rand.workspace = true
 qrcode.workspace = true

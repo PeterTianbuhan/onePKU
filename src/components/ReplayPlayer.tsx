@@ -11,7 +11,7 @@ import {
   VolumeX,
   X,
 } from "lucide-react";
-import { action } from "../lib/api";
+import { action, ApiError, connectHaoxue } from "../lib/api";
 import { openBrowser } from "../lib/browser";
 import { Button } from "./ui";
 import { useReplayFullscreen } from "./useReplayFullscreen";
@@ -27,6 +27,10 @@ export type Replay = {
   time: string;
   url: string;
   hash_id: string;
+  /** 好学的课程标识；回放解析、缓存与进度回写都以它为准。 */
+  courseId?: string;
+  course_name?: string;
+  room?: string;
 };
 type CacheStatus = {
   completed: number;
@@ -74,9 +78,13 @@ export default function ReplayPlayer({
 }) {
   const element = useRef<HTMLVideoElement>(null);
   const surface = useRef<HTMLDivElement>(null);
-  const storageKey = `onepku.playback.${generation}.${course}.${video.hash_id}`;
+  // 好学的课程标识才是回放的真实身份：缓存、续播位置与进度回写都按它对齐。
+  const lesson = video.courseId ?? course;
+  const storageKey = `onepku.playback.${generation}.${lesson}.${video.hash_id}`;
   const position = useRef(savedPosition(storageKey));
+  const mediaReady = useRef(false);
   const lastSaved = useRef(0);
+  const reportedAt = useRef(Math.floor(Date.now() / 1000));
   const [playback, setPlayback] = useState<Playback>();
   const subtitles = useReplaySubtitles(playback?.id);
   const subtitleKey = `${storageKey}.subtitles`;
@@ -108,6 +116,26 @@ export default function ReplayPlayer({
     } catch {}
   }, [subtitleKey, subtitlesEnabled, subtitleOffset]);
   const [status, setStatus] = useState<CacheStatus>();
+  const statusRef = useRef<CacheStatus | undefined>(undefined);
+  // 课堂实录的登录失效只能重新连接课堂实录：给「重试连接」就是原地打转。
+  const [needsAuth, setNeedsAuth] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  // 「缓存播放」：开着才把整节预存到本机换流畅；无论开关，退出播放都清掉，不留占空间。
+  const [cachePlay, setCachePlay] = useState(() => {
+    try {
+      return localStorage.getItem("onepku.replay.cache.v1") !== "off";
+    } catch {
+      return true;
+    }
+  });
+  const cachePlayRef = useRef(cachePlay);
+  useEffect(() => {
+    cachePlayRef.current = cachePlay;
+  }, [cachePlay]);
+  function saveStatus(next: CacheStatus) {
+    statusRef.current = next;
+    setStatus(next);
+  }
   const [error, setError] = useState("");
   const [waiting, setWaiting] = useState(true);
   const [needsPlay, setNeedsPlay] = useState(false);
@@ -146,40 +174,78 @@ export default function ReplayPlayer({
     setStatus(undefined);
     setWaiting(true);
     setError("");
+    setNeedsAuth(false);
     void action<Playback>({
       kind: "playbackPrepare",
-      course,
+      course: lesson,
       video: video.hash_id,
       refresh: retry > 0,
+      position: position.current,
     })
       .then(async (p) => {
         id = p.id;
         if (!live) {
-          await action({ kind: "playbackClose", id });
+          await action({ kind: "playbackClose", id, clear: !p.status.offline });
           return;
         }
         setPlayback(p);
-        setStatus(p.status);
-        if (!p.status.complete && !p.status.offline) {
+        saveStatus(p.status);
+        if (cachePlayRef.current && !p.status.complete && !p.status.offline) {
           const next = await action<CacheStatus>({
             kind: "playbackControl",
             id,
             downloading: true,
           });
-          if (live) setStatus(next);
+          if (live) saveStatus(next);
         }
       })
       .catch((e) => {
         if (live) {
           setError(e instanceof Error ? e.message : "回放暂时无法连接");
+          setNeedsAuth(e instanceof ApiError && e.code === "haoxueAuth");
           setWaiting(false);
         }
       });
     return () => {
       live = false;
-      if (id) void action({ kind: "playbackClose", id }).catch(() => {});
+      // 缓存播放只是这一节的临时缓冲：退出播放就清掉，不把磁盘占满。
+      // 学校连接已经断了就留着已有分片，重连后还能接着用。
+      if (id)
+        void action({
+          kind: "playbackClose",
+          id,
+          clear: !statusRef.current?.offline,
+        }).catch(() => {});
     };
-  }, [course, video.hash_id, retry]);
+  }, [lesson, video.hash_id, retry]);
+  // 观看进度按原站口径回写：暂停、关闭，以及每 60 秒一次心跳。
+  useEffect(() => {
+    if (!playback || !video.courseId) return;
+    const report = () => {
+      const el = element.current;
+      const now = Math.floor(Date.now() / 1000);
+      const seconds = Math.max(0, now - reportedAt.current);
+      reportedAt.current = now;
+      if (seconds < 5) return;
+      void action({
+        kind: "haoxueRecord",
+        course: video.courseId as string,
+        episode: video.hash_id,
+        playTime: Math.floor(el?.currentTime || 0),
+        seconds,
+      }).catch(() => {
+        /* 进度回写失败不影响观看。 */
+      });
+    };
+    const el = element.current;
+    el?.addEventListener("pause", report);
+    const timer = setInterval(report, 60000);
+    return () => {
+      el?.removeEventListener("pause", report);
+      clearInterval(timer);
+      report();
+    };
+  }, [playback, video.courseId, video.hash_id]);
   useEffect(() => {
     if (!playback) return;
     let live = true;
@@ -190,7 +256,7 @@ export default function ReplayPlayer({
           kind: "playbackStatus",
           id: playback.id,
         });
-        if (live) setStatus(next);
+        if (live) saveStatus(next);
       } catch {
         /* Playback can continue while status is unavailable. */
       }
@@ -207,11 +273,16 @@ export default function ReplayPlayer({
     if (!playback || !el) return;
     let live = true;
     let destroy: (() => void) | undefined;
+    mediaReady.current = false;
+    const startPosition =
+      position.current > 0 && position.current < playback.duration - 5
+        ? position.current
+        : 0;
     setNeedsPlay(false);
     const start = () => {
       if (!live) return;
-      if (position.current > 0 && position.current < playback.duration - 5)
-        el.currentTime = position.current;
+      if (startPosition > 0) el.currentTime = startPosition;
+      mediaReady.current = true;
       el.playbackRate = rate;
       if (autoPlay)
         void el.play().catch(() => {
@@ -235,6 +306,7 @@ export default function ReplayPlayer({
             return;
           }
           const hls = new Hls({
+            startPosition,
             maxBufferLength: 60,
             backBufferLength: 30,
             enableWorker: true,
@@ -259,6 +331,7 @@ export default function ReplayPlayer({
       live = false;
       if (Number.isFinite(el.currentTime) && el.currentTime > 0)
         position.current = el.currentTime;
+      mediaReady.current = false;
       el.removeEventListener("loadedmetadata", start);
       el.pause();
       destroy?.();
@@ -268,7 +341,7 @@ export default function ReplayPlayer({
   }, [playback]);
   function remember() {
     const el = element.current;
-    if (!el || !Number.isFinite(el.currentTime)) return;
+    if (!el || !mediaReady.current || !Number.isFinite(el.currentTime)) return;
     position.current = el.currentTime;
     setCurrent(el.currentTime);
     if (Math.abs(el.currentTime - lastSaved.current) >= 5 || el.paused) {
@@ -284,7 +357,7 @@ export default function ReplayPlayer({
     if (!playback) return;
     setBusy(true);
     try {
-      setStatus(
+      saveStatus(
         await action<CacheStatus>({
           kind: "playbackControl",
           id: playback.id,
@@ -296,6 +369,15 @@ export default function ReplayPlayer({
     } finally {
       setBusy(false);
     }
+  }
+  function toggleCachePlay(next: boolean) {
+    setCachePlay(next);
+    try {
+      localStorage.setItem("onepku.replay.cache.v1", next ? "on" : "off");
+    } catch {
+      /* 记不住偏好不影响这次播放。 */
+    }
+    if (status && !status.complete) void changeCache(next);
   }
   async function clearCache() {
     if (!playback) return;
@@ -311,7 +393,7 @@ export default function ReplayPlayer({
     }
   }
   const percent = status?.segments
-    ? Math.round((status.completed / status.segments) * 100)
+    ? Math.round((status.completed / status.segments) * 1000) / 10
     : 0;
   return (
     <section className="replay-player" aria-label="本地回放播放器">
@@ -558,13 +640,27 @@ export default function ReplayPlayer({
           />
           {optionsOpen && (
             <div id="replay-options" className="replay-options">
+              <label className="replay-cache-play">
+                <input
+                  type="checkbox"
+                  checked={cachePlay}
+                  onChange={(e) => toggleCachePlay(e.target.checked)}
+                />
+                <span>
+                  <strong>缓存播放</strong>
+                  <small>
+                    开着会把整节回放先存到本机以保证流畅；关掉只边播边取。
+                    两种都只保留这一次播放用的缓存，退出播放就清掉。
+                  </small>
+                </span>
+              </label>
               {status && (
                 <div className="replay-cache">
                   <div className="replay-cache-line">
                     <span>
                       {status.complete
                         ? "整节已缓存，可离线播放"
-                        : `已缓存 ${percent}%`}{" "}
+                        : `已缓存 ${percent}%（${status.completed} / ${status.segments} 个分片）`}{" "}
                       · {(status.bytes / 1024 / 1024).toFixed(1)} MB
                     </span>
                     {!status.complete && (
@@ -616,7 +712,27 @@ export default function ReplayPlayer({
           {(error || (status?.offline && !status.complete)) && (
             <div className="replay-error" role="alert">
               <span>{error || "当前仅能播放已缓存的部分"}</span>
-              <Button onClick={() => setRetry((v) => v + 1)}>重试连接</Button>
+              {needsAuth ? (
+                <Button
+                  variant="primary"
+                  disabled={connecting}
+                  onClick={() => {
+                    setConnecting(true);
+                    setNeedsAuth(false);
+                    void connectHaoxue()
+                      .catch(() => setError("登录窗口未能打开，请重试"))
+                      .finally(() => {
+                        setConnecting(false);
+                        // 连上之后从断点重新起播，不用手动再点一次。
+                        setRetry((value) => value + 1);
+                      });
+                  }}
+                >
+                  连接课堂实录
+                </Button>
+              ) : (
+                <Button onClick={() => setRetry((v) => v + 1)}>重试连接</Button>
+              )}
             </div>
           )}
         </div>

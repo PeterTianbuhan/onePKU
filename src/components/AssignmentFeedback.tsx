@@ -98,7 +98,11 @@ export default function AssignmentFeedback({
                           <div className="feedback-files">
                             <span className="subtle">已交文件</span>
                             {a.files.map((f, i) => (
-                              <AttachmentRow key={i} file={f} />
+                              <AttachmentRow
+                                key={i}
+                                file={f}
+                                course={assignment.course_id}
+                              />
                             ))}
                           </div>
                         )}

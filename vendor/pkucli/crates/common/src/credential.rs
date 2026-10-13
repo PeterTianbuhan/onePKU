@@ -201,6 +201,16 @@ pub fn keyring_store(username: &str, password: &str) -> Result<()> {
     Ok(())
 }
 
+/// 只读钥匙串：不回退到环境变量，也不触发终端提问，供图形界面静默重登使用。
+pub fn keyring_credential() -> Option<Credential> {
+    try_keyring().ok().flatten()
+}
+
+/// 钥匙串里存的用户名（不返回密码），供设置页显示。
+pub fn keyring_username() -> Option<String> {
+    keyring_credential().map(|c| c.username)
+}
+
 /// 从 OS keyring 删除凭据
 pub fn keyring_clear() -> Result<()> {
     for key in ["username", "password"] {

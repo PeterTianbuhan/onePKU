@@ -89,3 +89,11 @@ bash scripts/subtitles/install.sh --replace
 账号绑定：`GET /learn/api/public/v1/users/me` 的 `id` 经带教学网域名命名空间的 SHA-256 转换后作为本地分区，映射保存在 `subtitle-accounts`，正式字幕为 `subtitles-v2/<account>/<course-video>/subtitles.json`。登录指纹只用于凭证有效性及正在执行任务的取消检查。迁移只处理当前已验证会话的旧目录，不扫描认领其他未知会话；已有账号字幕不被旧副本覆盖。
 
 分段进度与识别引擎指纹保存在同目录 `subtitles.partial.json`，每段原子写入。停止或重启不删除它；继续生成时校验账号、视频内容和模型配置。替换模型或适配器后从头生成，避免拼接不兼容的识别结果。字幕状态带 `document.progress`，界面每三秒刷新并装载新增字幕；导入字幕会替换完整轨道并清除旧分段进度。
+
+## Windows 支持边界
+
+Windows 版可以导入、播放和持久保存 SRT/VTT，现有字幕不会因为缺少识别引擎而被删除。MLX 内置模型与 `install.sh` 仅提供 Apple Silicon Mac 安装；Windows 设置页不展示这条安装命令，也不会尝试运行 Homebrew。
+
+Windows 自定义识别适配器沿用上文协议，配置文件位于 `%LOCALAPPDATA%\petertian\OnePKU\data\subtitles-provider.json`。`python`、`ffmpeg` 和 `adapter` 应填写现有本机文件的绝对路径，JSON 中反斜杠必须转义；例如使用 `C:/.../python.exe`。自定义适配器自行加载本地模型，应用不代为安装 GPU 驱动或上传音频。未提供适配器时，自动生成按钮保持不可用。
+
+本轮未实现或验证 Windows 内置自动语音识别引擎；不能把自定义适配器协议视为已完成的开箱即用自动字幕。

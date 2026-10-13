@@ -120,9 +120,17 @@ it("keeps monthly totals readable when categories fail and requests the selected
 });
 it("clears private study and card resources on their account change", async () => {
   const client = new QueryClient();
-  for (const kind of ["allCourses", "videos", "scores", "exams", "cardStats"]) {
+  for (const kind of [
+    "allCourses",
+    "courses",
+    "scores",
+    "exams",
+    "cardStats",
+  ]) {
     client.setQueryData(["resource", { kind }], envelope("private"));
   }
+  // 回放只归课堂实录，不再随教学网账号一起清除。
+  client.setQueryData(["resource", { kind: "videos" }], envelope("private"));
   resetService(client, "treehole");
   await waitFor(() =>
     expect(
@@ -140,5 +148,8 @@ it("clears private study and card resources on their account change", async () =
       client.getQueryData(["resource", { kind: "cardStats" }]),
     ).toBeUndefined(),
   );
-  expect(client.getQueryData(["resource", { kind: "videos" }])).toBeUndefined();
+  expect(
+    client.getQueryData(["resource", { kind: "courses" }]),
+  ).toBeUndefined();
+  expect(client.getQueryData(["resource", { kind: "videos" }])).toBeDefined();
 });

@@ -8,6 +8,7 @@
 
 pub mod calendar;
 mod client;
+pub mod login;
 pub mod freeclassroom;
 pub mod netfee;
 

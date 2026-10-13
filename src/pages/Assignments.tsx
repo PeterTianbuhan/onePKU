@@ -17,6 +17,22 @@ export function assignmentStatus(a: Assignment, now = Date.now()) {
   if (a.deadline && Date.parse(a.deadline) < now) return "overdue";
   return "pending";
 }
+// 分类与安卓端同一套判据：没有截止时间就不算已截止，一律按待交处理；
+// 「状态待核对」（详情读不到）的作业也按同样的判据归类，只在行上标出来。
+const filters = [
+  { id: "pending", name: "待交" },
+  { id: "submitted", name: "已提交" },
+  { id: "overdue", name: "已截止" },
+  { id: "all", name: "全部" },
+];
+function inFilter(a: Assignment, filter: string, now = Date.now()) {
+  if (filter === "all") return true;
+  const submitted = !!a.last_attempt;
+  const deadline = a.deadline ? Date.parse(a.deadline) : Infinity;
+  if (filter === "submitted") return submitted;
+  if (filter === "overdue") return !submitted && deadline < now;
+  return !submitted && deadline >= now;
+}
 export function AssignmentWorkspace({
   login,
   course,
@@ -34,7 +50,8 @@ export function AssignmentWorkspace({
     course ? { kind: "courseAssignments", course } : { kind: "assignments" },
   );
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("all");
+  // 与安卓端一样默认停在「待交」。
+  const [filter, setFilter] = useState("pending");
   const [localSelected, setLocalSelected] = useState<string>();
   const activeId = onSelect ? selected : localSelected;
   const select = onSelect ?? setLocalSelected;
@@ -44,15 +61,20 @@ export function AssignmentWorkspace({
       (a) =>
         `${a.title} ${a.course_name}`
           .toLocaleLowerCase()
-          .includes(search.toLocaleLowerCase()) &&
-        (filter === "all" || assignmentStatus(a) === filter),
+          .includes(search.toLocaleLowerCase()) && inFilter(a, filter),
     )
-    .sort(
-      (a, b) =>
-        (a.deadline ? Date.parse(a.deadline) : Infinity) -
-          (b.deadline ? Date.parse(b.deadline) : Infinity) ||
-        a.title.localeCompare(b.title, "zh-CN"),
-    );
+    .sort((a, b) => {
+      const soonest = (x: Assignment) =>
+        x.deadline ? Date.parse(x.deadline) : Infinity;
+      const latest = (x: Assignment) =>
+        x.deadline ? Date.parse(x.deadline) : 0;
+      // 待交按截止时间由近到远；其余分类反过来，最近截止的排前面。
+      const byDeadline =
+        filter === "pending"
+          ? soonest(a) - soonest(b)
+          : latest(b) - latest(a) || soonest(a) - soonest(b);
+      return byDeadline || a.title.localeCompare(b.title, "zh-CN");
+    });
   if (activeId)
     return (
       <section className="assignment-full">
@@ -95,17 +117,23 @@ export function AssignmentWorkspace({
           placeholder="搜索作业或课程"
         />
         {courseFilter}
-        <select
-          aria-label="作业状态"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        >
-          <option value="all">全部状态</option>
-          <option value="pending">待处理</option>
-          <option value="overdue">已截止未提交</option>
-          <option value="submitted">有提交记录</option>
-          <option value="unknown">状态待核对</option>
-        </select>
+      </div>
+      <div
+        className="tabs assignment-tabs"
+        role="tablist"
+        aria-label="作业分类"
+      >
+        {filters.map((f) => (
+          <button
+            key={f.id}
+            role="tab"
+            aria-selected={filter === f.id}
+            className={filter === f.id ? "active" : ""}
+            onClick={() => setFilter(f.id)}
+          >
+            {f.name}
+          </button>
+        ))}
       </div>
       <Resource
         title="作业列表"
@@ -127,7 +155,10 @@ export function AssignmentWorkspace({
                     onClick={() => select(a.hash_id)}
                   >
                     <strong>{a.title}</strong>
-                    <small>{a.course_name}</small>
+                    <small>
+                      {a.course_name}
+                      {a.score ? ` · 分数 ${a.score}` : ""}
+                    </small>
                     <span
                       className={state === "overdue" ? "overdue" : "subtle"}
                     >

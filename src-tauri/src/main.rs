@@ -1,6 +1,9 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::sync::Arc;
 use tauri::Manager;
 mod browser;
+mod haoxue;
 #[tauri::command]
 async fn campus(
     window: tauri::WebviewWindow,
@@ -64,6 +67,43 @@ async fn choose_download_folder(
     })
     .await
     .map_err(|_| "未能保存所选文件夹".to_string())?
+}
+#[tauri::command]
+async fn choose_cache_folder(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Arc<campus_core::Core>>,
+) -> Result<Option<serde_json::Value>, String> {
+    if window.label() != "main" {
+        return Err("此窗口不可执行本地操作".into());
+    }
+    let selected = rfd::AsyncFileDialog::new()
+        .set_title("选择 OnePKU 存放回放缓存的文件夹")
+        .pick_folder()
+        .await;
+    let Some(folder) = selected else {
+        return Ok(None);
+    };
+    let path = folder.path().to_path_buf();
+    let core = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        core.set_cache_root(&path)
+            .map(Some)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|_| "未能保存所选文件夹".to_string())?
+}
+/// 原生窗口主题：页面切深色时标题栏与滚动条要一起变，不然一半深一半浅。
+#[tauri::command]
+async fn set_window_theme(app: tauri::AppHandle, theme: String) -> Result<(), String> {
+    let value = match theme.as_str() {
+        "dark" => tauri::utils::Theme::Dark,
+        _ => tauri::utils::Theme::Light,
+    };
+    for (_, window) in app.webview_windows() {
+        let _ = window.set_theme(Some(value));
+    }
+    Ok(())
 }
 #[tauri::command]
 async fn choose_course_files(
@@ -182,9 +222,13 @@ fn main() {
             choose_assignment_file,
             choose_course_files,
             choose_download_folder,
+            choose_cache_folder,
+            set_window_theme,
             choose_subtitle_file,
             open_booking,
-            browser::open_browser
+            browser::open_browser,
+            haoxue::open_haoxue_login,
+            haoxue::haoxue_login
         ])
         .run(tauri::generate_context!())
         .expect("OnePKU startup failed");

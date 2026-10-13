@@ -6,6 +6,7 @@ import {
   relaunchApp,
   type UpdateHandle,
 } from "../lib/updater";
+import { isMacOS } from "../lib/platform";
 import SettingRow from "./SettingRow";
 import { Button } from "./ui";
 
@@ -103,7 +104,11 @@ export default function UpdateSettings() {
   return (
     <SettingRow
       label={`OnePKU v${APP_VERSION}`}
-      description="更新包来自 GitHub Releases，安装前校验签名。"
+      description={
+        isMacOS()
+          ? "更新包来自 GitHub Releases，安装前校验签名。"
+          : "更新包来自 GitHub Releases，安装前校验签名。Windows 安装更新时会退出应用并启动安装器，请先完成当前操作。"
+      }
       control={control}
       status={status}
       error={phase.kind === "error" ? phase.message : undefined}

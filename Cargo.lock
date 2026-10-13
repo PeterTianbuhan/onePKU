@@ -702,17 +702,19 @@ dependencies = [
 
 [[package]]
 name = "campus-core"
-version = "0.1.0"
+version = "0.12.2"
 dependencies = [
  "ammonia",
  "anyhow",
  "base64 0.22.1",
  "chrono",
  "directories",
+ "dunce",
  "fs2",
  "futures",
  "libc",
  "lopdf",
+ "md-5",
  "mime_guess",
  "percent-encoding",
  "pku-bdkj",
@@ -733,6 +735,7 @@ dependencies = [
  "tokio",
  "trash",
  "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4005,7 +4008,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "onepku"
-version = "0.1.0"
+version = "0.12.2"
 dependencies = [
  "campus-core",
  "rfd",
@@ -4387,6 +4390,7 @@ dependencies = [
  "scraper 0.22.0",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -4403,6 +4407,7 @@ dependencies = [
  "colored",
  "pkuinfo-common",
  "qrcode",
+ "rand 0.8.8",
  "regex",
  "reqwest 0.12.28",
  "reqwest_cookie_store",

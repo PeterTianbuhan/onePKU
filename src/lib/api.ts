@@ -1,5 +1,5 @@
 import { useQuery, type QueryClient } from "@tanstack/react-query";
-export type Service = "course" | "treehole" | "campuscard" | "bdkj";
+export type Service = "course" | "treehole" | "campuscard" | "bdkj" | "portal";
 export type Request = {
   kind: string;
   [key: string]:
@@ -47,17 +47,30 @@ export function useResource<T>(request: Request, enabled = true) {
     refetchInterval:
       request.kind === "localMaterials"
         ? 5000
-        : ["news", "notices", "assignments"].includes(request.kind)
-          ? 5 * 60 * 1000
-          : false,
+        : // 登录窗口关闭后设置页要自己显出账号，不能等用户手动刷新。
+          request.kind === "haoxueStatus"
+          ? 3000
+          : ["news", "notices", "assignments"].includes(request.kind)
+            ? 5 * 60 * 1000
+            : false,
     refetchIntervalInBackground: true,
     gcTime: 15 * 60 * 1000,
     refetchOnWindowFocus: true,
   });
 }
-export async function action<T = unknown>(request: Request) {
+/** 带错误码的失败：界面按 code 决定给哪个修复入口，而不是只有一行文案。 */
+export class ApiError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+export async function action<T = unknown>(request: Request): Promise<T> {
   const result = await call<T>(request);
-  if (result.error) throw Error(result.error.message);
+  if (result.error) throw new ApiError(result.error.code, result.error.message);
   return result.data as T;
 }
 export async function openOfficial(target: string) {
@@ -72,6 +85,7 @@ export const serviceNames: Record<Service, string> = {
   course: "教学网",
   treehole: "树洞",
   campuscard: "校园卡",
+  portal: "校内门户",
 };
 export const fmtTime = (value: string | number) =>
   new Date(typeof value === "number" ? value * 1000 : value).toLocaleString(
@@ -106,6 +120,8 @@ export type Assignment = {
   deadline_raw: string | null;
   deadline: string | null;
   last_attempt: string | null;
+  /** 成绩中心按标题匹配到的分数；还没评分就是 null。 */
+  score?: string | null;
   detail_error: boolean;
   descriptions: string[];
   attachments: Attachment[];
@@ -145,7 +161,6 @@ export function serviceFor(request: Request): Service | undefined {
     [
       "courses",
       "allCourses",
-      "videos",
       "content",
       "localMaterials",
       "assignments",
@@ -228,6 +243,8 @@ export type Preferences = {
   keepAlive: boolean;
   downloadRoot: string | null;
   downloadRootIsDefault: boolean;
+  cacheRoot: string | null;
+  cacheRootIsDefault: boolean;
 };
 /** 打开系统文件夹选择框并保存为下载与资料目录；取消返回 null。 */
 export async function chooseDownloadFolder(): Promise<Preferences | null> {
@@ -236,6 +253,21 @@ export async function chooseDownloadFolder(): Promise<Preferences | null> {
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<Preferences | null>("choose_download_folder");
 }
+/** 回放缓存的存放位置；同样走系统文件夹选择框，取消返回 null。 */
+export async function chooseCacheFolder(): Promise<Preferences | null> {
+  if (!("__TAURI_INTERNALS__" in window))
+    throw Error("请在 OnePKU 桌面应用中更改缓存位置");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<Preferences | null>("choose_cache_folder");
+}
+/** 打开学校统一身份认证窗口连接课堂实录；令牌由学校页面直接交给应用。 */
+export async function connectHaoxue(): Promise<void> {
+  if (!("__TAURI_INTERNALS__" in window))
+    throw Error("请在 OnePKU 桌面应用中连接课堂实录");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke("open_haoxue_login");
+}
+export type Haoxue = { connected: boolean; name: string; account: string };
 export type MaterialImport = {
   added: { name: string; bytes: number }[];
   reused: number;

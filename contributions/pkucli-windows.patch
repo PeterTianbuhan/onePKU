@@ -1,0 +1,132 @@
+diff --git a/vendor/pkucli/Cargo.lock b/vendor/pkucli/Cargo.lock
+index bb82bde..e5959c0 100644
+--- a/vendor/pkucli/Cargo.lock
++++ b/vendor/pkucli/Cargo.lock
+@@ -2597,6 +2597,7 @@ dependencies = [
+  "serde",
+  "serde_json",
+  "sha1",
++ "tempfile",
+  "terminal_size",
+  "tokio",
+  "tracing",
+diff --git a/vendor/pkucli/crates/common/Cargo.toml b/vendor/pkucli/crates/common/Cargo.toml
+index 0624f52..2dd033c 100644
+--- a/vendor/pkucli/crates/common/Cargo.toml
++++ b/vendor/pkucli/crates/common/Cargo.toml
+@@ -49,3 +49,6 @@ keyring = { version = "3", default-features = false, features = ["apple-native"]
+ 
+ [target.'cfg(target_os = "windows")'.dependencies]
+ keyring = { version = "3", default-features = false, features = ["windows-native"] }
++
++[dev-dependencies]
++tempfile = "3"
+diff --git a/vendor/pkucli/crates/common/src/session.rs b/vendor/pkucli/crates/common/src/session.rs
+index 080c594..6251f46 100644
+--- a/vendor/pkucli/crates/common/src/session.rs
++++ b/vendor/pkucli/crates/common/src/session.rs
+@@ -5,6 +5,7 @@ use directories::ProjectDirs;
+ use reqwest_cookie_store::CookieStoreMutex;
+ use serde::{Deserialize, Serialize};
+ use std::io::Write;
++#[cfg(unix)]
+ use std::os::unix::fs::OpenOptionsExt;
+ use std::{
+     fs,
+@@ -94,13 +95,14 @@ impl Store {
+         let path = self.session_path();
+         let data = serde_json::to_vec_pretty(session)?;
+         let temp = path.with_extension(format!("{}.tmp", rand::random::<u64>()));
+-        let mut f = fs::OpenOptions::new()
+-            .write(true)
+-            .create_new(true)
+-            .mode(0o600)
+-            .open(&temp)?;
++        let mut options = fs::OpenOptions::new();
++        options.write(true).create_new(true);
++        #[cfg(unix)]
++        options.mode(0o600);
++        let mut f = options.open(&temp)?;
+         f.write_all(&data)?;
+         f.sync_all()?;
++        drop(f);
+         fs::rename(temp, &path)?;
+         Ok(())
+     }
+@@ -122,11 +124,11 @@ impl Store {
+         let path = self.cookies_path();
+         let temp = path.with_extension(format!("{}.tmp", rand::random::<u64>()));
+         let result = (|| -> Result<()> {
+-            let file = fs::OpenOptions::new()
+-                .write(true)
+-                .create_new(true)
+-                .mode(0o600)
+-                .open(&temp)?;
++            let mut options = fs::OpenOptions::new();
++            options.write(true).create_new(true);
++            #[cfg(unix)]
++            options.mode(0o600);
++            let file = options.open(&temp)?;
+             let guard = store
+                 .lock()
+                 .map_err(|_| anyhow::anyhow!("锁定 cookie store 失败"))?;
+@@ -135,6 +137,7 @@ impl Store {
+                 .map_err(|_| anyhow::anyhow!("序列化 cookie 文件失败"))?;
+             writer.flush()?;
+             writer.get_ref().sync_all()?;
++            drop(writer);
+             fs::rename(&temp, &path)?;
+             Ok(())
+         })();
+@@ -154,3 +157,34 @@ impl Store {
+         Ok(())
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn session_updates_replace_the_file_and_leave_no_temporary_files() {
++        let dir = tempfile::tempdir().unwrap();
++        let store = Store { root: dir.path().to_path_buf() };
++        store.save_session(&Session::new("synthetic-first-token".into())).unwrap();
++        store.save_session(&Session::new("synthetic-second-token".into())).unwrap();
++        assert_eq!(store.load_session().unwrap().unwrap().token, "synthetic-second-token");
++        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
++        #[cfg(unix)]
++        {
++            use std::os::unix::fs::PermissionsExt;
++            assert_eq!(fs::metadata(store.session_path()).unwrap().permissions().mode() & 0o777, 0o600);
++        }
++    }
++
++    #[test]
++    fn cookie_updates_can_replace_an_existing_file() {
++        let dir = tempfile::tempdir().unwrap();
++        let store = Store { root: dir.path().to_path_buf() };
++        let cookies = Arc::new(CookieStoreMutex::new(CookieStore::default()));
++        store.save_cookie_store(&cookies).unwrap();
++        store.save_cookie_store(&cookies).unwrap();
++        assert!(store.load_cookie_store().is_ok());
++        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
++    }
++}
+diff --git a/vendor/pkucli/crates/course/src/api/media.rs b/vendor/pkucli/crates/course/src/api/media.rs
+index e0c9b99..65671e3 100644
+--- a/vendor/pkucli/crates/course/src/api/media.rs
++++ b/vendor/pkucli/crates/course/src/api/media.rs
+@@ -264,8 +264,10 @@ impl CourseApi {
+             total: detail.playlist.segments.len(),
+         });
+         let rendered = dir.join("rendered.mp4");
+-        let mut child = tokio::process::Command::new(ffmpeg)
+-            .args([
++        let mut command = tokio::process::Command::new(ffmpeg);
++        #[cfg(windows)]
++        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
++        let mut child = command.args([
+                 "-nostdin",
+                 "-n",
+                 "-hide_banner",

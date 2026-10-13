@@ -11,6 +11,18 @@ import { openBrowser } from "../lib/browser";
 import { NoticeReader } from "./Notices";
 import { pageLink } from "../lib/navigation";
 import CampusCard, { type Card } from "../components/CampusCard";
+/** 与安卓端一致：24 小时内显示倒计时，其余显示日期。 */
+function deadlineLabel(deadline: string): string {
+  const left = Date.parse(deadline) - Date.now();
+  if (left > 0 && left < 24 * 60 * 60 * 1000) {
+    const minutes = Math.ceil(left / 60000);
+    return minutes >= 60
+      ? `剩余 ${Math.floor(minutes / 60)} 小时`
+      : `剩余 ${minutes} 分钟`;
+  }
+  return fmtTime(deadline);
+}
+
 export default function Today({
   login,
   navigate,
@@ -52,13 +64,15 @@ export default function Today({
             }
           >
             {(data) => {
+              // 与安卓端一致：首页只截前 5 条，完整清单去作业页看。
               const items = data
                 .filter((a) => !a.last_attempt)
                 .sort(
                   (a, b) =>
                     (a.deadline ? Date.parse(a.deadline) : Infinity) -
                     (b.deadline ? Date.parse(b.deadline) : Infinity),
-                );
+                )
+                .slice(0, 5);
               return items.length ? (
                 <div className="list">
                   {items.map((a) => (
@@ -79,7 +93,16 @@ export default function Today({
                         <small>{a.course_name}</small>
                       </span>
                       <span
-                        className={`deadline ${!a.last_attempt && a.deadline && Date.parse(a.deadline) < Date.now() ? "overdue" : ""}`}
+                        className={`deadline ${
+                          !a.last_attempt && a.deadline
+                            ? Date.parse(a.deadline) < Date.now()
+                              ? "overdue"
+                              : Date.parse(a.deadline) - Date.now() <
+                                  24 * 60 * 60 * 1000
+                                ? "urgent"
+                                : ""
+                            : ""
+                        }`}
                       >
                         {a.detail_error ? (
                           "详情待更新"
@@ -88,7 +111,7 @@ export default function Today({
                         ) : a.deadline ? (
                           <>
                             <Clock3 size={12} />
-                            {fmtTime(a.deadline)}
+                            {deadlineLabel(a.deadline)}
                           </>
                         ) : null}
                       </span>

@@ -29,9 +29,76 @@ export function officialGpa(value: string | undefined): number | null {
   return number !== null && number <= 4 ? number : null;
 }
 
+export type GradeScope = "all" | "major";
+export const gradeScopeLabels: Record<GradeScope, string> = {
+  all: "全部课程",
+  major: "专业必修/限选",
+};
+/** 手动调整口径：有些专业课在学校系统里被标成「任选」，按类别自动统计会漏掉。 */
+export type ScopeOverride = { included: string[]; excluded: string[] };
+export const emptyScopeOverride: ScopeOverride = { included: [], excluded: [] };
+/** 只认两个字符串数组，其余（包括旧数据）一律当作没有调整。 */
+export function normalizeScope(value: unknown): ScopeOverride {
+  if (!value || typeof value !== "object") return emptyScopeOverride;
+  const v = value as Partial<ScopeOverride>;
+  const list = (items: unknown) =>
+    Array.isArray(items)
+      ? items.filter((item): item is string => typeof item === "string")
+      : [];
+  return { included: list(v.included), excluded: list(v.excluded) };
+}
+/** 同一学期同名课程视为一条，作为口径调整的稳定标识。 */
+export function scopeKeyOf(course: GradeCourse): string {
+  return `${course.xnd}-${course.xq}|${course.kcmc}`;
+}
+export function isMajorRequired(course: GradeCourse): boolean {
+  return (
+    course.kclbmc.includes("专业必修") || course.kclbmc.includes("专业限选")
+  );
+}
+export function countsAsMajor(
+  course: GradeCourse,
+  override: ScopeOverride = emptyScopeOverride,
+): boolean {
+  const key = scopeKeyOf(course);
+  return (
+    override.included.includes(key) ||
+    (isMajorRequired(course) && !override.excluded.includes(key))
+  );
+}
+export function inScope(
+  course: GradeCourse,
+  scope: GradeScope,
+  override: ScopeOverride = emptyScopeOverride,
+): boolean {
+  return scope === "all" || countsAsMajor(course, override);
+}
+/** 与安卓端一致：本来就计入的只需取消；标错类别的手动加进来。 */
+export function toggleScope(
+  override: ScopeOverride,
+  course: GradeCourse,
+  want: boolean,
+): ScopeOverride {
+  const key = scopeKeyOf(course);
+  const included = override.included.filter((item) => item !== key);
+  const excluded = override.excluded.filter((item) => item !== key);
+  if (want) {
+    // 本来就按类别计入的课不需要覆盖；标错类别的才手动加。
+    if (!isMajorRequired(course)) included.push(key);
+  } else if (isMajorRequired(course)) {
+    excluded.push(key);
+  }
+  return { included, excluded };
+}
+
 // PKU undergraduate grade rules, Article 13 (effective September 2019).
 // Keep each returned assessment, including retakes; round only for display.
-export function calculateGrades(courses: GradeCourse[]) {
+export function calculateGrades(
+  input: GradeCourse[],
+  scope: GradeScope = "all",
+  override: ScopeOverride = emptyScopeOverride,
+) {
+  const courses = input.filter((course) => inScope(course, scope, override));
   let credits = 0;
   let gradePoints = 0;
   let scores = 0;

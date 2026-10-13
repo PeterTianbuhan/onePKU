@@ -34,8 +34,8 @@ it("plays a loopback stream, resumes position, controls cache, and closes withou
       requests.push(request);
       if (request.kind === "playbackControl") downloading = request.downloading;
       const status = {
-        completed: 2,
-        segments: 100,
+        completed: 3,
+        segments: 719,
         bytes: 1000000,
         complete: false,
         downloading,
@@ -82,6 +82,18 @@ it("plays a loopback stream, resumes position, controls cache, and closes withou
     expect(video.src).toBe("http://127.0.0.1:4567/media/token/index.m3u8"),
   );
   expect(video.controls).toBe(false);
+  expect(requests).toContainEqual({
+    kind: "playbackPrepare",
+    course: "1",
+    video: "abc",
+    refresh: false,
+    position: 42,
+  });
+  // Loading a source emits timeupdate/pause at zero before metadata arrives.
+  // Those events must not overwrite the saved resume position.
+  fireEvent.timeUpdate(video);
+  fireEvent.pause(video);
+  expect(localStorage.getItem("onepku.playback.account.1.abc")).toBe("42");
   fireEvent.loadedMetadata(video);
   expect(video.currentTime).toBe(42);
   expect(video.play).toHaveBeenCalled();
@@ -110,6 +122,9 @@ it("plays a loopback stream, resumes position, controls cache, and closes withou
   fireEvent.keyDown(video, { key: "ArrowLeft" });
   expect(video.currentTime).toBe(42);
   fireEvent.click(screen.getByRole("button", { name: "更多播放选项" }));
+  expect(
+    screen.getByText("已缓存 0.4%（3 / 719 个分片）", { exact: false }),
+  ).toBeInTheDocument();
   fireEvent.click(await screen.findByRole("button", { name: "暂停整节缓存" }));
   await waitFor(() =>
     expect(requests).toContainEqual({
@@ -131,7 +146,78 @@ it("plays a loopback stream, resumes position, controls cache, and closes withou
   ).toBe(false);
   mounted.unmount();
   await waitFor(() =>
-    expect(requests).toContainEqual({ kind: "playbackClose", id: "session" }),
+    expect(requests).toContainEqual({
+      kind: "playbackClose",
+      id: "session",
+      // 退出播放就把这一节的缓存清掉，不再长期占着磁盘。
+      clear: true,
+    }),
+  );
+});
+it("keeps the whole-section prefetch off when 缓存播放 is off", async () => {
+  const requests: Record<string, unknown>[] = [];
+  localStorage.setItem("onepku.replay.cache.v1", "off");
+  const status = {
+    completed: 3,
+    segments: 719,
+    bytes: 1000000,
+    complete: false,
+    downloading: false,
+    offline: false,
+    message: "",
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url, options) => {
+      const request = JSON.parse(options.body);
+      requests.push(request);
+      return {
+        ok: true,
+        json: async () => ({
+          data:
+            request.kind === "playbackPrepare"
+              ? {
+                  id: "quiet",
+                  url: "http://127.0.0.1:4567/media/token/index.m3u8",
+                  title: "Lecture",
+                  duration: 300,
+                  status,
+                }
+              : status,
+          error: null,
+          stale: false,
+          warnings: [],
+          generation: "account",
+          updatedAt: new Date().toISOString(),
+        }),
+      };
+    }),
+  );
+  const mounted = render(
+    <ReplayPlayer
+      course="1"
+      video={{
+        title: "Lecture",
+        time: "2026-09-08",
+        url: "https://onlineroomse.pku.edu.cn/livingroom",
+        hash_id: "abc",
+      }}
+      generation="account"
+      close={() => {}}
+    />,
+  );
+  await screen.findByLabelText("Lecture 视频");
+  // 没开「缓存播放」，就不该有人替我把整节拉下来。
+  expect(requests.some((r) => r.kind === "playbackControl")).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "更多播放选项" }));
+  expect(screen.getByRole("checkbox", { name: /缓存播放/ })).not.toBeChecked();
+  mounted.unmount();
+  await waitFor(() =>
+    expect(requests).toContainEqual({
+      kind: "playbackClose",
+      id: "quiet",
+      clear: true,
+    }),
   );
 });
 it("closes a late preparation after the viewer has left", async () => {
@@ -171,7 +257,54 @@ it("closes a late preparation after the viewer has left", async () => {
     }),
   });
   await waitFor(() =>
-    expect(requests).toContainEqual({ kind: "playbackClose", id: "late" }),
+    expect(requests).toContainEqual({
+      kind: "playbackClose",
+      id: "late",
+      clear: true,
+    }),
   );
   expect(requests.some((r) => r.kind === "playbackControl")).toBe(false);
+});
+
+it("offers to reconnect the recording service when its token has expired", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        data: null,
+        error: {
+          code: "haoxueAuth",
+          message: "课堂实录登录已失效，请重新连接课堂实录",
+        },
+        stale: false,
+        warnings: [],
+        generation: "account",
+        updatedAt: new Date().toISOString(),
+      }),
+    })),
+  );
+  render(
+    <ReplayPlayer
+      course="1"
+      video={{
+        title: "Lecture",
+        time: "2026-09-08",
+        url: "https://onlineroomse.pku.edu.cn/livingroom",
+        hash_id: "abc",
+      }}
+      generation="account"
+      close={() => {}}
+    />,
+  );
+  // 「重试连接」在这里是死路：只有重新连接课堂实录才能恢复播放。
+  expect(
+    await screen.findByText("课堂实录登录已失效，请重新连接课堂实录"),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "重试连接" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "连接课堂实录" }),
+  ).toBeInTheDocument();
 });

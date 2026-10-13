@@ -20,10 +20,20 @@ pub use feedback::{AssignmentFeedback, FeedbackAttempt};
 mod media;
 mod recordings;
 pub use learning::{parse_learning_grades, LearningGrade};
-pub use media::{MediaProgress, PlaybackMedia, PlaybackPart};
+pub use media::{cached_media_part, reuse_media_part, MediaProgress, PlaybackMedia, PlaybackPart};
 pub use recordings::RecordingSession;
 
 const APP_NAME: &str = "course";
+
+fn current_course_module(title: &str) -> bool {
+    let title = title.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    if ["非当前", "历史", "以往", "past", "previous", "not current"]
+        .iter().any(|s| title.contains(s))
+    {
+        return false;
+    }
+    title.contains("当前") || title.contains("本学期") || title.contains("current semester")
+}
 
 // ─── 数据模型 ──────────────────────────────────────────────────
 
@@ -128,6 +138,9 @@ pub struct AssignmentSummary {
     pub deadline_raw: Option<String>,
     /// 截止时间（解析后）
     pub deadline: Option<chrono::DateTime<chrono::Local>>,
+    /// 成绩中心里按标题匹配到的分数；读不到或还没评分就是 None。
+    #[serde(default)]
+    pub score: Option<String>,
     /// 附件列表
     pub attachments: Vec<Attachment>,
     /// 说明
@@ -443,6 +456,14 @@ pub struct CourseApi {
     client: reqwest::Client,
     cookie_store: std::sync::Arc<reqwest_cookie_store::CookieStoreMutex>,
     session_token: String,
+    /// 好学课堂实录的媒体鉴权令牌；只附加在媒体与密钥请求上。
+    media_cookie: Option<String>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct CourseIdentity {
+    pub id: String,
+    pub user_name: String,
 }
 
 impl CourseApi {
@@ -463,6 +484,7 @@ impl CourseApi {
             client,
             cookie_store,
             session_token: session.token,
+            media_cookie: None,
         })
     }
 
@@ -475,6 +497,7 @@ impl CourseApi {
             client: client::build(cookie_store.clone())?,
             cookie_store,
             session_token: session.token,
+            media_cookie: None,
         })
     }
 
@@ -484,6 +507,7 @@ impl CourseApi {
             client: client::build(self.cookie_store.clone())?,
             cookie_store: self.cookie_store.clone(),
             session_token: self.session_token.clone(),
+            media_cookie: self.media_cookie.clone(),
         })
     }
 
@@ -500,6 +524,9 @@ impl CourseApi {
 
     /// Stable Blackboard account identity, independent of login cookies/tokens.
     pub async fn account_id(&self) -> Result<String> {
+        Ok(self.account_identity().await?.id)
+    }
+    pub async fn account_identity(&self) -> Result<CourseIdentity> {
         let response = self
             .client
             .get(format!("{COURSE_BASE}/learn/api/public/v1/users/me"))
@@ -518,7 +545,10 @@ impl CourseApi {
                     && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
             })
             .ok_or_else(|| anyhow!("教学网未返回有效账号标识"))?;
-        Ok(id.to_owned())
+        let user_name = value["userName"].as_str()
+            .filter(|name| !name.is_empty() && name.len() <= 128 && !name.chars().any(char::is_control))
+            .ok_or_else(|| anyhow!("教学网未返回有效登录账号"))?;
+        Ok(CourseIdentity { id: id.to_owned(), user_name: user_name.to_owned() })
     }
 
     /// 获取教学网主页 HTML
@@ -580,7 +610,7 @@ impl CourseApi {
                 .map(|el| el.text().collect::<String>())
                 .unwrap_or_default();
 
-            let is_current = title_text.contains("当前") || title_text.contains("Current Semester");
+            let is_current = current_course_module(&title_text);
 
             for ul in portlet.select(&ul_sel) {
                 for a in ul.select(&li_a_sel) {
@@ -743,6 +773,11 @@ impl CourseApi {
             .filter(|item| item.item_type == ContentType::Assignment)
             .collect();
 
+        // 成绩中心按标题匹配，提供提交与评分的第二个来源；读不到不影响作业列表。
+        let grades = self
+            .learning_grades(&course.id)
+            .await
+            .unwrap_or_default();
         let mut summaries = Vec::new();
         for item in &assignments {
             let hash_id = compute_hash_id(&[&course.id, &item.id]);
@@ -781,6 +816,7 @@ impl CourseApi {
                     vec![item.description.clone()]
                 },
                 last_attempt: attempt,
+                score: graded_score(&grades, &item.title),
                 detail_error,
             });
         }
@@ -788,6 +824,48 @@ impl CourseApi {
         Ok(summaries)
     }
 
+}
+
+/// 按标题从成绩中心匹配分数：空串、-、— 都算还没评分。
+fn graded_score(grades: &[crate::api::learning::LearningGrade], title: &str) -> Option<String> {
+    let title = title.trim();
+    let score = grades
+        .iter()
+        .find(|g| g.title.trim() == title)?
+        .score
+        .trim();
+    if score.is_empty() || score == "-" || score == "—" {
+        None
+    } else {
+        Some(score.to_string())
+    }
+}
+
+#[cfg(test)]
+mod score_tests {
+    use super::*;
+    use crate::api::learning::LearningGrade;
+    fn grade(title: &str, score: &str) -> LearningGrade {
+        LearningGrade {
+            id: String::new(),
+            title: title.to_string(),
+            category: String::new(),
+            score: score.to_string(),
+            activity: String::new(),
+            updated: String::new(),
+            status: String::new(),
+        }
+    }
+    #[test]
+    fn graded_score_matches_trimmed_titles_and_skips_placeholders() {
+        let grades = [grade(" 作业一 ", "92"), grade("作业二", "-"), grade("作业三", "—")];
+        assert_eq!(graded_score(&grades, "作业一").as_deref(), Some("92"));
+        assert_eq!(graded_score(&grades, "作业二"), None);
+        assert_eq!(graded_score(&grades, "作业三"), None);
+        assert_eq!(graded_score(&grades, "作业四"), None);
+    }
+}
+impl CourseApi {
     /// 获取作业详情
     pub async fn get_assignment(
         &self,
@@ -1493,14 +1571,11 @@ impl CourseApi {
         let redirect_url = self.get_video_redirect_url(&video.url).await?;
         let m3u8_url = self.get_video_m3u8_url(&redirect_url).await?;
 
-        // 下载 m3u8 播放列表
-        let resp = self
-            .client
-            .get(&m3u8_url)
-            .send()
-            .await
-            .context("下载 m3u8 播放列表失败")?;
-        let m3u8_raw = resp.bytes().await?;
+        // The playlist is served by the same media host as the video parts;
+        // it needs the same bounded reads, transient retries and safe errors.
+        let base_url = url::Url::parse(&m3u8_url).context("解析 m3u8 URL 失败")?;
+        let m3u8_raw = self.bounded_media_bytes(&base_url, 2 * 1024 * 1024).await
+            .map_err(|e| anyhow!("视频播放列表获取失败：{e}"))?;
 
         let (_, playlist) = m3u8_rs::parse_playlist(&m3u8_raw)
             .map_err(|e| anyhow!("解析 m3u8 失败: {e}"))
@@ -1513,8 +1588,6 @@ impl CourseApi {
             }
         };
 
-        let base_url = url::Url::parse(&m3u8_url).context("解析 m3u8 URL 失败")?;
-
         Ok(VideoDetail {
             base_url,
             playlist: media_pl,
@@ -1524,8 +1597,7 @@ impl CourseApi {
     /// 下载单个视频片段（原始数据，可能是加密的）
     pub async fn download_segment(&self, url: &str) -> Result<bytes::Bytes> {
         let resp = self
-            .client
-            .get(url)
+            .media_request(self.client.get(url))
             .send()
             .await
             .context("下载视频片段失败")?;
@@ -1538,8 +1610,7 @@ impl CourseApi {
     /// 获取 AES-128 密钥
     pub async fn get_aes_key(&self, url: &str) -> Result<[u8; 16]> {
         let resp = self
-            .client
-            .get(url)
+            .media_request(self.client.get(url))
             .send()
             .await
             .context("获取 AES 密钥失败")?;
@@ -1616,6 +1687,15 @@ fn get_mime_type(extension: &str) -> &'static str {
 #[cfg(test)]
 mod onepku_tests {
     use super::*;
+    #[test]
+    fn current_semester_module_labels() {
+        for title in ["当前学期课程", "本学期课程", "Current Semester", "CURRENT\n SEMESTER Courses"] {
+            assert!(current_course_module(title), "{title}");
+        }
+        for title in ["非当前学期课程", "历史课程", "Previous Semester", "Not Current Semester", "全部课程", ""] {
+            assert!(!current_course_module(title), "{title}");
+        }
+    }
     #[test]
     fn document_title_is_downloadable_and_assignment_id_is_normalized() {
         let doc = Html::parse_document(

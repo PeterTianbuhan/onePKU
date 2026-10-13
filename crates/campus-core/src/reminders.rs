@@ -1,5 +1,6 @@
+use crate::platform::PrivateOpenOptions;
 use super::*;
-use std::{collections::HashSet, fs, io::Write, os::unix::fs::OpenOptionsExt, path::PathBuf};
+use std::{collections::HashSet, fs, io::Write,  path::PathBuf};
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -29,7 +30,7 @@ fn save(s: &Saved) -> Result<()> {
     let mut f = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .mode(0o600)
+        .private_mode()
         .open(&temp)?;
     f.write_all(&serde_json::to_vec(s)?)?;
     f.sync_all()?;

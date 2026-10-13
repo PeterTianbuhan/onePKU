@@ -1,6 +1,13 @@
 * {
   box-sizing: border-box;
 }
+/* 让原生控件（滚动条、输入框、日期选择）与页面配色一致。 */
+:root {
+  color-scheme: light;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
 html,
 body,
 #root {
@@ -582,6 +589,7 @@ main {
   max-width: 116px;
   text-align: right;
 }
+.deadline.urgent,
 .deadline.overdue {
   color: var(--danger);
 }
@@ -777,6 +785,16 @@ select {
   display: grid;
   gap: 32px;
 }
+.badge {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--primary);
+  background: var(--primary-soft);
+  border-radius: 999px;
+  padding: 1px 8px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
 .course-semester-heading {
   display: flex;
   align-items: baseline;
@@ -881,6 +899,24 @@ select {
 .attachment-line > span {
   flex: 1;
   overflow-wrap: anywhere;
+}
+.attachment-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.attachment-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.attachment-preview .search-file-preview canvas {
+  height: auto !important;
+  flex: none;
+}
+.attachment-preview .search-file-preview img {
+  max-width: 100%;
 }
 .attachment-line > svg {
   color: var(--primary);
@@ -1315,6 +1351,28 @@ tbody tr:last-child td {
   min-width: 0;
   flex: 1;
 }
+.auth-form label {
+  display: block;
+  font-size: 13px;
+  margin-top: 12px;
+}
+.auth-form input {
+  width: 100%;
+  margin-top: 4px;
+}
+.auth-form .auth-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+.auth-form .auth-check input {
+  width: auto;
+  margin: 0;
+}
+.auth-switch {
+  margin-top: 16px;
+}
 .inline-error {
   font-size: 12px;
   color: var(--danger);
@@ -1527,6 +1585,27 @@ tbody tr:last-child td {
   overflow-wrap: anywhere;
 }
 
+.theme-choice {
+  display: flex;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-default);
+  padding: 3px;
+}
+.theme-choice button {
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.theme-choice button.active {
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 600;
+}
 .keepalive-switch {
   width: 40px;
   height: 24px;
@@ -1758,6 +1837,30 @@ tbody tr:last-child td {
 .news-filters {
   margin: 0 0 20px;
 }
+.news-tabs {
+  margin-top: 12px;
+}
+.grade-term h3 {
+  font-size: 14px;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 18px 0 8px;
+}
+.grade-term h3 .subtle {
+  font-size: 12px;
+  font-weight: 400;
+}
+.grade-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.grade-tools .tabs {
+  margin: 0;
+}
+
 .source-tabs {
   display: flex;
   gap: 3px;
@@ -2041,6 +2144,8 @@ input[type="checkbox"] {
 .calendar-viewport {
   width: 100%;
   overflow: auto;
+  /* 滚动条槽常驻：否则「出现滚动条 → 内容变窄 → 画布变矮 → 滚动条消失」会来回抖。 */
+  scrollbar-gutter: stable;
   min-height: 300px;
   max-height: 75vh;
   background: var(--sidebar);
@@ -2670,6 +2775,20 @@ input[type="checkbox"] {
 .replay-cache p {
   color: var(--muted);
 }
+.replay-cache-play {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 18px 0;
+  font-size: 12px;
+}
+.replay-cache-play span {
+  display: grid;
+  gap: 2px;
+}
+.replay-cache-play small {
+  color: var(--muted);
+}
 .replay-error {
   display: flex;
   align-items: center;
@@ -2882,9 +3001,12 @@ input[type="checkbox"] {
 
 .assignment-filters {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(220px, 320px) 160px;
+  grid-template-columns: minmax(180px, 1fr) minmax(220px, 320px);
   align-items: center;
   gap: 12px;
+  margin-bottom: 14px;
+}
+.assignment-tabs {
   margin-bottom: 24px;
 }
 .assignment-filters > .search {
@@ -3870,9 +3992,6 @@ input[type="checkbox"] {
 .detail-bar i.pending {
   opacity: 0.28;
 }
-.detail-row.complete .detail-bar i.done {
-  background: var(--success);
-}
 .detail-numbers {
   display: flex;
   align-items: baseline;
@@ -3915,7 +4034,7 @@ input[type="checkbox"] {
 }
 .course-list li {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto 44px;
+  grid-template-columns: minmax(0, 1fr) auto auto 68px minmax(120px, auto);
   align-items: baseline;
   gap: 14px;
   padding: 7px 0;
@@ -3926,6 +4045,20 @@ input[type="checkbox"] {
   border-top: none;
 }
 .course-list .subtle {
+  font-size: 12px;
+}
+.course-credit {
+  min-width: 0;
+  text-align: right;
+}
+.course-group {
+  color: var(--muted);
+  font-size: 12px;
+  padding-top: 10px;
+}
+.detail-note {
+  grid-column: 1 / -1;
+  margin: 6px 0 0;
   font-size: 12px;
 }
 .course-status {

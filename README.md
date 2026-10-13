@@ -2,7 +2,7 @@
 
 # OnePKU
 
-一个本地运行的北大校园桌面应用。课程、作业、成绩、通知、校历、空闲教室、校园卡放在一个窗口里，数据只在你的 Mac 上。
+一个本地运行的北大校园应用，有 macOS / Windows 桌面版和 Android 手机版两套实现。课程、作业、成绩、通知、校历、空闲教室、校园卡放在一处，数据只在你的设备上。
 
 ![OnePKU 今日页](docs/onepku-preview.png)
 
@@ -10,21 +10,34 @@
 
 ## 能做什么
 
-- **今日**：待交作业与附件、最新通知、校园卡余额。每一块独立刷新，一处出错不影响其他。
-- **课程**：按学期分组的全部课程，课程通知、资料、回放、教学网成绩；应用内边下边播，支持倍速、断点续看、离线缓存与本机字幕。
-- **作业**：跨课程列表和筛选；已提交作业显示评分、反馈与提交历史；首次单文件提交需逐步确认，以学校回执核对哈希才算成功。
-- **成绩**：正式成绩、学分与 GPA，学期筛选；学校未返回 GPA 时按官方规则本地计算并注明。
-- **培养方案**：首次打开时按成绩和课程推断年级与专业，可修改；毕业总学分与各大类以圆环显示已获 / 要求，点开看学分系列与课程；大学英语按分级计学分；一键抽出教务部 PDF 里本专业的几页原文。匹配不上的课程手动归类，只存本机。课程详情提供拼好课、课程测评、PKUHUB 的评课入口。
-- **通知**：课程、学校、各单位、教务部、信科，以及图书馆活动，可订阅、搜索、已读，内置原文窗口。
-- **校历**：学校官方整张 PDF，学年切换与缩放。
-- **校园卡与空闲教室**：余额、月度收支与流水、充值入口；按教学楼、日期、节次查空闲教室。
-- **设置**：各服务分别扫码登录、保持登录、缓存管理、字幕组件。
+下面按桌面版列出；Android 版覆盖其中大部分，差别见下一节。
 
-课程资料和回放默认保存在 `~/Downloads/OnePKU/`，可在设置里改到别的文件夹；按学期、课程整理，附来源与 SHA-256。
+- **今日**：待交作业与附件、最新通知、校园卡余额。每一块独立刷新，一处出错不影响其他。
+- **课程**：按学期分组的全部课程，课程通知、资料、回放、教学网成绩；应用内边下边播，支持倍速、断点续看、可选的整节缓存播放与本机字幕。
+- **作业**：跨课程列表，按待交 / 已提交 / 已截止 / 全部切换；已提交作业显示评分、反馈与提交历史；首次单文件提交需逐步确认，以学校回执核对哈希才算成功。
+- **成绩**：正式成绩、学分与 GPA，学期筛选；学校未返回 GPA 时按官方规则本地计算并注明。
+- **培养方案**：首次打开时按成绩和课程推断年级与专业，可修改；毕业总学分与各大类以圆环显示已获 / 要求，含在修课的课程类默认展开，父类直属课程与子课目一起列出；大学英语按分级计学分；一键抽出教务部 PDF 里本专业的几页原文。匹配不上的课程进「待确认」手动归类，只存本机。课程详情提供拼好课、课程测评、PKUHUB 的评课入口。
+- **通知**：课程、学校、各单位、本院、教务部，以及图书馆活动，可订阅、搜索、已读，内置原文窗口；本院通知默认订阅，按校内门户识别或手动选择的院系读取。
+- **校历**：学校官方整张 PDF，学年切换与缩放。
+- **校园卡与空闲教室**：余额、月度收支与流水，以及校园卡门户入口；按教学楼、日期、节次查空闲教室。
+- **设置**：各服务分别扫码登录、保持登录、外观（跟随系统 / 浅色 / 深色）、下载保存位置与回放缓存位置、缓存管理、字幕组件。
+
+课程资料与「下载 MP4」的成片默认保存在 `~/Downloads/OnePKU/`，按学期、课程整理，附来源与 SHA-256；播放用的分片缓存单独放在应用缓存目录，两者都能在设置里改到别的文件夹。
+
+## Android 版
+
+手机上是独立的 Kotlin + Jetpack Compose 实现，不是桌面版打包。覆盖：账号密码登录、今日、课程与课程通知/资料/成绩、作业查看与提交、成绩单与 GPA、培养方案与完成度、本院通知、空闲教室、校历、校园卡。详见 [android/README.md](android/README.md)。
+
+与桌面版的差别是刻意的——手机只做便携场景：没有课程回放，树洞与校园卡只查询不互动；培养方案有，但原文不在应用内抽页，只给教务部整卷入口。两处不同值得单独说明：
+
+- **登录方式**：手机只有账号密码登录（密码用学校公钥加密后提交，与会话凭证一起存在系统 Keystore 加密的本地存储里，用于会话过期后自动重登）。桌面版的扫码登录在手机上不提供，也不会保存密码到任何第三方。
+- **本院通知**：手机会读校内门户的「单位」识别你所在院系，通知页据此显示本院通知；桌面版固定提供教务部与信科来源。
 
 ## 安装
 
-目前只提供 macOS 版本（Apple Silicon）。从 [Releases](../../releases) 下载 `OnePKU.app.zip`，解压后拖进"应用程序"。
+### macOS
+
+已发布版本目前只提供 Apple Silicon 的 macOS 包。从 [Releases](../../releases) 下载 `OnePKU.app.zip`，解压后拖进"应用程序"。
 
 应用没有 Apple 公证，首次打开会被系统拦下，按你的系统版本处理：
 
@@ -40,13 +53,21 @@ xattr -cr /Applications/OnePKU.app
 
 可选组件：下载回放为 MP4 需要 `ffmpeg`（`brew install ffmpeg`）；本机生成字幕需要 macOS 14 以上并运行一次 `bash scripts/subtitles/install.sh`，见 [字幕说明](docs/SUBTITLES.md)。播放回放、导入 SRT/VTT 字幕不需要这些。
 
+### Windows
+
+Windows x64 目前是实验性源码支持，还没有发布正式安装包，需要从源码构建；环境与验收范围见 [Windows 说明](docs/WINDOWS.md)。
+
+### Android
+
+未上架应用商店。从 [Releases](../../releases) 下载 APK 直接安装；想看最新未发布的构建，可以在 Actions 的 `Android APK` 运行记录里取产物，文件名按版本号是 `onepku-android-v<版本>.apk`。调试签名包安装时系统会提示"未知来源"，需要手动允许。
+
 ## 第一次打开
 
-1. 在设置里分别连接教学网、树洞、校园卡。全部是扫码或短信验证，应用不保存密码。
+1. 在设置里分别连接教学网、树洞、校园卡。全部是扫码或短信验证，应用不保存密码（Android 版只有账号密码登录，见上文「Android 版」）。
 2. 应用会根据成绩和课程推断你的入学年份、院系和专业，你可以改，之后随时在设置里改。
 3. 回到今日页。默认开启保持登录，应用运行期间每 15 分钟做一次轻量会话检查。
 
-登录凭证存在 `~/.config/info/<服务>/`，与 [PKU CLI](https://github.com/pkuinfo/pkucli) 共用。如果你已经在用 PKU CLI，打开应用直接复用会话。
+桌面版的登录凭证保存在按平台选择的用户配置目录（macOS：`~/Library/Application Support/info/<服务>/`；Windows：`%APPDATA%\info\config\<服务>\`），与 [PKU CLI](https://github.com/pkuinfo/pkucli) 共用。如果你已经在用 PKU CLI，打开应用直接复用会话。Android 版不存在共用：会话 Cookie 存应用私有目录，密码存在 Keystore 加密的本地存储里，只用于会话过期后自动重登。
 
 ## 边界与已知限制
 
@@ -55,11 +76,15 @@ xattr -cr /Applications/OnePKU.app
 - 考试安排来源当前不可用，不显示推断结果。
 - 培养方案完成度以教务部公开 PDF 清洗后的数据计算，匹配不上的课程标"待确认"，不假装算清；以学校毕业审查为准。
 - 浏览器与应用的登录态目前互相独立，可能需要各自登录。
+- Android 版没有课程回放，也不提供扫码登录；培养方案的原文不在应用内抽页。写操作只有作业提交。
 - 数据存放与不会做的事见 [SECURITY.md](SECURITY.md)。
 
 ## 本地开发
 
-需要 Node.js 20+、Rust stable 与 Xcode Command Line Tools。
+需要 Node.js 24.15+（24 LTS；也支持 22.22.2+ 或 26+）与 Rust stable。
+
+- macOS：安装 Xcode Command Line Tools。
+- Windows x64：安装 Visual Studio C++ Build Tools（桌面 C++ 工作负载和 Windows SDK）与 WebView2 Runtime，详见 [Windows 开发说明](docs/WINDOWS.md)。
 
 ```bash
 npm ci
@@ -69,15 +94,35 @@ npm run tauri -- dev
 构建 Mac 应用（输出 `target/release/bundle/macos/OnePKU.app`）：
 
 ```bash
-npm run tauri -- build --bundles app
+npm run tauri -- build --config src-tauri/tauri.test.conf.json --bundles app -- --locked
 ```
 
+构建 Windows 安装包（在 Windows 上运行；输出 `target/release/bundle/nsis/`）：
+
+```powershell
+npm run tauri -- build --config src-tauri/tauri.test.conf.json --bundles nsis -- --locked
+```
+
+上面的测试包不生成签名更新制品；正式发布使用默认配置和 `TAURI_SIGNING_PRIVATE_KEY`，见 `.github/workflows/release.yml`。不要把测试配置用于发布更新包。
+
+macOS 与 Windows 共用 React 界面和 Rust 业务逻辑，Tauri 自动合并对应平台配置。Android 是同一仓库里的独立实现：不共用界面与 Rust 核心，但共用 `data/curriculum/` 的培养方案数据，构建时由 Gradle 同步进 assets，所以要连着整个仓库一起构建。
+
 浏览器里用真实后端验收：`npm run build && npm run preview:live`，打开 `http://127.0.0.1:1421`。
+
+Android 客户端在 `android/` 下，需要 JDK 17 与 Android SDK（`compileSdk 35`）：
+
+```bash
+cd android
+./gradlew assembleDebug      # 产物 app/build/outputs/apk/debug/app-debug.apk
+```
+
+CI 按路径分工：`android/` 之内的改动触发 `.github/workflows/android.yml` 构建调试 APK 并上传产物，`android/` 之外（仓库其余部分）的改动触发 `.github/workflows/desktop.yml` 的 macOS 与 Windows 检查和打包。
 
 验证：
 
 ```bash
 npm test && npm run typecheck && npm run format:check && npm run verify:tokens && cargo test -p campus-core --lib
+cd android && ./gradlew testDebugUnitTest   # 改了 android/ 才需要
 ```
 
 ## 项目结构
@@ -85,7 +130,8 @@ npm test && npm run typecheck && npm run format:check && npm run verify:tokens &
 ```
 src/                 React 界面（页面、组件、样式 token）
 crates/campus-core/  Rust 核心：类型化命令、缓存、认证、下载、回放、写操作
-src-tauri/           macOS 容器与原文窗口
+src-tauri/           macOS / Windows 容器与原文窗口
+android/             Android 客户端（Kotlin + Compose，独立实现，协议移植自上面两处）
 vendor/pkucli/       PKU CLI 快照与本地补丁（MIT）
 data/curriculum/     培养方案结构化数据（由脚本生成）
 scripts/             token 校验、PDF 资源、字幕安装、培养方案清洗

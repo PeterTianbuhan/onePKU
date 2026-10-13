@@ -7,12 +7,13 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import {
+  htmlToText,
   useNotifications,
   sources,
   newsDate,
   type NewsItem,
 } from "../lib/notifications";
-import { openOfficial } from "../lib/api";
+import { openOfficial, useResource } from "../lib/api";
 import { openBrowser } from "../lib/browser";
 import { Button, Empty, Modal, Search, type Login } from "../components/ui";
 
@@ -84,10 +85,16 @@ export function NoticeReader({
       )}
       {item.source === "course" ? (
         <div className="article-body">
-          <p>
-            {item.body ||
-              "这条通知的正文未提取到，请打开教学网查看图片或附件。"}
-          </p>
+          {(() => {
+            const body = htmlToText(item.body ?? "");
+            return body ? (
+              body
+                .split(/\n\n+/)
+                .map((paragraph, i) => <p key={i}>{paragraph}</p>)
+            ) : (
+              <p>这条通知的正文未提取到，请打开教学网查看图片或附件。</p>
+            );
+          })()}
           {item.author && <p className="subtle">{item.author}</p>}
         </div>
       ) : (
@@ -99,6 +106,13 @@ export function NoticeReader({
 }
 export default function Notices({ login }: { login: Login }) {
   const news = useNotifications();
+  // 本院标签直接写院系列，与安卓端一样一眼看出当前按哪个院系读通知。
+  const college = useResource<{
+    selected: string;
+    detected: string;
+    effective: string;
+    options: string[];
+  }>({ kind: "departments" });
   const [source, setSource] = useState("all");
   const [search, setSearch] = useState("");
   const [unreadOnly, setUnreadOnly] = useState(false);
@@ -167,23 +181,6 @@ export default function Notices({ login }: { login: Login }) {
             }}
             placeholder="搜索已加载的通知"
           />
-          <select
-            aria-label="通知来源"
-            value={source}
-            onChange={(e) => {
-              setSource(e.target.value);
-              setSelected(undefined);
-            }}
-          >
-            <option value="all">全部来源</option>
-            {sources
-              .filter((s) => news.enabled.includes(s.id))
-              .map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-          </select>
           <label className="check-label">
             <input
               type="checkbox"
@@ -207,6 +204,37 @@ export default function Notices({ login }: { login: Login }) {
             <CheckCheck size={16} />
             本页已读
           </button>
+        </div>
+        <div className="tabs news-tabs" role="tablist" aria-label="通知来源">
+          <button
+            role="tab"
+            aria-selected={source === "all"}
+            className={source === "all" ? "active" : ""}
+            onClick={() => {
+              setSource("all");
+              setSelected(undefined);
+            }}
+          >
+            全部来源
+          </button>
+          {sources
+            .filter((s) => news.enabled.includes(s.id))
+            .map((s) => (
+              <button
+                key={s.id}
+                role="tab"
+                aria-selected={source === s.id}
+                className={source === s.id ? "active" : ""}
+                onClick={() => {
+                  setSource(s.id);
+                  setSelected(undefined);
+                }}
+              >
+                {s.id === "college"
+                  ? college.data?.data?.effective || s.name
+                  : s.name}
+              </button>
+            ))}
         </div>
       </div>
       {news.issues.length > 0 && (

@@ -1,0 +1,10 @@
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.png binary
+*.jpg binary
+*.ico binary
+*.icns binary
+*.pdf binary
+# Unified patches contain required space-only context lines.
+*.patch -whitespace

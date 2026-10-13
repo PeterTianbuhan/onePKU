@@ -9,13 +9,16 @@ use std::{
     time::Duration,
 };
 mod auth;
+mod accounts;
 mod bookings;
 mod curriculum;
 mod downloads;
+mod haoxue;
 mod maintenance;
 mod materials;
 mod news;
 mod playback;
+mod platform;
 mod reminders;
 mod storage;
 mod study;
@@ -25,7 +28,7 @@ pub use downloads::safe_filename;
 pub use study::CourseBrowserCookie;
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Request {
     Reminders,
     SetReminders {
@@ -47,6 +50,15 @@ pub enum Request {
         source: String,
         id: String,
     },
+    /// 本院通知按手动选择的院系定位；门户登录打通前不做自动识别。
+    Departments,
+    /// 校内门户连接状态与识别到的院系（用来兜底判断本院）。
+    PortalStatus,
+    PortalDetect,
+    PortalLogout,
+    SetDepartment {
+        value: String,
+    },
     OpenLink {
         url: String,
     },
@@ -61,12 +73,50 @@ pub enum Request {
         open: bool,
     },
     Preferences,
+    /// 课堂实录登录态：载荷由学校 app-login 页面交给原生桥，原样透传解析。
+    HaoxueLogin {
+        payload: Value,
+    },
+    HaoxueStatus,
+    HaoxueLogout,
+    /// 同名课程的候选（让用户认一次是哪一门）。
+    HaoxueCandidates {
+        name: String,
+    },
+    SetHaoxueCourse {
+        name: String,
+        id: String,
+    },
+    /// 统一认证完成后：以安卓身份重取中转页，用窗口 cookie 解出令牌。
+    HaoxueRelay {
+        url: String,
+        cookies: Vec<(String, String)>,
+    },
+    /// 断开某个服务的登录：只清这个服务的会话与 cookie，其它服务不受影响。
+    ServiceLogout {
+        service: String,
+    },
+    /// 观看进度回写好学；`seconds` 是距上次上报的观看秒数。
+    HaoxueRecord {
+        course: String,
+        episode: String,
+        play_time: u64,
+        seconds: u64,
+    },
     /// 只能恢复默认；更改到某个目录必须经过桌面容器的系统选择框，前端不能传路径。
     ResetDownloadRoot,
     OpenDownloadRoot,
+    /// 回放缓存位置；同样只由桌面容器的系统选择框更改。
+    ResetCacheRoot,
+    OpenCacheRoot,
     Profile,
     SetProfile {
         profile: Value,
+    },
+    /// 成绩口径（专业必修/限选的手动纳入与排除）。只存本机。
+    GradesScope,
+    SetGradesScope {
+        scope: Value,
     },
     SubtitleSettings,
     SetSubtitleModel {
@@ -112,6 +162,8 @@ pub enum Request {
         video: String,
         #[serde(default)]
         refresh: bool,
+        #[serde(default)]
+        position: f64,
     },
     PlaybackStatus {
         id: String,
@@ -200,6 +252,26 @@ pub enum Request {
     },
     BookingApplications,
     Calendar,
+    /// 账号密码登录：`services` 为空时一次换回四个服务的会话，与安卓端一致。
+    /// 密码只在本次调用里存在：不进缓存键，也不写进本机快照。
+    AuthPassword {
+        username: String,
+        password: String,
+        #[serde(default)]
+        services: Vec<String>,
+        otp: Option<String>,
+        /// 记住就写进系统加密存储；不记就清掉之前记住的。
+        #[serde(default)]
+        remember: bool,
+    },
+    /// 本机是否记住了统一认证账号（只回账号，不回密码）。
+    Credentials,
+    SaveCredentials {
+        username: String,
+        password: String,
+        remember: bool,
+    },
+    ClearCredentials,
     AuthBegin {
         service: String,
     },
@@ -233,6 +305,9 @@ pub enum Request {
     DownloadCancel {
         id: String,
     },
+    DownloadRetry {
+        id: String,
+    },
     Open {
         target: String,
     },
@@ -256,6 +331,7 @@ pub struct Problem {
 pub struct Core {
     subtitles: Mutex<subtitles::SubtitleStore>,
     subtitle_account_lock: tokio::sync::Mutex<()>,
+    course_account_lock: tokio::sync::Mutex<()>,
     materials_lock: Mutex<()>,
     playback: Mutex<playback::PlaybackStore>,
     playback_prepare_lock: tokio::sync::Mutex<()>,
@@ -275,7 +351,10 @@ pub struct Core {
 fn owner(req: &Request) -> &'static str {
     match req {
         Request::BookingGrid { .. } | Request::BookingApplications => "bdkj",
-        Request::DownloadBatch { .. }
+        Request::Download { .. }
+        | Request::DownloadStatus { .. }
+        | Request::DownloadRetry { .. }
+        | Request::DownloadBatch { .. }
         | Request::OpenArchive { .. }
         | Request::LocalMaterials { .. }
         | Request::ReadLocalMaterial { .. }
@@ -298,7 +377,7 @@ fn owner(req: &Request) -> &'static str {
         | Request::OpenAssignment { .. }
         | Request::Courses
         | Request::AllCourses
-        | Request::Videos { .. }
+        | Request::HaoxueRecord { .. }
         | Request::Recordings { .. }
         | Request::RecordingSessions { .. }
         | Request::LearningGrades { .. }
@@ -315,6 +394,25 @@ fn owner(req: &Request) -> &'static str {
         | Request::Hole { .. } => "treehole",
         Request::CardStats { .. } | Request::Card | Request::Transactions { .. } => "campuscard",
         _ => "public",
+    }
+}
+/// 会话过期时允许自动重登再重试的，只有重复一次没有副作用的读取；写操作和负责
+/// 打开窗口的请求一律排除。课程表不落快照，但同样是换不到票就要人工登录的读取。
+fn may_relogin(req: &Request, service: &str) -> bool {
+    matches!(service, "course" | "treehole" | "campuscard" | "bdkj")
+        && (storage::cacheable(req) || matches!(req, Request::Timetable))
+}
+/// 快照键的前缀是当前账号基准；静默续期把基准换掉之后要按新基准重建同一个键。
+/// 密码登录的键里不能带凭证，只记账号与目标服务。
+fn request_key(req: &Request, generation: &str) -> String {
+    match req {
+        Request::AuthPassword {
+            username, services, ..
+        } => format!("{generation}:authPassword:{username}:{services:?}"),
+        Request::SaveCredentials { username, .. } => {
+            format!("{generation}:saveCredentials:{username}")
+        }
+        other => format!("{generation}:{}", serde_json::to_string(other).unwrap()),
     }
 }
 pub fn fingerprint(service: &str) -> String {
@@ -359,6 +457,23 @@ fn problem(e: anyhow::Error) -> Problem {
         ("noExams", "学校考试数据源当前不可用，请到校内门户核对")
     } else if s.contains("TIMETABLE_SOURCE_UNAVAILABLE") {
         ("noTimetable", "学校课表服务未返回课程数据，可稍后刷新")
+    } else if (s.starts_with("好学") || s.contains("课堂实录"))
+        && [
+            "未登录",
+            "登录已失效",
+            "登录失效",
+            "令牌",
+            "401",
+        ]
+        .iter()
+        .any(|needle| s.contains(needle))
+    {
+        // 课堂实录的登录失效不能报成通用「auth」：那会把用户引去重新登录教学网，
+        // 播放器里的「重试」也只是再撞一次 401。
+        (
+            "haoxueAuth",
+            "课堂实录登录已失效，请重新连接课堂实录",
+        )
     } else if s.contains("未登录")
         || s.contains("过期")
         || s.contains("401")
@@ -388,6 +503,11 @@ fn problem(e: anyhow::Error) -> Problem {
     .any(|prefix| s.starts_with(prefix))
     {
         ("validation", s.as_str())
+    } else if s.contains("同名课程") {
+        ("haoxueAmbiguous", s.as_str())
+    } else if s.starts_with("课堂实录") || s.starts_with("好学") {
+        // 好学侧的报错本来就是给用户看的：同名候选、未收录等，不能抹成通用文案。
+        ("haoxue", s.as_str())
     } else if s.contains("filename") || s.contains("文件名") {
         ("invalid", "这个文件名无法保存")
     } else {
@@ -403,6 +523,9 @@ impl Core {
     pub fn set_download_root(&self, path: &std::path::Path) -> Result<Value> {
         downloads::set_download_root(Some(path))
     }
+    pub fn set_cache_root(&self, path: &std::path::Path) -> Result<Value> {
+        downloads::set_cache_root(Some(path))
+    }
 
     pub fn call(self: &Arc<Self>, req: Request) -> Envelope {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -413,12 +536,28 @@ impl Core {
     }
     async fn execute(self: &Arc<Self>, req: Request) -> Envelope {
         let service = owner(&req);
-        let generation = fingerprint(service);
-        let key = format!("{}:{}", generation, serde_json::to_string(&req).unwrap());
-        let result = tokio::time::timeout(Duration::from_secs(75), self.dispatch(&req))
+        let mut generation = fingerprint(service);
+        let mut key = request_key(&req, &generation);
+        let mut result = tokio::time::timeout(Duration::from_secs(75), self.dispatch(&req))
             .await
             .map_err(|_| anyhow!("超时"))
             .and_then(|v| v);
+        // 会话过期就用在手钥匙串里的账号静默换一次票再重试；写操作绝不自动重放。
+        let expired = result
+            .as_ref()
+            .err()
+            .map(|e| problem(anyhow!("{e}")))
+            .is_some_and(|p| p.code == "auth");
+        if expired && may_relogin(&req, service) && self.relogin(service).await.is_ok() {
+            // 换票改写了 session.json，基准得跟着挪到新的那份：这是我们自己替用户续的会话，
+            // 不是切账号。继续按旧基准走就会被当成「账号已更新」，把刚取到的数据丢掉。
+            generation = fingerprint(service);
+            key = request_key(&req, &generation);
+            result = tokio::time::timeout(Duration::from_secs(75), self.dispatch(&req))
+                .await
+                .map_err(|_| anyhow!("超时"))
+                .and_then(|v| v);
+        }
         if generation != fingerprint(service) {
             return Envelope {
                 data: None,
@@ -471,7 +610,10 @@ impl Core {
                     .is_none_or(|r| owner(&r) != service)
             });
         }
-        if matches!(req, Request::AuthPoll { .. } | Request::SmsVerify { .. })
+        if matches!(
+            req,
+            Request::AuthPoll { .. } | Request::SmsVerify { .. } | Request::AuthPassword { .. }
+        )
             && out.data.as_ref().is_some_and(|d| d["state"] == "success")
         {
             cache.clear();
@@ -548,6 +690,15 @@ impl Core {
                 news::open_item(source, &item)?;
                 json!({"opened":true})
             }
+            Request::Departments => news::department_state(),
+            Request::PortalStatus => news::portal_status().await?,
+            Request::PortalDetect => news::portal_detect().await?,
+            Request::PortalLogout => news::portal_logout()?,
+            Request::ServiceLogout { service } => Self::service_logout(service)?,
+            Request::HaoxueRelay { url, cookies } => haoxue::relay_login(url, cookies).await?,
+            Request::HaoxueCandidates { name } => haoxue::candidates(name).await?,
+            Request::SetHaoxueCourse { name, id } => haoxue::set_course(name, id)?,
+            Request::SetDepartment { value } => news::set_department(value)?,
             Request::CalendarPdf { year } => news::calendar_pdf(year).await?,
             Request::CurriculumPages {
                 volume,
@@ -564,27 +715,50 @@ impl Core {
             Request::SetSubtitleModel { model } => self.set_subtitle_model(model)?,
             Request::Preferences => {
                 let mut v = downloads::download_root_info();
+                let cache = downloads::cache_root_info();
+                for key in ["cacheRoot", "cacheRootIsDefault"] {
+                    v[key] = cache[key].clone();
+                }
                 v["keepAlive"] = json!(self.keep_alive.load(std::sync::atomic::Ordering::Relaxed));
                 v
             }
+            Request::HaoxueLogin { payload } => haoxue::save_session(payload)?,
+            Request::HaoxueStatus => haoxue::status(),
+            Request::HaoxueLogout => {
+                haoxue::clear_session()?;
+                json!({ "connected": false })
+            }
+            Request::HaoxueRecord {
+                course,
+                episode,
+                play_time,
+                seconds,
+            } => haoxue::record(course, episode, *play_time, *seconds).await?,
             Request::ResetDownloadRoot => downloads::set_download_root(None)?,
             Request::OpenDownloadRoot => {
                 let dir = downloads::download_root()?;
                 std::fs::create_dir_all(&dir)?;
-                std::process::Command::new("/usr/bin/open").arg(dir).spawn()?;
+                platform::open(dir.as_os_str())?;
+                json!({"opened":true})
+            }
+            Request::ResetCacheRoot => downloads::set_cache_root(None)?,
+            Request::OpenCacheRoot => {
+                let dir = downloads::cache_root()?;
+                std::fs::create_dir_all(&dir)?;
+                platform::open(dir.as_os_str())?;
                 json!({"opened":true})
             }
             Request::SetKeepAlive { enabled } => {
                 self.save_preference(*enabled)?;
                 json!({"keepAlive":enabled})
             }
+            Request::GradesScope => Self::grades_scope(),
+            Request::SetGradesScope { scope } => self.save_grades_scope(scope)?,
             Request::Profile => self.profile()?,
             Request::SetProfile { profile } => self.save_profile(profile)?,
             Request::OpenArchive { course } => {
                 let dir = self.material_directory(course).await?;
-                std::process::Command::new("/usr/bin/open")
-                    .arg(dir)
-                    .spawn()?;
+                platform::open(dir.as_os_str())?;
                 json!({"opened":true})
             }
             Request::LocalMaterials { course } => self.local_materials(course).await?,
@@ -601,7 +775,8 @@ impl Core {
                 course,
                 video,
                 refresh,
-            } => self.playback_prepare(course, video, *refresh).await?,
+                position,
+            } => self.playback_prepare(course, video, *refresh, *position).await?,
             Request::SubtitleStatus { id } => self.subtitle_status(id)?,
             Request::SubtitleStart { id } => self.subtitle_start(id)?,
             Request::SubtitleCancel { id } => self.subtitle_cancel(id)?,
@@ -634,7 +809,7 @@ impl Core {
                     .list_courses(true)
                     .await?
                     .iter()
-                    .map(|c| json!({"id":c.id,"name":c.name()}))
+                    .map(study::course_value)
                     .collect::<Vec<_>>())
             }
             Request::PrepareSubmission {
@@ -684,8 +859,15 @@ impl Core {
                 let mut succeeded = 0;
                 for (name, res) in results {
                     match res {
-                        Ok(Ok(Value::Array(items))) => {
+                        Ok(Ok(Value::Array(mut items))) => {
                             succeeded += 1;
+                            for row in &mut items {
+                                if let Some(c) = courses.iter().find(|c| {
+                                    row["course_id"].as_str() == Some(c.id.as_str())
+                                }) {
+                                    study::apply_course_metadata(row, &study::course_value(c));
+                                }
+                            }
                             rows.extend(items)
                         }
                         _ => warnings.push(format!("{name} 未能更新")),
@@ -781,6 +963,23 @@ impl Core {
                 .iter()
                 .map(|c| json!({"year":c.year,"first":c.first_semester,"second":c.second_semester}))
                 .collect::<Vec<_>>()),
+            Request::AuthPassword {
+                username,
+                password,
+                services,
+                otp,
+                remember,
+            } => {
+                self.auth_password(services, username, password, otp.as_deref(), *remember)
+                    .await?
+            }
+            Request::Credentials => Self::credentials_status(),
+            Request::SaveCredentials {
+                username,
+                password,
+                remember,
+            } => Self::set_credentials(username, password, *remember)?,
+            Request::ClearCredentials => Self::clear_credentials()?,
             Request::AuthBegin { service } => self.auth_begin(service).await?,
             Request::AuthPoll { id } => self.auth_poll(id).await?,
             Request::AuthCancel { id } => {
@@ -795,11 +994,10 @@ impl Core {
             Request::Download { id } => self.download(id)?,
             Request::DownloadStatus { id } => self.download_status(id)?,
             Request::DownloadCancel { id } => self.download_cancel(id)?,
+            Request::DownloadRetry { id } => self.download_retry(id).await?,
             Request::Open { target } => {
                 let url = official_target(target)?;
-                std::process::Command::new("/usr/bin/open")
-                    .arg(url)
-                    .spawn()?;
+                platform::open(std::ffi::OsStr::new(url))?;
                 json!({"opened":true})
             }
         };
@@ -823,7 +1021,8 @@ pub fn official_target(s: &str) -> Result<&'static str> {
         "course" => "https://course.pku.edu.cn",
         "treehole" => "https://treehole.pku.edu.cn",
         "timetable" => "https://treehole.pku.edu.cn/web/timetable",
-        "campuscard" => "https://bdcard.pku.edu.cn",
+        // 校园卡原站是门户站；bdcard 只是接口域名，直接打开会被拒（403）。
+        "campuscard" => "https://card.pku.edu.cn/",
         "portal" => "https://portal.pku.edu.cn",
         "elective" => "https://elective.pku.edu.cn/elective2008/",
         "recordings" => "https://onlineroomse.pku.edu.cn/",
@@ -867,6 +1066,158 @@ mod tests {
         assert!(valid_id("x&mode=delete").is_err());
     }
     #[test]
+    fn replay_requests_are_named_and_split() {
+        // 前端用的 kind 字符串与 Rust 字段名必须成对，写错就是静默失效。
+        let list: Request =
+            serde_json::from_value(json!({ "kind": "videos", "course": "量子力学" })).unwrap();
+        assert!(matches!(list, Request::Videos { .. }));
+        // 回放只归课堂实录，不再要求教学网会话。
+        assert_eq!(owner(&list), "public");
+        assert!(storage::cacheable(&list));
+        // 「按课程」「按日期」的原始目录不再对外提供：回放只从课程页那一份列表进。
+        for kind in [
+            json!({"kind": "haoxueCourses", "page": 2, "search": "高等数学"}),
+            json!({"kind": "haoxueByDate", "date": "2026-03-01", "page": 1}),
+            json!({"kind": "haoxueEpisodes", "course": "123"}),
+        ] {
+            assert!(serde_json::from_value::<Request>(kind).is_err());
+        }
+        // 进度回写是出站写操作：不进缓存，也少一个字段都不收。
+        let write = serde_json::from_value::<Request>(json!({
+            "kind": "haoxueRecord", "course": "1", "episode": "2", "playTime": 90, "seconds": 30
+        }))
+        .unwrap();
+        assert!(!storage::cacheable(&write));
+        assert!(serde_json::from_value::<Request>(json!({"kind": "haoxueRecord", "course": "1"}))
+            .is_err());
+    }
+    #[test]
+    fn password_login_is_named_and_never_cached() {
+        let login = serde_json::from_value::<Request>(json!({
+            "kind": "authPassword", "username": "2200000000",
+            "password": "secret", "services": ["course"]
+        }))
+        .unwrap();
+        assert!(matches!(login, Request::AuthPassword { .. }));
+        // 凭证不能进本机快照，也不能被当成可缓存的读取。
+        assert!(!storage::cacheable(&login));
+        assert!(matches!(
+            login,
+            Request::AuthPassword {
+                remember: false,
+                ..
+            }
+        ));
+        for kind in [
+            json!({ "kind": "credentials" }),
+            json!({ "kind": "clearCredentials" }),
+            json!({
+                "kind": "saveCredentials", "username": "a", "password": "b", "remember": true
+            }),
+        ] {
+            let request = serde_json::from_value::<Request>(kind).unwrap();
+            assert!(!storage::cacheable(&request));
+        }
+        // 一次登录全部服务时 services 可以省略；账号或密码缺了就不收。
+        assert!(serde_json::from_value::<Request>(json!({
+            "kind": "authPassword", "username": "a", "password": "b"
+        }))
+        .is_ok());
+        assert!(serde_json::from_value::<Request>(json!({
+            "kind": "authPassword", "username": "a"
+        }))
+        .is_err());
+    }
+    #[test]
+    fn haoxue_course_picks_are_named_and_not_cached() {
+        for kind in [
+            json!({ "kind": "haoxueCandidates", "name": "量子力学" }),
+            json!({ "kind": "setHaoxueCourse", "name": "量子力学", "id": "c1" }),
+        ] {
+            let request = serde_json::from_value::<Request>(kind).unwrap();
+            assert!(!storage::cacheable(&request));
+        }
+        // 同名歧义要能落到专门的 code，前端据此展示候选而不是报错。
+        let problem = problem(anyhow!("课堂实录有 3 门同名课程，需要人工确认是哪一门"));
+        assert_eq!(problem.code, "haoxueAmbiguous");
+    }
+    #[test]
+    fn only_idempotent_session_reads_may_relogin() {
+        // Request 里带着密码，测试失败时只回显 kind，不要把这个枚举做成 Debug。
+        for kind in [
+            json!({ "kind": "assignments" }),
+            json!({ "kind": "card" }),
+            json!({ "kind": "timetable" }),
+        ] {
+            let request = serde_json::from_value::<Request>(kind.clone()).unwrap();
+            assert!(
+                may_relogin(&request, owner(&request)),
+                "会话过期时读取要自动重登：{kind}"
+            );
+        }
+        // 重放写请求就是二次提交，打开原站窗口的请求也不需要会话。
+        for (kind, service) in [
+            (json!({ "kind": "commitSubmission", "id": "x" }), "course"),
+            (
+                json!({ "kind": "openAssignment", "course": "c", "content": "x" }),
+                "course",
+            ),
+            (json!({ "kind": "news", "source": "s", "page": 1 }), "public"),
+        ] {
+            let request = serde_json::from_value::<Request>(kind.clone()).unwrap();
+            assert!(!may_relogin(&request, service), "不能自动重放：{kind}");
+        }
+    }
+    #[test]
+    fn service_logout_is_named_and_not_cached() {
+        let request = serde_json::from_value::<Request>(
+            json!({ "kind": "serviceLogout", "service": "course" }),
+        )
+        .unwrap();
+        assert!(!storage::cacheable(&request));
+        // 白名单之外的服务名要能解析出来但落不了地。
+        assert!(matches!(
+            serde_json::from_value::<Request>(
+                json!({ "kind": "serviceLogout", "service": "portal" })
+            )
+            .unwrap(),
+            Request::ServiceLogout { .. }
+        ));
+    }
+    #[test]
+    fn portal_requests_are_named_and_not_cached() {
+        for kind in [
+            json!({ "kind": "portalStatus" }),
+            json!({ "kind": "portalDetect" }),
+            json!({ "kind": "portalLogout" }),
+        ] {
+            let request = serde_json::from_value::<Request>(kind).unwrap();
+            assert!(!storage::cacheable(&request));
+        }
+    }
+    #[test]
+    fn department_setting_requests_are_named() {
+        assert!(matches!(
+            serde_json::from_value::<Request>(json!({ "kind": "departments" })).unwrap(),
+            Request::Departments
+        ));
+        assert!(matches!(
+            serde_json::from_value::<Request>(json!({
+                "kind": "setDepartment", "value": "数学科学学院"
+            }))
+            .unwrap(),
+            Request::SetDepartment { .. }
+        ));
+        // 本院通知走公开的 news 通道，页签标识必须与前端 sources 里的 id 一致。
+        assert!(matches!(
+            serde_json::from_value::<Request>(json!({
+                "kind": "news", "source": "college", "page": 1
+            }))
+            .unwrap(),
+            Request::News { .. }
+        ));
+    }
+    #[test]
     fn authentication_has_distinct_recovery() {
         for (s, c) in [
             ("40002", "sms"),
@@ -876,6 +1227,10 @@ mod tests {
                 "登录已失效（token invalid）。请重新运行 `campuscard login`",
                 "auth",
             ),
+            // 课堂实录的失效要单独成码：报成 auth 会把用户推去重新登录教学网，
+            // 播放器里的「重试连接」只会再撞一次 401。
+            ("好学登录已失效，请重新登录", "haoxueAuth"),
+            ("未登录好学课堂实录", "haoxueAuth"),
             ("超时", "timeout"),
             ("TIMETABLE_SOURCE_UNAVAILABLE", "noTimetable"),
             ("课表数据缺少 course", "unavailable"),

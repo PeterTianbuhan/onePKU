@@ -77,7 +77,8 @@ export const ENGLISH_LEVELS = [
   { id: "exempt", label: "免修", credits: 2 },
 ] as const;
 export type EnglishLevel = (typeof ENGLISH_LEVELS)[number]["id"];
-export const ENGLISH_FULL_CREDITS = 8;
+export const ENGLISH_MIN_CREDITS = 2;
+export const ENGLISH_MAX_CREDITS = 8;
 export function englishLevelInfo(level: EnglishLevel | null | undefined) {
   return ENGLISH_LEVELS.find((l) => l.id === level) ?? null;
 }
@@ -297,8 +298,199 @@ function makeSection(
   };
 }
 
+/** 分组 id「2.2」对应要求 id「2-2」；只补这一层，更深的模块组仍归到所属子系列。 */
+const SECOND_LEVEL_GROUP = /^[123]\.\d+$/;
+function fmtCredits(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+function sectionIdPart(part: string | undefined): number {
+  if (part === undefined) return -1;
+  const value = Number(part);
+  return Number.isInteger(value) ? value : -1;
+}
+function compareSectionIds(a: string, b: string): number {
+  const pa = a.split("-");
+  const pb = b.split("-");
+  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+    const na = sectionIdPart(pa[i]);
+    const nb = sectionIdPart(pb[i]);
+    if (na !== nb) return na - nb;
+  }
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+/** 方案只在父级给了总额、恰好一个子系列没写学分要求时，用差额推出该子系列的下限。 */
+function deriveMissingTotals(parent: ProgressSection) {
+  if (parent.min === undefined) return;
+  const missing = parent.children.filter((child) => child.min === undefined);
+  if (missing.length !== 1) return;
+  const known = parent.children
+    .filter((child) => child.min !== undefined)
+    .reduce((sum, child) => sum + (child.min as number), 0);
+  const rest = parent.min - known;
+  if (rest <= 0) return;
+  const target = missing[0];
+  const rawCeiling = parent.max === undefined ? undefined : parent.max - known;
+  const ceiling =
+    rawCeiling !== undefined && rawCeiling >= rest ? rawCeiling : undefined;
+  target.min = rest;
+  target.max = ceiling ?? rest;
+  target.requirement =
+    ceiling !== undefined && ceiling > rest
+      ? `${fmtCredits(rest)}～${fmtCredits(ceiling)} 学分`
+      : `${fmtCredits(rest)} 学分`;
+  target.note =
+    `该类在方案中按方向或模块分列，未给出统一学分要求；此处由「${parent.name} ${fmtCredits(parent.min)} 学分` +
+    "扣除其余子系列推得，选定方向后即按该方向计算";
+}
+/** 各大类都定死后，毕业总学分也按求和落一次；同样只在方案自述的区间内才采用。 */
+function recomputeRequired(
+  plan: Plan,
+  sections: ProgressSection[],
+): number | null {
+  const stated = plan.totalCredits;
+  if (!stated) return null;
+  if (
+    sections.some((s) => (s.unit ?? "学分") !== "学分") ||
+    sections.some((s) => s.min === undefined)
+  )
+    return stated.min;
+  const sum = sections.reduce((n, s) => n + (s.min as number), 0);
+  return sum >= stated.min && sum <= stated.max ? sum : stated.min;
+}
+/** 方案 PDF 里的对齐空格会变成「应用物理学二（计算机交叉）   ：20 学分」。 */
+function tidy(name: string): string {
+  return name
+    .replace(/\s*：\s*/g, "：")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+export type DirectionOption = {
+  groupId: string;
+  name: string;
+  min: number;
+  max?: number;
+};
+/**
+ * 方案把某一类按方向分列、自己不给总额（如物理学院的专业核心课：六个方向 18~24 学分）。
+ * 不选方向就不知道这一类要修多少，也只能把各方向的课混在一起。
+ * 父类已有总额的（如信科的专业选修课）不算分裂，那是模块清单而非互斥方向。
+ */
+export type DirectionSplit = {
+  sectionId: string;
+  name: string;
+  options: DirectionOption[];
+};
+export function directionSplits(plan: Plan): DirectionSplit[] {
+  const usesRequirements = plan.requirements.length >= 4;
+  const parentIds = new Set(plan.groups.map((g) => g.id));
+  const out: DirectionSplit[] = [];
+  for (const parent of plan.groups) {
+    if (parent.min !== undefined) continue;
+    if (parent.parent === null || !parentIds.has(parent.parent)) continue;
+    const options = plan.groups
+      .filter(
+        (child) =>
+          child.parent === parent.id &&
+          child.min !== undefined &&
+          (child.id.startsWith(`${parent.id}-`) ||
+            child.id.startsWith(`${parent.id}.`)),
+      )
+      .map((child) => ({
+        groupId: child.id,
+        name: tidy(child.name),
+        min: child.min as number,
+        max: child.max,
+      }));
+    if (options.length < 2) continue;
+    out.push({
+      sectionId: usesRequirements ? parent.id.replace(/\./g, "-") : parent.id,
+      name: tidy(parent.name),
+      options,
+    });
+  }
+  return out;
+}
+/** 方向选择按「<方案 id>|<系列 id>」保存，这里读回当前方案的这一份。 */
+export function directionsFor(
+  planId: string,
+  directions: Record<string, string>,
+): Record<string, string> {
+  const prefix = `${planId}|`;
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(directions))
+    if (key.startsWith(prefix)) out[key.slice(prefix.length)] = value;
+  return out;
+}
+/** 用户选定方向后，这一类按该方向的学分计；其余方向独有的课不再算进这一类。 */
+function applyDirection(
+  split: DirectionSplit,
+  flat: Map<string, ProgressSection>,
+  plan: Plan,
+  chosen: string,
+): Set<string> {
+  const section = flat.get(split.sectionId);
+  const option = split.options.find((o) => o.groupId === chosen);
+  if (!section || !option) return new Set();
+  section.min = option.min;
+  section.max = option.max ?? option.min;
+  section.requirement = `${fmtCredits(option.min)} 学分`;
+  section.note = `已选方向「${option.name}」，该类按 ${fmtCredits(option.min)} 学分计算`;
+  const group = plan.groups.find((g) => g.id === option.groupId);
+  if (!group) return new Set();
+  const kept = new Set([
+    ...group.courses.map((c) => normalizeCourseName(c.name)),
+    ...group.alternatives.map((a) => normalizeCourseName(a.name)),
+  ]);
+  const skip = new Set<string>();
+  for (const sibling of plan.groups) {
+    if (
+      sibling.parent !== group.parent ||
+      sibling.id === group.id ||
+      !split.options.some((o) => o.groupId === sibling.id)
+    )
+      continue;
+    for (const key of [
+      ...sibling.courses.map((c) => normalizeCourseName(c.name)),
+      ...sibling.alternatives.map((a) => normalizeCourseName(a.name)),
+    ]) {
+      if (key && !kept.has(key)) skip.add(key);
+    }
+  }
+  return skip;
+}
+/**
+ * 方向或分级定了以后，大类的总额按各子系列求和。
+ * 按门/按学时的子系列不计入（方案自己也没把它们算进学分总数），
+ * 而且求和结果落在方案原本给的区间内才敢改。
+ */
+function recomputeTopTotal(
+  top: ProgressSection,
+  floor: number,
+  ceiling: number,
+) {
+  const counted = top.children.filter(
+    (child) => child.unit === undefined || child.unit === "学分",
+  );
+  if (!counted.length || counted.some((child) => child.min === undefined))
+    return;
+  const min = counted.reduce((sum, child) => sum + (child.min as number), 0);
+  const max = counted.reduce(
+    (sum, child) => sum + (child.max ?? child.min!),
+    0,
+  );
+  if (min < floor || min > ceiling) return;
+  top.min = min;
+  top.max = max;
+  top.requirement =
+    max > min
+      ? `${fmtCredits(min)}～${fmtCredits(max)} 学分`
+      : `${fmtCredits(min)} 学分`;
+}
 /** 把方案整理成两层的学分系列，并建立课程名索引。 */
-function buildSections(plan: Plan): {
+function buildSections(
+  plan: Plan,
+  directions: Record<string, string> = {},
+): {
   sections: ProgressSection[];
   index: SectionIndex;
   usesRequirements: boolean;
@@ -312,9 +504,18 @@ function buildSections(plan: Plan): {
     "3": "选修课程",
   };
   if (usesRequirements) {
+    // 有些方案（如 2025 物理学院-物理学）没给出三大类总额，但课程组里写了 min/max。
+    const groupById = new Map<string, PlanGroup>();
+    for (const g of plan.groups) groupById.set(g.id.replace(/\./g, "-"), g);
     for (const id of ["1", "2", "3"]) {
       const top = plan.topRequirements.find((t) => t.id === id);
-      const s = makeSection(id, top?.name ?? topNames[id], top ?? {});
+      const group = groupById.get(id);
+      const g = group && group.parent === null ? group : undefined;
+      const s = makeSection(id, top?.name ?? g?.name ?? topNames[id] ?? id, {
+        min: top?.min ?? g?.min,
+        max: top?.max ?? g?.max,
+        unit: top?.unit ?? g?.unit,
+      });
       sections.push(s);
       flat.set(id, s);
     }
@@ -324,6 +525,26 @@ function buildSections(plan: Plan): {
       parent.children.push(s);
       flat.set(r.id, s);
     }
+    // 要求表漏掉、只在课程组里出现的子系列（如物理学院的专业核心课）补回来，
+    // 否则这些课只能挂到大类本身，界面上看不到单独一类。
+    for (const g of plan.groups) {
+      if (!SECOND_LEVEL_GROUP.test(g.id)) continue;
+      const rid = g.id.replace(/\./g, "-");
+      if (flat.has(rid)) continue;
+      const parent = flat.get(rid.split("-")[0]);
+      if (!parent) continue;
+      const s = makeSection(rid, g.name.trim() ? g.name : rid, {
+        requirement: g.requirement,
+        min: g.min,
+        max: g.max,
+        unit: g.unit,
+        note: g.note,
+      });
+      parent.children.push(s);
+      flat.set(rid, s);
+    }
+    for (const top of sections)
+      top.children.sort((a, b) => compareSectionIds(a.id, b.id));
   } else {
     for (const g of plan.groups.filter((g) => g.parent === null)) {
       const s = makeSection(g.id, g.name, g);
@@ -342,6 +563,24 @@ function buildSections(plan: Plan): {
       }
       flat.set(g.id, s);
     }
+  }
+  for (const top of sections) deriveMissingTotals(top);
+
+  // 选定细分方向后，这一类按该方向的学分计，其余方向独有的课不再算进来。
+  const skip = new Set<string>();
+  const touched: ProgressSection[] = [];
+  for (const split of directionSplits(plan)) {
+    const chosen = directions[split.sectionId];
+    if (!chosen) continue;
+    for (const key of applyDirection(split, flat, plan, chosen)) skip.add(key);
+    const top = sections.find((s) =>
+      s.children.some((child) => child.id === split.sectionId),
+    );
+    if (top) touched.push(top);
+  }
+  for (const top of touched) {
+    if (top.min === undefined) continue;
+    recomputeTopTotal(top, top.min, top.max ?? top.min);
   }
 
   const findChild = (re: RegExp) =>
@@ -402,13 +641,14 @@ function buildSections(plan: Plan): {
       const sectionId = sectionForGroup(g, c);
       if (!sectionId || !c.name) continue;
       const key = normalizeCourseName(c.name);
+      if (skip.has(key)) continue;
       if (!byName.has(key))
         byName.set(key, { sectionId, credits: c.credits, via: "name" });
     }
     for (const a of g.alternatives) {
       if (!a.name) continue;
       const key = normalizeCourseName(a.name);
-      if (byName.has(key)) continue;
+      if (byName.has(key) || skip.has(key)) continue;
       const replaced = a.replaces
         ? byName.get(normalizeCourseName(a.replaces))
         : undefined;
@@ -424,26 +664,39 @@ function buildSections(plan: Plan): {
   };
 }
 
+/**
+ * 六级瀑布：手动归类 → 精确名 → 变体基名 → 反向变体 → 公共课关键词 → 课程类别。
+ * 手动归类到此为止，不再从方案回填学分；在修课程也只认用户填的学分，
+ * 因为方案数据里那些行大多没有解析出学分。
+ */
 function assign(
   course: MatchedCourse,
   index: SectionIndex,
   overrides: Overrides,
+  backfill = true,
 ): MatchedCourse {
+  const creditsOf = (fallback: number | null | undefined) =>
+    backfill ? (course.credits ?? fallback ?? null) : course.credits;
   const key = normalizeCourseName(course.name);
   const override = overrides[key];
-  if (override)
-    return {
-      ...course,
-      sectionId: override === IGNORE ? IGNORE : override,
-      via: "override",
-    };
+  if (override) return { ...course, sectionId: override, via: "override" };
+  const assigned = assignByPlan(course, index, creditsOf);
+  return assigned;
+}
+
+function assignByPlan(
+  course: MatchedCourse,
+  index: SectionIndex,
+  creditsOf: (fallback: number | null | undefined) => number | null,
+): MatchedCourse {
+  const key = normalizeCourseName(course.name);
   const exact = index.byName.get(key);
   if (exact)
     return {
       ...course,
       sectionId: exact.sectionId,
       via: exact.via,
-      credits: course.credits ?? exact.credits,
+      credits: creditsOf(exact.credits),
     };
   const base = variantBase(key);
   if (base !== key) {
@@ -453,7 +706,7 @@ function assign(
         ...course,
         sectionId: variant.sectionId,
         via: "variant",
-        credits: course.credits ?? variant.credits,
+        credits: creditsOf(variant.credits),
       };
   }
   for (const [k, v] of index.byName) {
@@ -462,7 +715,7 @@ function assign(
         ...course,
         sectionId: v.sectionId,
         via: "variant",
-        credits: course.credits ?? v.credits,
+        credits: creditsOf(v.credits),
       };
   }
   const publicHit = index.publicChildren.find((p) =>
@@ -483,46 +736,87 @@ function assign(
   return { ...course, sectionId: null, via: null };
 }
 
-export type ProgressOptions = { englishLevel?: EnglishLevel | null };
+export type ProgressOptions = {
+  englishLevel?: EnglishLevel | null;
+  /** 按方向分列的类别，键是 `<方案 id>|<系列 id>` 里的系列 id，值是选定的课程组 id。 */
+  directions?: Record<string, string>;
+  /** 手填学分，键是规范化课程名；已修与在修都以此为准，0 也是有效值。 */
+  manualCredits?: Record<string, number>;
+};
 
-/** 按分级把"大学英语 2～8 学分"固定下来；不足 8 学分的部分方案要求用专业或通识选修补齐，这里按通识教育课计。 */
+/** 原文第 1 条把英语专业学生和留学生排除在分级之外。 */
+function isEnglishExempt(plan: Plan): boolean {
+  const blob = [plan.title, plan.major, plan.track, plan.degree, plan.school]
+    .filter((text): text is string => typeof text === "string")
+    .join(" ");
+  return (
+    blob.includes("留学生") ||
+    (blob.includes("英语") && blob.includes("外国语学院"))
+  );
+}
+/**
+ * 找出该被分级定住的那一类：方案单列了「大学英语」就用它；
+ * 方案把英语折进「公共必修课」时，那一类的区间跨度恰好是英语弹性的 8-2=6。
+ * 候选不唯一就不动，宁可不改。
+ */
+function englishSeries(
+  index: SectionIndex,
+): { section: ProgressSection; named: boolean } | null {
+  const named = [...index.flat.values()].find(
+    (s) =>
+      s.children.length === 0 &&
+      s.min !== undefined &&
+      /大学英语|公共英语|大学外语/.test(s.name),
+  );
+  if (named) return { section: named, named: true };
+  const root = index.flat.get("1");
+  if (!root) return null;
+  const span = ENGLISH_MAX_CREDITS - ENGLISH_MIN_CREDITS;
+  const candidates = root.children.filter(
+    (s) =>
+      s.children.length === 0 &&
+      s.min !== undefined &&
+      s.max !== undefined &&
+      Math.abs(s.max - s.min - span) < 0.001 &&
+      /公共必修|外语|英语/.test(s.name),
+  );
+  return candidates.length === 1
+    ? { section: candidates[0], named: false }
+    : null;
+}
+/**
+ * 分级决定「公共必修课」里大学英语要修多少学分：单列英语系列的直接定成该分档，
+ * 折在公共必修课里的按「下限 +（所选 - 2）」落在方案自己给的区间内。
+ * 之后大类总额按子系列求和、毕业总学分按大类求和，都带方案自述区间的围栏。
+ */
 function applyEnglishLevel(
+  plan: Plan,
   sections: ProgressSection[],
   index: SectionIndex,
   level: EnglishLevel,
 ) {
+  if (isEnglishExempt(plan)) return;
   const info = englishLevelInfo(level);
   if (!info) return;
-  const english = [...index.flat.values()].find(
-    (s) => s.children.length === 0 && /大学英语|英语/.test(s.name),
-  );
-  if (!english || english.min === undefined) return;
-  const full = english.max ?? ENGLISH_FULL_CREDITS;
-  english.min = info.credits;
-  english.max = info.credits;
-  english.requirement = `${info.credits} 学分（${info.label}）`;
-  const shortfall = Math.max(0, full - info.credits);
-  if (shortfall > 0) {
-    const general = index.categoryTargets.general
-      ? index.flat.get(index.categoryTargets.general)
-      : undefined;
-    if (general && general.min !== undefined) {
-      general.min += shortfall;
-      general.max = (general.max ?? general.min - shortfall) + shortfall;
-      general.requirement = `${general.min} 学分（含补齐大学英语 ${shortfall} 学分）`;
-      general.note = "方案允许用专业或通识选修补齐英语差额，这里按通识计";
-    }
-  }
-  const top = sections.find((s) => s.children.includes(english));
-  if (
-    top &&
-    top.min !== undefined &&
-    top.max !== undefined &&
-    top.min !== top.max
-  ) {
-    top.min = top.max;
-    top.requirement = `${top.max} 学分`;
-  }
+  const found = englishSeries(index);
+  if (!found) return;
+  const series = found.section;
+  if (series.min === undefined) return;
+  const floor = series.min;
+  const ceiling = series.max ?? floor;
+  const pinned = found.named
+    ? Math.min(Math.max(info.credits, floor), ceiling)
+    : floor + (info.credits - ENGLISH_MIN_CREDITS);
+  series.min = pinned;
+  series.max = pinned;
+  series.requirement = `${fmtCredits(pinned)} 学分（${info.label}）`;
+  if (!found.named)
+    series.note =
+      `大学英语计入本类，学分要求弹性为 ${ENGLISH_MIN_CREDITS}～${ENGLISH_MAX_CREDITS}；` +
+      `按${info.label}计为 ${fmtCredits(pinned)} 学分`;
+  const top = sections.find((s) => s.children.includes(series));
+  if (!top || top.min === undefined) return;
+  recomputeTopTotal(top, top.min, top.max ?? top.min);
 }
 
 export function computeProgress(
@@ -532,21 +826,27 @@ export function computeProgress(
   overrides: Overrides = {},
   options: ProgressOptions = {},
 ): Progress {
-  const { sections, index, usesRequirements } = buildSections(plan);
-  if (options.englishLevel && usesRequirements)
-    applyEnglishLevel(sections, index, options.englishLevel);
+  const { sections, index, usesRequirements } = buildSections(
+    plan,
+    options.directions ?? {},
+  );
+  if (options.englishLevel)
+    applyEnglishLevel(plan, sections, index, options.englishLevel);
   const seen = new Set<string>();
   const matched: MatchedCourse[] = [];
   scores.forEach((row, i) => {
-    const key = normalizeCourseName(row.kcmc);
-    seen.add(key);
+    const status = scoreStatus(row.xqcj);
+    // 成绩里那些根本不计分的记录（免修、退课、状态异常）不该把教学网本学期的同一门课
+    // 挡在在修之外：学校有时先把还在上的课登进成绩单，桌面端就再也见不到它了。
+    if (status !== "withdrawn" && status !== "other")
+      seen.add(normalizeCourseName(row.kcmc));
     matched.push(
       assign(
         {
           key: `score:${i}`,
           name: row.kcmc,
           credits: decimal(row.xf),
-          status: scoreStatus(row.xqcj),
+          status,
           term: `${row.xnd}·${row.xq}`,
           category: row.kclbmc,
           score: row.xqcj,
@@ -558,12 +858,17 @@ export function computeProgress(
       ),
     );
   });
+  // 与安卓端同一套判据：教学网「当前」分组里的课就是在修，含「习题」的不算独立一门课
+  // （教学网把习题课与正课并排列进来，算上就是重复计数）。已经结业的课在成绩里早有
+  // 记录，按课程名去重时不会重复计入。
   for (const c of courses) {
     if (!c.current) continue;
+    if (/习题/.test(c.name)) continue;
     const key = normalizeCourseName(c.name);
     if (seen.has(key)) continue;
     seen.add(key);
     matched.push(
+      // 教学网课程列表不含学分，在修课程的学分不由方案回填。
       assign(
         {
           key: `course:${c.id}`,
@@ -578,13 +883,17 @@ export function computeProgress(
         },
         index,
         overrides,
+        false,
       ),
     );
   }
   const pending: MatchedCourse[] = [];
   const ignored: MatchedCourse[] = [];
   let unknownCredits = 0;
-  for (const m of matched) {
+  for (const raw of matched) {
+    // 手填过就以手填为准：成绩自带的学分与方案口径不一致时（0 学分课），改了就得生效。
+    const manual = options.manualCredits?.[normalizeCourseName(raw.name)];
+    const m = manual === undefined ? raw : { ...raw, credits: manual };
     if (m.sectionId === IGNORE) {
       ignored.push(m);
       continue;
@@ -604,8 +913,8 @@ export function computeProgress(
       if (m.credits !== null) section.earned += m.credits;
       else unknownCredits += 1;
     } else if (m.status === "inProgress") {
+      // 在修没填学分就只是列出，不计成「缺学分」的方案缺口。
       if (m.credits !== null) section.inProgress += m.credits;
-      else unknownCredits += 1;
     }
   }
   // 父级汇总子级。
@@ -626,7 +935,7 @@ export function computeProgress(
     pending,
     ignored,
     totals: {
-      required: plan.totalCredits?.min ?? null,
+      required: recomputeRequired(plan, sections),
       earned,
       inProgress,
       unknownCredits,
@@ -659,16 +968,43 @@ export type Inference = {
     total: number;
   }[];
   evidence: string[];
+  /** 实际用于限定候选范围的方案 school 值；没有登记院系或没匹配上时为 null。 */
+  narrowedBySchool: string | null;
 };
 function startYear(term: string): number | null {
   const m = /^(\d{2})-\d{2}/.exec(term.trim());
   return m ? 2000 + Number(m[1]) : null;
 }
-/** 从成绩与课程学期推断入学年份，再用专业必修课重合度排出候选方案。 */
+/** 门户登记的「单位」与方案 school 写法不完全一致，如「生命学院」与「生命科学学院」。 */
+function schoolCore(name: string): string {
+  let value = name;
+  for (const suffix of ["学院", "大学", "系", "研究所"])
+    value = value.endsWith(suffix)
+      ? value.slice(0, value.length - suffix.length)
+      : value;
+  return value;
+}
+function sameSchool(a: string | null, b: string | null): boolean {
+  if (!a?.trim() || !b?.trim()) return false;
+  if (a === b) return true;
+  const ca = schoolCore(a);
+  const cb = schoolCore(b);
+  return (
+    ca.length >= 2 &&
+    cb.length >= 2 &&
+    (a.includes(b) ||
+      b.includes(a) ||
+      ca === cb ||
+      ca.startsWith(cb) ||
+      cb.startsWith(ca))
+  );
+}
+/** 从成绩与课程学期推断入学年份，再按门户登记的院系限定范围，用专业必修课重合度排候选。 */
 export function inferProfile(
   scores: GradeCourse[],
   courses: CurrentCourse[],
   index: PlanIndexEntry[] = planIndex,
+  department: string | null = null,
 ): Inference {
   const years: number[] = [];
   for (const s of scores) {
@@ -694,27 +1030,39 @@ export function inferProfile(
   const pool = index.filter(
     (p) => p.kind !== "project" && (version === null || p.cohort === version),
   );
-  const candidates = pool
-    .map((p) => {
-      const core = p.core.map(normalizeCourseName);
-      const matched = core.filter(
-        (n) => taken.has(n) || taken.has(variantBase(n)),
-      ).length;
-      return {
-        id: p.id,
-        title: p.title,
-        school: p.school,
-        matched,
-        total: core.length,
-      };
-    })
-    .filter((c) => c.matched > 0)
-    .sort(
-      (a, b) =>
-        b.matched - a.matched ||
-        b.matched / Math.max(1, b.total) - a.matched / Math.max(1, a.total),
-    )
-    .slice(0, 5);
+  const ranked = (rows: PlanIndexEntry[]) =>
+    rows
+      .map((p) => {
+        const core = p.core.map(normalizeCourseName);
+        return {
+          id: p.id,
+          title: p.title,
+          school: p.school,
+          matched: core.filter((n) => taken.has(n) || taken.has(variantBase(n)))
+            .length,
+          total: core.length,
+        };
+      })
+      .filter((c) => c.matched > 0)
+      .sort(
+        (a, b) =>
+          b.matched - a.matched ||
+          b.matched / Math.max(1, b.total) - a.matched / Math.max(1, a.total),
+      )
+      .slice(0, 5);
+  // 先在登记院系内排序，该院系一门都不重合时退回全校，不做「猜不动就空着」。
+  const school =
+    pool.find((p) => sameSchool(p.school, department))?.school ?? null;
+  let candidates: Inference["candidates"] = [];
+  if (school) {
+    candidates = ranked(pool.filter((p) => p.school === school));
+    if (!candidates.length) {
+      evidence.push(
+        `门户登记院系为“${school}”，但该院系没有重合的专业必修课，改按全校方案排序`,
+      );
+      candidates = ranked(pool);
+    } else evidence.push(`已按门户登记的院系“${school}”限定候选范围`);
+  } else candidates = ranked(pool);
   if (candidates.length) {
     evidence.push(
       `与“${candidates[0].title}”的专业必修课重合 ${candidates[0].matched} 门`,
@@ -727,6 +1075,13 @@ export function inferProfile(
         `“${ties.map((c) => c.title).join("”“")}”重合门数相同，请核对是否选对了专业`,
       );
     }
-  } else evidence.push("没有一门课与任何方案的专业必修课重合，请手动选择专业");
-  return { cohort, version, candidates, evidence };
+  } else
+    evidence.push("已修与在修课程与各方案的专业必修课均无重合，请手动选择专业");
+  return {
+    cohort,
+    version,
+    candidates,
+    evidence,
+    narrowedBySchool: school,
+  };
 }

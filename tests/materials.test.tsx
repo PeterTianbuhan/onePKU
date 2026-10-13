@@ -88,12 +88,12 @@ it("requires confirmation, keeps a failed deletion retryable, and refreshes afte
   fireEvent.click(screen.getByLabelText("讲义.txt 的更多操作"));
   fireEvent.click(screen.getByRole("button", { name: "删除 讲义.txt" }));
   fireEvent.click(
-    screen.getByRole("button", { name: "移到废纸篓", exact: true }),
+    screen.getByRole("button", { name: /^移到(废纸篓|回收站)$/ }),
   );
   await screen.findByRole("alert");
   expect(screen.getByText("讲义.txt")).toBeInTheDocument();
   fireEvent.click(
-    screen.getByRole("button", { name: "移到废纸篓", exact: true }),
+    screen.getByRole("button", { name: /^移到(废纸篓|回收站)$/ }),
   );
   await screen.findByText("还没有本机资料");
   expect(requests.filter((r) => r.kind === "trashLocalMaterial")).toEqual([
@@ -202,7 +202,7 @@ it("merges only the matching download copy and restores download after removing 
   fireEvent.click(school.getByRole("button", { name: "删除 讲义.pdf" }));
   expect(requests.some((r) => r.kind === "trashLocalMaterial")).toBe(false);
   fireEvent.click(
-    school.getByRole("button", { name: "移到废纸篓", exact: true }),
+    school.getByRole("button", { name: /^移到(废纸篓|回收站)$/ }),
   );
   await school.findByRole("button", { name: "下载", exact: true });
   expect(

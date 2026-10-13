@@ -18,6 +18,22 @@ colors:
   hover: "#F3F4F6"
   overlay: "#24272D66"
   scrollbar: "#B8BBC3"
+darkColors:
+  primary: "#C75E71"
+  primary-soft: "#2B2124"
+  text: "#E6E8EC"
+  muted: "#9BA0AA"
+  background: "#16181C"
+  sidebar: "#1E2126"
+  border: "#33373F"
+  success: "#63A985"
+  success-soft: "#1D2A23"
+  warning: "#C79A54"
+  warning-soft: "#2A2418"
+  danger: "#DC6C79"
+  hover: "#24282F"
+  overlay: "#000000A6"
+  scrollbar: "#4A4F58"
 typography:
   sans:
     fontFamily: '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif'
@@ -51,7 +67,9 @@ components:
 
 ## Colors
 
-background 白色承载内容，sidebar 浅灰区分导航，border 仅用于区域边界。primary 表示当前页面、日期和主要动作，primary-soft 用作导航与通知选中底色；success/warning/danger 表示状态并始终配文字。使用系统浅色显示；不宣称暗色支持。焦点为 primary 实线外圈，disabled 降低不透明度但保留可读文字。
+background 白色承载内容，sidebar 浅灰区分导航，border 仅用于区域边界。primary 表示当前页面、日期和主要动作，primary-soft 用作导航与通知选中底色；success/warning/danger 表示状态并始终配文字。焦点为 primary 实线外圈，disabled 降低不透明度但保留可读文字。
+
+深色是同一套语义色的另一组取值（darkColors），挂在 `html[data-theme="dark"]` 上，由 src/lib/theme.ts 按「跟随系统 / 浅色 / 深色」三种模式切换，默认跟随系统；切换写本机偏好并同步原生窗口主题，页面与标题栏不会一个深一个浅。深色下 primary 提亮为 #C75E71 以保持对比，primary-soft 变成带红调的深色面；视频播放器与校历画布本来就是深色底，不随主题变化。两套配色都只改颜色令牌，不新增语义。
 
 ## Typography
 

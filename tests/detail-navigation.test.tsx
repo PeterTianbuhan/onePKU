@@ -3,10 +3,15 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Courses from "../src/pages/Courses";
+import { NotificationProvider } from "../src/lib/notifications";
 import Assignments from "../src/pages/Assignments";
 import { pageLink } from "../src/lib/navigation";
 
-function mount(node: React.ReactNode, data: Record<string, unknown>) {
+function mount(
+  node: React.ReactNode,
+  data: Record<string, unknown>,
+  options: { notifications?: boolean } = {},
+) {
   const requests: string[] = [];
   vi.stubGlobal(
     "fetch",
@@ -32,7 +37,11 @@ function mount(node: React.ReactNode, data: Record<string, unknown>) {
         new QueryClient({ defaultOptions: { queries: { retry: false } } })
       }
     >
-      {node}
+      {options.notifications ? (
+        <NotificationProvider>{node}</NotificationProvider>
+      ) : (
+        node
+      )}
     </QueryClientProvider>,
   );
   return requests;
@@ -45,27 +54,36 @@ afterEach(() => {
 
 it("opens a course as a page focused on replay and returns to the filtered course list", async () => {
   history.replaceState(null, "", `/#${encodeURIComponent("课程")}`);
-  const requests = mount(<Courses login={() => {}} />, {
-    allCourses: [
-      { id: "a", name: "历史课程", current: false, semester: "旧学期" },
-    ],
-    videos: [],
-  });
+  const requests = mount(
+    <Courses login={() => {}} />,
+    {
+      allCourses: [
+        { id: "a", name: "历史课程", current: false, semester: "旧学期" },
+      ],
+      videos: [],
+      haoxueStatus: { connected: true },
+    },
+    { notifications: true },
+  );
   fireEvent.change(screen.getByPlaceholderText("搜索课程"), {
     target: { value: "历史" },
   });
   fireEvent.click(await screen.findByRole("button", { name: /历史课程/ }));
   await screen.findByRole("heading", { level: 1, name: "历史课程" });
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  // 与安卓端一致：课程详情默认落在课程通知，回放要点过去。
   expect(
-    screen.getByRole("button", { name: "课程回放", exact: true }),
-  ).toHaveClass("active");
-  expect(
-    screen.queryByRole("button", { name: "作业", exact: true }),
-  ).not.toBeInTheDocument();
+    screen.getByRole("button", { name: "作业", exact: true }),
+  ).toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "课堂实录" }),
   ).not.toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole("button", { name: "课程回放", exact: true }),
+  );
+  expect(
+    screen.getByRole("button", { name: "课程回放", exact: true }),
+  ).toHaveClass("active");
   expect(requests).toContain("videos");
   expect(requests).not.toContain("content");
   expect(requests).not.toContain("recordings");

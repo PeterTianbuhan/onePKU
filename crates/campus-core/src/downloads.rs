@@ -1,8 +1,8 @@
+use crate::platform::PrivateOpenOptions;
 use super::*;
 use std::{
     fs::OpenOptions,
     io::Write,
-    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -35,9 +35,7 @@ pub struct Job {
 pub(crate) enum DownloadSource {
     File(FileRef),
     Video {
-        course: String,
-        semester: String,
-        video: pku_course::api::VideoInfo,
+        replay: crate::haoxue::ReplayRef,
     },
 }
 pub(crate) struct Task {
@@ -59,7 +57,20 @@ pub fn safe_filename(s: &str) -> Result<String> {
     {
         bail!("invalid filename")
     }
+    #[cfg(windows)]
+    if s.ends_with('.') || s.chars().any(|c| "<>\"|?*".contains(c)) || windows_reserved(s) {
+        bail!("invalid Windows filename");
+    }
     Ok(s.into())
+}
+fn windows_reserved(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        || ["COM", "LPT"].iter().any(|prefix| {
+            stem.strip_prefix(prefix).is_some_and(|suffix| {
+                matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³")
+            })
+        })
 }
 pub(crate) fn allowed_url(s: &str) -> bool {
     url::Url::parse(s).is_ok_and(|u| {
@@ -142,14 +153,17 @@ pub(crate) fn validate_download_root(path: &std::path::Path) -> Result<PathBuf> 
     if !path.is_absolute() {
         bail!("请选择一个完整路径的文件夹");
     }
-    let meta = std::fs::metadata(path).map_err(|_| anyhow!("文件夹不存在或无法访问"))?;
-    if !meta.is_dir() {
-        bail!("所选位置不是文件夹");
+    let meta = std::fs::symlink_metadata(path).map_err(|_| anyhow!("文件夹不存在或无法访问"))?;
+    if !meta.is_dir() || crate::platform::is_link(&meta) {
+        bail!("请选择普通文件夹，不支持链接或重解析点");
     }
     let probe = path.join(format!(".onepku-write-test-{}", rand::random::<u64>()));
-    std::fs::write(&probe, b"").map_err(|_| anyhow!("这个文件夹不可写"))?;
+    let file = std::fs::OpenOptions::new().write(true).create_new(true)
+        .private_mode().open(&probe).map_err(|_| anyhow!("这个文件夹不可写"))?;
+    drop(file);
     let _ = std::fs::remove_file(&probe);
-    Ok(path.canonicalize()?)
+    // Keep ordinary Windows drive/UNC paths usable by Explorer and the folder picker.
+    Ok(dunce::canonicalize(path)?)
 }
 /// 当前生效的保存目录：偏好里有合法值就用它，否则回到默认。
 pub(crate) fn download_root() -> Result<PathBuf> {
@@ -166,10 +180,11 @@ pub(crate) fn download_root() -> Result<PathBuf> {
 }
 pub(crate) fn download_root_info() -> Value {
     let effective = download_root().ok();
-    let default = default_download_root().ok();
+    let normalize = |p: PathBuf| dunce::canonicalize(&p).unwrap_or(p);
+    let is_default = effective.clone().map(normalize) == default_download_root().ok().map(normalize);
     json!({
         "downloadRoot": effective.as_ref().map(|p| p.to_string_lossy().to_string()),
-        "downloadRootIsDefault": effective.is_some() && effective == default,
+        "downloadRootIsDefault": effective.is_some() && is_default,
     })
 }
 pub(crate) fn set_download_root(path: Option<&std::path::Path>) -> Result<Value> {
@@ -185,17 +200,70 @@ pub(crate) fn set_download_root(path: Option<&std::path::Path>) -> Result<Value>
     }
     Ok(download_root_info())
 }
+/// 回放缓存的默认位置：应用缓存目录（Windows 上就在 C 盘用户目录里）。
+pub(crate) fn default_cache_root() -> Result<PathBuf> {
+    Ok(directories::ProjectDirs::from("me", "petertian", "OnePKU")
+        .ok_or_else(|| anyhow!("无法定位回放缓存"))?
+        .cache_dir()
+        .to_path_buf())
+}
+/// 当前生效的缓存目录：设置里选过就用它，否则回到应用缓存目录。
+pub(crate) fn cache_root() -> Result<PathBuf> {
+    if let Some(p) = crate::maintenance::read_preferences()
+        .get("cacheRoot")
+        .and_then(|v| v.as_str())
+    {
+        let path = PathBuf::from(p);
+        if path.is_absolute() && path.is_dir() {
+            return Ok(path);
+        }
+    }
+    default_cache_root()
+}
+pub(crate) fn cache_root_info() -> Value {
+    let effective = cache_root().ok();
+    let normalize = |p: PathBuf| dunce::canonicalize(&p).unwrap_or(p);
+    let is_default = effective.clone().map(normalize)
+        == default_cache_root().ok().map(normalize);
+    json!({
+        "cacheRoot": effective.as_ref().map(|p| p.to_string_lossy().to_string()),
+        "cacheRootIsDefault": effective.is_some() && is_default,
+    })
+}
+/// 换缓存位置：记下新位置，再把旧位置的回放缓存清掉——缓存都是可重下的分片，
+/// 留着只是继续占着原来那块盘。
+pub(crate) fn set_cache_root(path: Option<&std::path::Path>) -> Result<Value> {
+    let previous = cache_root().ok();
+    match path {
+        Some(p) => {
+            let canon = validate_download_root(p)?;
+            std::fs::create_dir_all(&canon)?;
+            crate::maintenance::write_preference(
+                "cacheRoot",
+                Value::String(canon.to_string_lossy().to_string()),
+            )?;
+        }
+        None => crate::maintenance::write_preference("cacheRoot", Value::Null)?,
+    }
+    if let Some(old) = previous.filter(|old| Some(old) != cache_root().ok().as_ref()) {
+        let _ = std::fs::remove_dir_all(old.join("playback-v1"));
+        let _ = std::fs::remove_dir_all(old.join("video-downloads-v1"));
+    }
+    Ok(cache_root_info())
+}
 pub(crate) fn archive_directory(semester: &str, course: &str) -> Result<PathBuf> {
-    let root = download_root()?;
-    Ok(root
+    Ok(archive_directory_at(&download_root()?, semester, course))
+}
+pub(crate) fn archive_directory_at(root: &Path, semester: &str, course: &str) -> PathBuf {
+    root
         .join(folder_component(semester))
-        .join(folder_component(course)))
+        .join(folder_component(course))
 }
 pub(crate) fn folder_component(s: &str) -> String {
     let v: String = s
         .chars()
         .map(|c| {
-            if c.is_control() || "/\\:".contains(c) {
+            if c.is_control() || "/\\:".contains(c) || (cfg!(windows) && "<>\"|?*".contains(c)) {
                 '_'
             } else {
                 c
@@ -203,9 +271,11 @@ pub(crate) fn folder_component(s: &str) -> String {
         })
         .take(65)
         .collect();
-    let v = v.trim().trim_matches('.');
+    let v = v.trim().trim_matches('.').trim();
     if v.is_empty() {
         "课程".into()
+    } else if cfg!(windows) && windows_reserved(v) {
+        format!("_{v}")
     } else {
         v.into()
     }
@@ -243,6 +313,11 @@ async fn cancelled(cancel: &AtomicBool) {
     }
 }
 impl Core {
+    pub(crate) fn replay_download_active(&self, course: &str, video: &str) -> bool {
+        let source = format!("video:{course}:{video}");
+        self.jobs.lock().unwrap().values().any(|j| j.source == source
+            && matches!(j.state["state"].as_str(), Some("queued" | "running")))
+    }
     pub(crate) fn register_files(&self, rows: &mut Vec<Value>) {
         let generation = fingerprint("course");
         for r in rows {
@@ -398,7 +473,7 @@ impl Core {
             r=tokio::time::timeout(Duration::from_secs(seconds),async {
                 match task.source {
                     DownloadSource::File(f)=>self.save_file(id,f,cancel.clone()).await,
-                    DownloadSource::Video{course,semester,video}=>self.save_video(id,&course,&semester,&video,&task.generation,cancel.clone()).await,
+                    DownloadSource::Video{replay}=>self.save_video(id,&replay,&task.generation,cancel.clone()).await,
                 }
             })=>r.map_err(|_|anyhow!("下载超时，请重试")).and_then(|v|v),
             _=cancelled(&cancel)=>Err(anyhow!("cancelled"))
@@ -412,8 +487,16 @@ impl Core {
             }
             Err(e) => {
                 let raw = e.to_string();
-                let message = if raw.starts_with("无法启动 ffmpeg") {
+                let message = if raw.contains("会话已过期") || raw.contains("登录已失效") || raw.contains("未登录") {
+                    "登录已失效，请重新登录教学网后重试"
+                } else if raw.starts_with("无法启动 ffmpeg") {
                     "视频转换需要 ffmpeg，请安装后重试"
+                } else if e.downcast_ref::<reqwest::Error>().is_some_and(|e| e.is_timeout()) {
+                    "下载请求超时，请稍后重试"
+                } else if e.downcast_ref::<reqwest::Error>().is_some() {
+                    "下载服务连接失败，请检查网络后重试"
+                } else if e.downcast_ref::<std::io::Error>().is_some() {
+                    "本地文件写入失败，请检查保存目录权限和磁盘空间后重试"
                 } else if raw.starts_with("视频")
                     || raw.starts_with("回放")
                     || raw.starts_with("当前不是")
@@ -426,7 +509,8 @@ impl Core {
                 } else {
                     "下载未完成，请刷新来源后重试"
                 };
-                json!({"state":"failed","message":message})
+                let previous = self.jobs.lock().unwrap().get(id).map(|j| j.state.clone()).unwrap_or_default();
+                json!({"state":"failed","message":message,"bytes":previous["bytes"],"completed":previous["completed"],"segments":previous["segments"]})
             }
         };
         if let Some(j) = self.jobs.lock().unwrap().get_mut(id) {
@@ -473,36 +557,31 @@ impl Core {
         course: &str,
         video_id: &str,
     ) -> Result<Value> {
-        let c = self.find_course(course).await?;
-        let video = self
-            .course_api()?
-            .list_videos(course, c["name"].as_str().unwrap_or("课程"))
-            .await?
-            .into_iter()
-            .find(|v| v.hash_id == video_id)
-            .ok_or_else(|| anyhow!("回放已变化，请刷新列表"))?;
-        let semester = c["semester"].as_str().unwrap_or("未标注学期").to_string();
+        let replay = crate::haoxue::replay_ref(course, video_id).await?;
         self.enqueue_download(
             format!("video:{course}:{video_id}"),
-            format!("{} · {}", video.course_name, video.time),
-            DownloadSource::Video {
-                course: course.into(),
-                semester,
-                video,
-            },
+            format!("{} · {}", replay.name, replay.time),
+            DownloadSource::Video { replay },
         )
     }
     async fn save_video(
         &self,
         id: &str,
-        course: &str,
-        semester: &str,
-        video: &pku_course::api::VideoInfo,
+        replay: &crate::haoxue::ReplayRef,
         generation: &str,
         cancel: Arc<AtomicBool>,
     ) -> Result<String> {
-        let api = self.course_api()?;
-        let dir = archive_directory(semester, &format!("{} {}", video.course_name, course))?
+        let lesson = crate::haoxue::Haoxue::from_session()?;
+        // 播放列表地址会过期，队列里只存课程与课次标识，这里再向好学取一次。
+        let media = lesson.replay(&replay.course, &replay.episode).await?;
+        let playlist = media
+            .sources
+            .first()
+            .ok_or_else(|| anyhow!("该课堂没有可用的录像地址"))?
+            .url
+            .clone();
+        let api = self.course_api()?.with_media_token(&lesson.cookie_token);
+        let dir = archive_directory(&replay.semester, &format!("{} {}", replay.name, replay.course))?
             .join("课程回放");
         std::fs::create_dir_all(&dir)?;
         let temp = dir.join(format!(".onepku-{id}.mp4"));
@@ -513,6 +592,15 @@ impl Core {
             }
         }
         let _cleanup = Cleanup(temp.clone());
+        let account = self.course_account(generation).await.unwrap_or_else(|_| generation.into());
+        let resume = playback::shared_cache_root(&account, &replay.course, &replay.episode)?;
+        let playback_cache = playback::adopt_account_cache(
+            &cache_root()?.join("playback-v1"),
+            &accounts::root()?,
+            &account,
+            &replay.course,
+            &replay.episode,
+        )?;
         let ffmpeg = [
             "/opt/homebrew/bin/ffmpeg",
             "/usr/local/bin/ffmpeg",
@@ -522,21 +610,30 @@ impl Core {
         .map(PathBuf::from)
         .find(|p| p.is_file())
         .unwrap_or_else(|| PathBuf::from("ffmpeg"));
-        api.download_video_to(video,&temp,&ffmpeg,&cancel,|p| {if generation!=fingerprint("course") {cancel.store(true,Ordering::Relaxed);}if let Some(j)=self.jobs.lock().unwrap().get_mut(id) {j.state=json!({"state":"running","phase":p.phase,"bytes":p.bytes,"completed":p.completed,"segments":p.total});}}).await?;
+        api.download_media_at(&playlist,&temp,&resume,&ffmpeg,&cancel,|p| {if generation!=fingerprint("course") {cancel.store(true,Ordering::Relaxed);}if let Some(j)=self.jobs.lock().unwrap().get_mut(id) {j.state=json!({"state":"running","phase":p.phase,"bytes":p.bytes,"completed":p.completed,"segments":p.total});}},
+            |signature, legacy, count, shared| playback::reuse_playback_parts(&playback_cache,shared,&replay.course,&replay.episode,signature,legacy,count)).await?;
         if cancel.load(Ordering::Relaxed) || generation != fingerprint("course") {
             bail!("cancelled")
         }
         let filename = format!(
-            "{} {}.mp4",
-            folder_component(&video.title),
-            folder_component(&video.time)
+            "{}.mp4",
+            folder_component(
+                &vec![replay.title.as_str(), replay.time.as_str()]
+                    .into_iter()
+                    .filter(|text| !text.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
         );
         let hash = file_digest(&temp)?;
         if cancel.load(Ordering::Relaxed) || generation != fingerprint("course") {
             bail!("cancelled")
         }
         let path = finish_archive(&temp, &dir, &filename, &hash)?;
-        let meta = json!({"title":video.title,"time":video.time,"course":course,"semester":semester,"source":"教学网课堂实录","recordingId":video.hash_id,"sha256":hash,"downloadedAt":chrono::Utc::now().to_rfc3339()});
+        // 成片已经落盘，下载用的分片就只是重复占空间的残渣：连空掉的长名目录一起收掉。
+        let _ = std::fs::remove_dir_all(&resume);
+        playback::prune_empty(&resume);
+        let meta = json!({"title":replay.title,"time":replay.time,"course":replay.course,"semester":replay.semester,"source":"好学课堂实录","recordingId":replay.episode,"sha256":hash,"downloadedAt":chrono::Utc::now().to_rfc3339()});
         let sidecar = path.with_file_name(format!(
             "{}.source.json",
             path.file_name().unwrap().to_string_lossy()
@@ -544,7 +641,7 @@ impl Core {
         match OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .private_mode()
             .open(sidecar)
         {
             Ok(mut f) => {
@@ -592,18 +689,17 @@ impl Core {
             &f.name,
             mime,
         )?;
-        let mut dir = download_root()?;
-        if !f.course.is_empty() {
-            dir = dir
-                .join(folder_component(&f.semester))
-                .join(folder_component(&f.course));
-        }
+        let dir = if f.course.is_empty() {
+            download_root()?
+        } else {
+            archive_directory(&f.semester, &f.course)?
+        };
         std::fs::create_dir_all(&dir)?;
         let temp = dir.join(format!(".onepku-{id}.part"));
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .private_mode()
             .open(&temp)?;
         struct Cleanup(PathBuf);
         impl Drop for Cleanup {
@@ -643,7 +739,7 @@ impl Core {
         match OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .private_mode()
             .open(sidecar)
         {
             Ok(mut out) => {
@@ -661,9 +757,26 @@ impl Core {
             .lock()
             .unwrap()
             .get(id)
+            .filter(|job| job.generation == fingerprint("course"))
             .ok_or_else(|| anyhow!("missing job"))?
             .state
             .clone())
+    }
+    pub(crate) async fn download_retry(self: &Arc<Self>, id: &str) -> Result<Value> {
+        let source = {
+            let jobs = self.jobs.lock().unwrap();
+            let job = jobs.get(id).filter(|j| j.generation == fingerprint("course"))
+                .ok_or_else(|| anyhow!("下载记录已过期，请从课程重新下载"))?;
+            if !matches!(job.state["state"].as_str(), Some("failed" | "cancelled")) {
+                bail!("此下载无需重试");
+            }
+            job.source.clone()
+        };
+        if let Some(id) = source.strip_prefix("file:") { return self.download(id); }
+        if let Some((course, video)) = source.strip_prefix("video:").and_then(|s| s.split_once(':')) {
+            return self.download_video(course, video).await;
+        }
+        bail!("下载来源已失效，请刷新课程")
     }
     pub(crate) fn downloads(&self) -> Value {
         let jobs = self.jobs.lock().unwrap();
@@ -697,6 +810,26 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn windows_device_names_are_recognized_without_rejecting_ordinary_names() {
+        for name in ["CON", "con.txt", "NUL.json", "AUX", "COM1", "LPT9.txt", "COM¹.txt", "con .txt"] {
+            assert!(windows_reserved(name), "{name}");
+        }
+        for name in ["课程.pdf", "console.txt", "COM10.txt", "LPT0", "auxiliary.md"] {
+            assert!(!windows_reserved(name), "{name}");
+        }
+    }
+    #[cfg(windows)]
+    #[test]
+    fn windows_archive_names_cannot_target_devices_or_alternate_streams() {
+        for name in ["CON.txt", "NUL", "name:stream", "a?b.txt", "a*b.txt", "a|b", "a\"b", "trailing."] {
+            assert!(safe_filename(name).is_err(), "{name}");
+        }
+        assert_eq!(safe_filename("讲义 & 100%.pdf").unwrap(), "讲义 & 100%.pdf");
+        assert_eq!(folder_component("CON"), "_CON");
+        assert_eq!(folder_component("课程 <一> | ?"), "课程 _一_ _ _");
+    }
+
     #[test]
     fn download_root_validation_rejects_relative_missing_and_files() {
         let dir = tempfile::tempdir().unwrap();

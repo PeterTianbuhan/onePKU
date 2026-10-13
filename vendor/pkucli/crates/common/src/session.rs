@@ -5,6 +5,7 @@ use directories::ProjectDirs;
 use reqwest_cookie_store::CookieStoreMutex;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::{
     fs,
@@ -94,13 +95,14 @@ impl Store {
         let path = self.session_path();
         let data = serde_json::to_vec_pretty(session)?;
         let temp = path.with_extension(format!("{}.tmp", rand::random::<u64>()));
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temp)?;
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut f = options.open(&temp)?;
         f.write_all(&data)?;
         f.sync_all()?;
+        drop(f);
         fs::rename(temp, &path)?;
         Ok(())
     }
@@ -122,11 +124,11 @@ impl Store {
         let path = self.cookies_path();
         let temp = path.with_extension(format!("{}.tmp", rand::random::<u64>()));
         let result = (|| -> Result<()> {
-            let file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&temp)?;
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.mode(0o600);
+            let file = options.open(&temp)?;
             let guard = store
                 .lock()
                 .map_err(|_| anyhow::anyhow!("锁定 cookie store 失败"))?;
@@ -135,6 +137,7 @@ impl Store {
                 .map_err(|_| anyhow::anyhow!("序列化 cookie 文件失败"))?;
             writer.flush()?;
             writer.get_ref().sync_all()?;
+            drop(writer);
             fs::rename(&temp, &path)?;
             Ok(())
         })();
@@ -152,5 +155,36 @@ impl Store {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_updates_replace_the_file_and_leave_no_temporary_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store { root: dir.path().to_path_buf() };
+        store.save_session(&Session::new("synthetic-first-token".into())).unwrap();
+        store.save_session(&Session::new("synthetic-second-token".into())).unwrap();
+        assert_eq!(store.load_session().unwrap().unwrap().token, "synthetic-second-token");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(store.session_path()).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+    }
+
+    #[test]
+    fn cookie_updates_can_replace_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store { root: dir.path().to_path_buf() };
+        let cookies = Arc::new(CookieStoreMutex::new(CookieStore::default()));
+        store.save_cookie_store(&cookies).unwrap();
+        store.save_cookie_store(&cookies).unwrap();
+        assert!(store.load_cookie_store().is_ok());
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 }

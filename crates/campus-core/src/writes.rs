@@ -1,10 +1,12 @@
 //! Explicit user-triggered writes. Durable records prevent automatic resends.
+use crate::platform::PrivateOpenOptions;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use super::*;
 use fs2::FileExt;
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 const MAX_FILE: u64 = 25 * 1024 * 1024;
@@ -54,7 +56,7 @@ fn root() -> Result<PathBuf> {
 }
 fn private_dir(path: &Path) -> Result<()> {
     fs::create_dir_all(path)?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    platform::private_directory(path)?;
     Ok(())
 }
 struct Journal {
@@ -70,7 +72,7 @@ impl Journal {
             .write(true)
             .create(true)
             .truncate(false)
-            .mode(0o600)
+            .private_mode()
             .open(root.join("journal.lock"))?;
         lock.lock_exclusive()?;
         let path = root.join("operations.json");
@@ -97,12 +99,12 @@ impl Journal {
         let mut f = OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .private_mode()
             .open(&path)?;
         f.write_all(&serde_json::to_vec(&self.rows)?)?;
         f.sync_all()?;
-        fs::rename(&path, self.root.join("operations.json"))?;
-        File::open(&self.root)?.sync_all()?;
+        drop(f);
+        platform::replace_durable(&path, &self.root.join("operations.json"))?;
         Ok(())
     }
     fn prune(&mut self) -> bool {
@@ -223,7 +225,7 @@ impl Core {
             let mut out = OpenOptions::new()
                 .write(true)
                 .create_new(true)
-                .mode(0o600)
+                .private_mode()
                 .open(&dest)?;
             let mut b = [0u8; 65536];
             let mut hash = Sha256::new();
@@ -496,7 +498,7 @@ impl Core {
                 .write(true)
                 .create(true)
                 .truncate(false)
-                .mode(0o600)
+                .private_mode()
                 .open(r.join("runtime.lock"))?;
             f.try_lock_exclusive()?;
             Ok(f)
@@ -574,6 +576,7 @@ mod tests {
             ));
             assert_eq!(j.rows["fixture"].state, "sending");
         }
+        #[cfg(unix)]
         assert_eq!(
             fs::metadata(dir.path().join("operations.json"))
                 .unwrap()

@@ -34,42 +34,74 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
-it("keeps missing submission data out of the pending-work filter", async () => {
+it("filters assignments with the same categories as the Android app", async () => {
   const base = {
     course_name: "测试课",
     course_id: "_1_1",
     content_id: "_2_1",
-    deadline: null,
     deadline_raw: null,
-    last_attempt: null,
     attachments: [],
     descriptions: [],
+    detail_error: false,
+    last_attempt: null,
+    deadline: null,
   };
+  const past = new Date(Date.now() - 86_400_000).toISOString();
+  const future = new Date(Date.now() + 86_400_000).toISOString();
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => ({
       ok: true,
       json: async () =>
         env([
-          { ...base, hash_id: "a", title: "待处理作业", detail_error: false },
-          { ...base, hash_id: "b", title: "暂未获取详情", detail_error: true },
+          { ...base, hash_id: "a", title: "还没到的作业", deadline: future },
+          {
+            ...base,
+            hash_id: "b",
+            title: "交过的作业",
+            deadline: past,
+            last_attempt: "1 次",
+          },
+          { ...base, hash_id: "c", title: "过期的作业", deadline: past },
+          { ...base, hash_id: "d", title: "暂未获取详情", detail_error: true },
         ]),
     })),
   );
   mount(<AssignmentWorkspace login={() => {}} />);
-  await screen.findByRole("button", { name: /待处理作业/ });
-  fireEvent.change(screen.getByRole("combobox", { name: "作业状态" }), {
-    target: { value: "pending" },
-  });
+  // 默认停在「待交」；没有截止时间的作业也按待交处理，与安卓端一致。
+  await screen.findByRole("button", { name: /暂未获取详情/ });
   expect(
-    screen.queryByRole("button", { name: /暂未获取详情/ }),
+    screen.getByRole("button", { name: /还没到的作业/ }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /交过的作业/ }),
   ).not.toBeInTheDocument();
-  fireEvent.change(screen.getByRole("combobox", { name: "作业状态" }), {
-    target: { value: "unknown" },
-  });
+  expect(
+    screen.queryByRole("button", { name: /过期的作业/ }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "已提交" }));
+  expect(
+    screen.getAllByRole("button", { name: /交过的作业/ }).length,
+  ).toBeGreaterThan(0);
+  expect(
+    screen.queryByRole("button", { name: /还没到的作业/ }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "已截止" }));
+  expect(
+    screen.getAllByRole("button", { name: /过期的作业/ }).length,
+  ).toBeGreaterThan(0);
+  expect(
+    screen.queryByRole("button", { name: /交过的作业/ }),
+  ).not.toBeInTheDocument();
+  // 「全部」按最近截止排前面，读不到详情的仍然只标成「状态待核对」。
+  fireEvent.click(screen.getByRole("tab", { name: "全部" }));
+  const titles = [
+    ...document.querySelectorAll(".assignment-choice strong"),
+  ].map((el) => el.textContent);
+  expect(titles[0]).toBe("还没到的作业");
   expect(
     screen.getByRole("button", { name: /暂未获取详情/ }),
-  ).toBeInTheDocument();
+  ).toHaveTextContent("状态待核对");
 });
 it("requests the reservation account without affecting teaching login", async () => {
   const login = vi.fn();

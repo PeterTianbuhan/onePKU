@@ -20,7 +20,7 @@ export function AssignmentDetails({
       {a.attachments
         .filter((f) => f.name.trim())
         .map((f, i) => (
-          <AttachmentRow key={i} file={f} />
+          <AttachmentRow key={i} file={f} course={a.course_id} />
         ))}
     </>
   );

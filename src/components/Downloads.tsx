@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download, FileCheck2, LoaderCircle, X } from "lucide-react";
+import { Download, FileCheck2, LoaderCircle, RotateCcw, X } from "lucide-react";
 import { action } from "../lib/api";
 import { Modal, Button } from "./ui";
 type Job = {
@@ -17,6 +17,8 @@ type Job = {
 };
 export default function Downloads() {
   const [open, setOpen] = useState(false);
+  const [retrying, setRetrying] = useState<string | null>(null);
+  const [error, setError] = useState("");
   const q = useQuery({
     queryKey: ["downloads"],
     queryFn: () => action<Job[]>({ kind: "downloads" }),
@@ -47,6 +49,7 @@ export default function Downloads() {
         open={open}
         onClose={() => setOpen(false)}
       >
+        {error && <p role="alert">{error}</p>}
         {jobs.map((j) => (
           <div className="download-record" key={j.id}>
             {["running", "queued"].includes(j.state) ? (
@@ -73,6 +76,12 @@ export default function Downloads() {
                             ? "已取消"
                             : (j.message ?? "下载失败")}
               </small>
+              {j.state === "failed" && !!j.completed && (
+                <small>
+                  已完成 {j.completed} / {j.segments}{" "}
+                  个分片，重试时复用完整分片。
+                </small>
+              )}
             </div>
             {["running", "queued"].includes(j.state) && (
               <Button
@@ -84,6 +93,31 @@ export default function Downloads() {
                 }
               >
                 <X size={14} />
+              </Button>
+            )}
+            {["failed", "cancelled"].includes(j.state) && (
+              <Button
+                aria-label={`重试下载 ${j.name}`}
+                disabled={retrying !== null}
+                onClick={async () => {
+                  setRetrying(j.id);
+                  setError("");
+                  try {
+                    await action({ kind: "downloadRetry", id: j.id });
+                    await q.refetch();
+                  } catch (e) {
+                    setError(
+                      e instanceof Error
+                        ? e.message
+                        : "重试失败，请从课程重新下载",
+                    );
+                  } finally {
+                    setRetrying(null);
+                  }
+                }}
+              >
+                <RotateCcw size={14} />
+                重试
               </Button>
             )}
           </div>

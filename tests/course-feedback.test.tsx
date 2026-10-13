@@ -81,12 +81,18 @@ it("opens the exact course announcement original and shares read state with the 
   );
   await screen.findByText("1 条未读");
   fireEvent.click(await screen.findByRole("button", { name: /课程微信群/ }));
+  // 与安卓端一致：先在应用内读正文，原文窗口要再点一次。
+  expect(open).not.toHaveBeenCalled();
+  await screen.findByText(
+    "这条通知的正文未提取到，请打开教学网查看图片或附件。",
+  );
+  await screen.findByText("0 条未读");
+  fireEvent.click(screen.getByRole("button", { name: "在原文窗口打开" }));
   expect(open).toHaveBeenCalledWith(
     notice.announcement.url,
     "_blank",
     "noopener,noreferrer",
   );
-  await screen.findByText("0 条未读");
   await waitFor(() =>
     expect(localStorage.getItem("onepku.news.read.v1")).toContain(
       noticeKey(notice, "test"),

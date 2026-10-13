@@ -24,6 +24,7 @@ import {
   PanelLeftOpen,
 } from "lucide-react";
 import { call, resetService, type Service } from "./lib/api";
+import { listen } from "@tauri-apps/api/event";
 import type { Login } from "./components/ui";
 import Auth from "./components/Auth";
 import Downloads from "./components/Downloads";
@@ -118,6 +119,16 @@ export default function App() {
     scope?: "treehole" | "timetable";
   }>();
   const queryClient = useQueryClient();
+  // 课堂实录的登录窗口是自己关的：登录成功就刷新所有资源，回放列表立刻出现。
+  useEffect(() => {
+    let dispose: (() => void) | undefined;
+    void listen("haoxue-connected", () => {
+      void queryClient.invalidateQueries({ queryKey: ["resource"] });
+    }).then((unlisten) => {
+      dispose = unlisten;
+    });
+    return () => dispose?.();
+  }, [queryClient]);
   useEffect(() => {
     let date = new Date().toLocaleDateString("en-CA", {
       timeZone: "Asia/Shanghai",

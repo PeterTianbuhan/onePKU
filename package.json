@@ -1,8 +1,11 @@
 {
   "name": "onepku",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.12.2",
   "type": "module",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "tsc -b && vite build",

@@ -1,11 +1,18 @@
 import ReplayPlayer, { type Replay } from "../components/ReplayPlayer";
 import { useEffect, useState } from "react";
+import { AssignmentWorkspace } from "./Assignments";
 import CourseNotices from "../components/CourseNotices";
 import LearningGrades from "../components/LearningGrades";
 import LocalMaterials from "../components/LocalMaterials";
 import CourseReviews from "../components/CourseReviews";
 import { ArrowLeft, BookOpen, ChevronRight, Play } from "lucide-react";
-import { useResource, openOfficial, type Course } from "../lib/api";
+import {
+  action,
+  connectHaoxue,
+  openOfficial,
+  useResource,
+  type Course,
+} from "../lib/api";
 import {
   Button,
   Empty,
@@ -102,7 +109,12 @@ export default function Courses({ login }: { login: Login }) {
                     open={!!search.trim() || termIndex === 0}
                   >
                     <summary className="course-semester-heading">
-                      <h3>{term}</h3>
+                      <h3>
+                        {term}
+                        {rows.some((c) => c.current) && (
+                          <span className="badge">本学期</span>
+                        )}
+                      </h3>
                       <span>{rows.length} 门课程</span>
                     </summary>
                     <div className="course-grid">
@@ -141,7 +153,8 @@ function CourseDetail({
   login: Login;
 }) {
   const [params, navigate] = usePageParams("课程");
-  const tab = params.get("tab") ?? "videos";
+  // 与安卓端一致：默认落在课程通知；只有深链带着回放参数时才直接进回放。
+  const tab = params.get("tab") ?? (params.get("video") ? "videos" : "notices");
   const setTab = (value: string) => navigate({ tab: value, video: null });
   const [search, setSearch] = useState("");
 
@@ -170,6 +183,12 @@ function CourseDetail({
           课程通知
         </button>
         <button
+          className={tab === "assignments" ? "active" : ""}
+          onClick={() => setTab("assignments")}
+        >
+          作业
+        </button>
+        <button
           className={tab === "materials" ? "active" : ""}
           onClick={() => setTab("materials")}
         >
@@ -188,7 +207,9 @@ function CourseDetail({
           教学网成绩
         </button>
       </div>
-      {tab === "materials" ? (
+      {tab === "assignments" ? (
+        <AssignmentWorkspace login={login} course={course.id} />
+      ) : tab === "materials" ? (
         <>
           <Search value={search} onChange={setSearch} placeholder="搜索资料" />
           <LocalMaterials course={course.id} search={search} login={login} />
@@ -204,22 +225,151 @@ function CourseDetail({
   );
 }
 
+type Candidate = {
+  courseId: string;
+  name: string;
+  teacher: string;
+  college: string;
+  term: string;
+};
+
 function Videos({ course, login }: { course: Course; login: Login }) {
-  const q = useResource<Replay[]>({ kind: "videos", course: course.id });
-  const [playing, setPlaying] = useState<Replay>();
+  // 回放只要好学源：直接拿课名去课堂实录查，不再要求连接教学网。
+  const q = useResource<Replay[]>({ kind: "videos", course: course.name });
+  const haoxue = useResource<{ connected: boolean }>({ kind: "haoxueStatus" });
+  const connected = haoxue.data?.data?.connected ?? false;
+  const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState("");
+  const [playing, setPlaying] = useState<{
+    video: Replay;
+    generation: string;
+  }>();
   const [params, navigate] = usePageParams("课程");
+
   const videoId = params.get("video");
+  const ambiguous = q.data?.error?.code === "haoxueAmbiguous";
+  const candidates = useResource<Candidate[]>(
+    { kind: "haoxueCandidates", name: course.name },
+    ambiguous,
+  );
+  const [pickError, setPickError] = useState("");
+  function pick(candidate: Candidate) {
+    setPickError("");
+    void action({
+      kind: "setHaoxueCourse",
+      name: course.name,
+      id: candidate.courseId,
+    })
+      .then(() => void q.refetch())
+      .catch(() => setPickError("选择未能保存，请重试"));
+  }
   useEffect(() => {
-    setPlaying(q.data?.data?.find((video) => video.hash_id === videoId));
-  }, [videoId, q.data?.data]);
+    setPlaying((current) => {
+      if (!videoId) return undefined;
+      // A list refresh must not end an already-open playback session. Keep its
+      // snapshot until navigation or an account change selects another session.
+      const generation = q.data?.generation;
+      if (
+        current?.video.hash_id === videoId &&
+        (!generation || current.generation === generation)
+      )
+        return current;
+      const video = q.data?.data?.find((item) => item.hash_id === videoId);
+      return video ? { video, generation: generation ?? "" } : undefined;
+    });
+  }, [videoId, q.data?.data, q.data?.generation]);
+  function connect() {
+    setConnectError("");
+    setConnecting(true);
+    void connectHaoxue()
+      .catch((error: unknown) =>
+        setConnectError(
+          error instanceof Error ? error.message : "无法打开认证窗口",
+        ),
+      )
+      .finally(() => {
+        setConnecting(false);
+        void haoxue.refetch();
+        // 列表也可能停在「课堂实录登录已失效」上，连上就重新取一次。
+        void q.refetch();
+      });
+  }
+  if (!connected && !haoxue.data?.error && !haoxue.isFetching) {
+    return (
+      <>
+        <Empty>
+          课程回放由课堂实录提供。连接后这门课的每节课堂都能直接播放。
+        </Empty>
+        <Button
+          variant="primary"
+          disabled={connecting}
+          onClick={() => void connect()}
+        >
+          连接课堂实录
+        </Button>
+        {connectError && (
+          <p className="inline-error" role="alert">
+            {connectError}
+          </p>
+        )}
+      </>
+    );
+  }
+  if (ambiguous) {
+    return (
+      <section className="resource resource-plain" aria-label="同名课程选择">
+        <div className="resource-head">
+          <h2>课程回放</h2>
+        </div>
+        <p>
+          好学上有几门同名的「{course.name}
+          」，认一次你上的那一门就好，以后会直接用这一门：
+        </p>
+        <Resource
+          title="同名候选"
+          q={candidates}
+          login={login}
+          className="resource-plain"
+        >
+          {(rows) =>
+            rows.length ? (
+              <div className="video-list">
+                {rows.map((c) => (
+                  <button
+                    key={c.courseId}
+                    className="assignment-choice"
+                    onClick={() => pick(c)}
+                  >
+                    <strong>{c.name}</strong>
+                    <small>
+                      {[c.teacher, c.college, c.term]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </small>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <Empty>候选列表暂不可用，请刷新重试</Empty>
+            )
+          }
+        </Resource>
+        {pickError && (
+          <p className="inline-error" role="alert">
+            {pickError}
+          </p>
+        )}
+      </section>
+    );
+  }
   return (
     <>
       {playing && (
         <ReplayPlayer
-          key={`${course.id}:${playing.hash_id}:${q.data?.generation}`}
+          key={`${playing.video.courseId ?? course.id}:${playing.video.hash_id}:${playing.generation}`}
           course={course.id}
-          video={playing}
-          generation={q.data?.generation ?? ""}
+          video={playing.video}
+          generation={playing.generation}
           close={() => {
             setPlaying(undefined);
             navigate({ video: null });
@@ -231,11 +381,22 @@ function Videos({ course, login }: { course: Course; login: Login }) {
           title="课程回放"
           q={q}
           login={login}
-          service="course"
-          officialTarget="course"
           className="resource-plain"
           heading={
-            <span className="subtle">{q.data?.data?.length ?? 0} 节回放</span>
+            <span className="subtle">
+              课堂实录 · {q.data?.data?.length ?? 0} 节回放
+            </span>
+          }
+          extra={
+            q.data?.error?.code === "haoxueAuth" ? (
+              <Button
+                variant="primary"
+                disabled={connecting}
+                onClick={() => void connect()}
+              >
+                连接课堂实录
+              </Button>
+            ) : undefined
           }
         >
           {(videos) =>
@@ -248,11 +409,14 @@ function Videos({ course, login }: { course: Course; login: Login }) {
                     icon={<Play size={18} />}
                     request={{
                       kind: "downloadVideo",
-                      course: course.id,
+                      course: v.courseId ?? course.id,
                       video: v.hash_id,
                     }}
                     extra={
-                      <Button variant="primary" onClick={() => setPlaying(v)}>
+                      <Button
+                        variant="primary"
+                        onClick={() => navigate({ video: v.hash_id })}
+                      >
                         播放
                       </Button>
                     }
@@ -260,10 +424,17 @@ function Videos({ course, login }: { course: Course; login: Login }) {
                 ))}
               </div>
             ) : (
-              <Empty>该课程回放列表暂未列出视频，可在教学网核对。</Empty>
+              <Empty>
+                这门课在课堂实录里还没有可播放的回放（课程目录和本学期的课堂记录都查过）。
+              </Empty>
             )
           }
         </Resource>
+      )}
+      {connectError && (
+        <p className="inline-error" role="alert">
+          {connectError}
+        </p>
       )}
     </>
   );

@@ -32,6 +32,8 @@ impl Core {
         let core = Arc::new(Self::default());
         core.restore_cache();
         core.recover_writes();
+        // 旧版本清缓存留下的空目录与 `.cleared` 标记，启动时收一次。
+        crate::playback::sweep_leftovers();
         // Bind existing subtitles before the user next changes login credentials.
         let initial = core.clone();
         std::thread::spawn(move || {
@@ -177,6 +179,15 @@ impl Core {
             json!({"service":name,"state":state,"generation":generation,"verifiedAt":h.and_then(|h|h.verified.clone()),"message":h.and_then(|h|h.error.clone())})
         }))
     }
+    /// 断开某个服务的登录。只清这个服务的会话与 cookie，本机缓存留给下次登录。
+    pub(crate) fn service_logout(service: &str) -> Result<Value> {
+        let store = Store::new(match service {
+            "course" | "treehole" | "campuscard" | "bdkj" => service,
+            _ => bail!("invalid service"),
+        })?;
+        store.clear()?;
+        Ok(json!({ "state": "loggedOut", "service": service }))
+    }
     pub(crate) fn save_preference(&self, enabled: bool) -> Result<()> {
         write_preference("keepAlive", json!(enabled))?;
         self.keep_alive.store(enabled, Ordering::Relaxed);
@@ -198,6 +209,54 @@ impl Core {
         }
         write_preference("profile", profile.clone())?;
         Ok(profile.clone())
+    }
+    /// 成绩口径：手动纳入与排除的课程键（「学期|课名」）。只存本机，不含凭证。
+    pub(crate) fn grades_scope() -> Value {
+        read_preferences()
+            .get("gradesScope")
+            .cloned()
+            .filter(Value::is_object)
+            .unwrap_or_else(|| json!({ "included": [], "excluded": [] }))
+    }
+    pub(crate) fn save_grades_scope(&self, scope: &Value) -> Result<Value> {
+        if !scope.is_object() {
+            bail!("成绩口径格式不正确");
+        }
+        let list = |key: &str| -> Result<Vec<String>> {
+            match scope.get(key) {
+                None | Some(Value::Null) => Ok(vec![]),
+                Some(Value::Array(items)) => {
+                    let mut out: Vec<String> = vec![];
+                    for item in items {
+                        // 条目不合格就跳过：坏数据不该让整次调整作废。
+                        let Some(text) = item
+                            .as_str()
+                            .map(str::trim)
+                            .filter(|t| !t.is_empty() && t.chars().count() <= 200)
+                        else {
+                            continue;
+                        };
+                        if !out.iter().any(|kept| kept == text) {
+                            out.push(text.to_string());
+                        }
+                    }
+                    Ok(out)
+                }
+                _ => bail!("成绩口径格式不正确"),
+            }
+        };
+        let included = list("included")?;
+        // 同一门课不能既纳入又排除，以纳入为准。
+        let excluded = list("excluded")?
+            .into_iter()
+            .filter(|key| !included.iter().any(|kept| kept == key))
+            .collect::<Vec<_>>();
+        if included.len() + excluded.len() > 2000 {
+            bail!("成绩口径调整过多，请先清理");
+        }
+        let clean = json!({ "included": included, "excluded": excluded });
+        write_preference("gradesScope", clean.clone())?;
+        Ok(clean)
     }
 }
 pub(crate) fn read_preferences() -> serde_json::Map<String, Value> {
@@ -222,6 +281,22 @@ pub(crate) fn write_preference(key: &str, value: Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn grade_scope_keeps_only_valid_keys() {
+        let core = Core::default();
+        let clean = core
+            .save_grades_scope(&json!({
+                "included": ["25-26-1|编译原理", "25-26-1|编译原理", "", 7],
+                "excluded": ["25-26-2|体育", "25-26-1|编译原理"],
+            }))
+            .unwrap();
+        assert_eq!(clean["included"].as_array().unwrap().len(), 1);
+        // 同一门课不能既纳入又排除，以纳入为准。
+        assert_eq!(clean["excluded"].as_array().unwrap().len(), 1);
+        assert_eq!(clean["excluded"][0], "25-26-2|体育");
+        assert!(core.save_grades_scope(&json!("nope")).is_err());
+        assert!(core.save_grades_scope(&json!({"included": "x"})).is_err());
+    }
     #[test]
     fn synthetic_deadlines_do_not_force_desktop_logout() {
         let mut session = pkuinfo_common::session::Session::new("synthetic-test-token".into());

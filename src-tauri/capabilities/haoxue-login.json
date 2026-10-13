@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "haoxue-login",
+  "description": "仅允许课堂实录登录窗口把学校交出的令牌写入本机会话，其它窗口无此能力",
+  "windows": ["haoxue-login*"],
+  "remote": {
+    "urls": ["https://passport.pku.edu.cn/*"]
+  },
+  "permissions": ["core:default"]
+}
