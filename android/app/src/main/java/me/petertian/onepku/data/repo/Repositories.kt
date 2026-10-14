@@ -16,7 +16,7 @@ class TreeholeRepository @Inject constructor(
     private val api: TreeholeApi,
     private val auth: AuthManager,
 ) {
-    private val scoresCache = ScopedCache<Unit, ScoreReport>({ auth.cacheScope(Service.TREEHOLE) }, TTL)
+    private val scoresCache = TtlCache<Unit, ScoreReport>(TTL)
 
     suspend fun scores(forceRefresh: Boolean = false): ScoreReport =
         scoresCache.get(Unit, forceRefresh) { withReauth(auth, Service.TREEHOLE) { api.scores() } }
@@ -38,7 +38,7 @@ class CardRepository @Inject constructor(
     private val api: CardApi,
     private val auth: AuthManager,
 ) {
-    private val balanceCache = ScopedCache<Unit, CardBalance>({ auth.cacheScope(Service.CARD) }, TTL)
+    private val balanceCache = TtlCache<Unit, CardBalance>(TTL)
 
     suspend fun balance(forceRefresh: Boolean = false): CardBalance =
         balanceCache.get(Unit, forceRefresh) { withReauth(auth, Service.CARD) { api.balance() } }

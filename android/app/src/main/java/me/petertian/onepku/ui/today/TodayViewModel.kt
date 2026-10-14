@@ -19,10 +19,12 @@ import me.petertian.onepku.data.course.AssignmentSummary
 import me.petertian.onepku.data.repo.CardRepository
 import me.petertian.onepku.data.repo.CourseRepository
 import me.petertian.onepku.ui.components.UiData
+import me.petertian.onepku.ui.components.loadKeepingLast
 import javax.inject.Inject
 
 data class TodayUiState(
     val loggedOut: Boolean = false,
+    val loginPrompt: String? = null,
     val refreshing: Boolean = false,
     val assignments: UiData<List<AssignmentSummary>> = UiData.Loading,
     val announcements: UiData<List<Announcement>> = UiData.Loading,
@@ -40,11 +42,7 @@ class TodayViewModel @Inject constructor(
     val ui: StateFlow<TodayUiState> = _ui.asStateFlow()
 
     init {
-        if (!auth.hasCredentials()) {
-            _ui.update { it.copy(loggedOut = true) }
-        } else {
-            load(force = false, silent = false)
-        }
+        load(force = false, silent = false)
     }
 
     /** 下拉刷新与重试:绕过缓存重新拉取。 */
@@ -59,64 +57,62 @@ class TodayViewModel @Inject constructor(
         if (job?.isActive == true) return
         if (!silent) _ui.update { it.copy(refreshing = true) }
         job = viewModelScope.launch {
-            coroutineScope {
+            val prompts = coroutineScope {
                 val assignmentsJob = async { loadAssignments(force) }
                 val announcementsJob = async { loadAnnouncements() }
                 val cardJob = async { loadCard() }
-                assignmentsJob.await(); announcementsJob.await(); cardJob.await()
+                listOf(assignmentsJob.await(), announcementsJob.await(), cardJob.await())
             }
-            _ui.update { it.copy(refreshing = false) }
+            _ui.update { state ->
+                val hasData = state.assignments is UiData.Ready ||
+                    state.announcements is UiData.Ready ||
+                    state.cardBalance is UiData.Ready
+                state.copy(
+                    refreshing = false,
+                    loginPrompt = prompts.firstOrNull { it != null },
+                    loggedOut = !hasData && !auth.hasCredentials(),
+                )
+            }
         }
     }
 
-    private suspend fun loadAssignments(force: Boolean) {
-        if (!auth.isLoggedIn(Service.COURSE) && !auth.hasCredentials()) return
-        _ui.update {
-            it.copy(
-                assignments = try {
-                    val list = courses.courses(force).filter { c -> c.isCurrent }
-                    courses.assignments(list, force)
-                        .filter { a -> !a.submitted && (a.deadlineEpochMs ?: Long.MAX_VALUE) >= System.currentTimeMillis() }
-                        .sortedBy { a -> a.deadlineEpochMs ?: Long.MAX_VALUE }
-                        .let { ready -> UiData.Ready(ready) }
-                } catch (e: Exception) {
-                    UiData.Failure(e.message ?: "作业加载失败")
-                },
-            )
-        }
+    private fun promptFor(service: Service, data: UiData<*>, errorPrompt: String?): String? {
+        if (errorPrompt != null) return errorPrompt
+        return if (!auth.isLoggedIn(service) && data is UiData.Ready) auth.loggedOutPrompt() else null
     }
 
-    private suspend fun loadAnnouncements() {
-        if (!auth.isLoggedIn(Service.COURSE) && !auth.hasCredentials()) return
-        _ui.update {
-            it.copy(
-                announcements = try {
-                    val list = courses.courses().filter { c -> c.isCurrent }
-                    val all = coroutineScope {
-                        list.map { c ->
-                            async {
-                                runCatching { courses.announcements(c.id, c.name) }.getOrElse { emptyList() }
-                            }
-                        }.flatMap { d -> d.await() }
+    private suspend fun loadAssignments(force: Boolean): String? {
+        val (data, prompt) = loadKeepingLast(_ui.value.assignments, "作业加载失败") {
+            val list = courses.courses(force).filter { c -> c.isCurrent }
+            courses.assignments(list, force)
+                .filter { a -> !a.submitted && (a.deadlineEpochMs ?: Long.MAX_VALUE) >= System.currentTimeMillis() }
+                .sortedBy { a -> a.deadlineEpochMs ?: Long.MAX_VALUE }
+        }
+        val shown = promptFor(Service.COURSE, data, prompt)
+        _ui.update { it.copy(assignments = data) }
+        return shown
+    }
+
+    private suspend fun loadAnnouncements(): String? {
+        val (data, prompt) = loadKeepingLast(_ui.value.announcements, "通知加载失败") {
+            val list = courses.courses().filter { c -> c.isCurrent }
+            coroutineScope {
+                list.map { c ->
+                    async {
+                        runCatching { courses.announcements(c.id, c.name) }.getOrElse { emptyList() }
                     }
-                    UiData.Ready(all.sortedByDescending { n -> n.date })
-                } catch (e: Exception) {
-                    UiData.Failure(e.message ?: "通知加载失败")
-                },
-            )
+                }.flatMap { d -> d.await() }
+            }.sortedByDescending { n -> n.date }
         }
+        val shown = promptFor(Service.COURSE, data, prompt)
+        _ui.update { it.copy(announcements = data) }
+        return shown
     }
 
-    private suspend fun loadCard() {
-        if (!auth.isLoggedIn(Service.CARD) && !auth.hasCredentials()) return
-        _ui.update {
-            it.copy(
-                cardBalance = try {
-                    UiData.Ready(card.balance())
-                } catch (e: Exception) {
-                    UiData.Failure(e.message ?: "校园卡加载失败")
-                },
-            )
-        }
+    private suspend fun loadCard(): String? {
+        val (data, prompt) = loadKeepingLast(_ui.value.cardBalance, "校园卡加载失败") { card.balance() }
+        val shown = promptFor(Service.CARD, data, prompt)
+        _ui.update { it.copy(cardBalance = data) }
+        return shown
     }
 }

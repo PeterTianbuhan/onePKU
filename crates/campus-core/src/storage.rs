@@ -67,19 +67,8 @@ fn current(key: &str, env: &Envelope) -> bool {
     let Some(req) = request_from_key(key) else {
         return false;
     };
-    if !cacheable(&req) || env.generation != fingerprint(owner(&req)) {
-        return false;
-    }
-    if owner(&req) == "treehole" {
-        if Store::new("treehole")
-            .ok()
-            .and_then(|s| s.load_session().ok().flatten())
-            .is_none_or(|s| s.is_expired())
-        {
-            return false;
-        }
-    }
-    true
+    // 单用户：退出、过期或会话文件换过，都不把上次的快照扔掉。
+    cacheable(&req) && env.data.is_some()
 }
 fn atomic_write(p: &Path, data: &[u8]) -> Result<()> {
     let dir = p
@@ -126,6 +115,7 @@ impl Core {
             .entries
             .into_iter()
             .filter(|(k, v)| current(k, v) && recent(v, now))
+            .filter_map(|(k, v)| request_from_key(&k).map(|req| (request_key(&req), v)))
             .take(96)
             .collect();
         *self.files.lock().unwrap() = saved
@@ -155,7 +145,7 @@ impl Core {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         let bytes = serde_json::to_vec(&Saved {
-            version: 1,
+            version: SNAPSHOT_VERSION,
             entries,
             files,
         })?;
@@ -224,6 +214,15 @@ mod tests {
             generation: "other-account".into(),
         };
         assert!(!recent(&env, chrono::Utc::now().timestamp()));
-        assert!(!current("other-account:{\"kind\":\"courses\"}", &env));
+        // 过期太久的快照仍然丢掉；账号指纹不同不再单独丢掉。
+        let fresh = Envelope {
+            updated_at: Some(chrono::Utc::now().to_rfc3339()),
+            ..env
+        };
+        assert!(current("other-account:{\"kind\":\"courses\"}", &fresh));
+        assert!(!current(
+            "other-account:{\"kind\":\"authBegin\",\"service\":\"course\"}",
+            &fresh
+        ));
     }
 }

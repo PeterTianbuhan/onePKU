@@ -211,6 +211,41 @@ pub fn keyring_username() -> Option<String> {
     keyring_credential().map(|c| c.username)
 }
 
+const KEYRING_OTP: &str = "otp-secret";
+
+/// 把手机令牌密钥放进系统钥匙串。不写任何明文文件。
+pub fn keyring_store_otp(secret: &str) -> Result<()> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_OTP).context("创建 keyring entry 失败")?;
+    entry
+        .set_password(secret)
+        .context("保存手机令牌密钥到 keyring 失败")?;
+    let verify = entry.get_password().context("keyring 回读手机令牌失败")?;
+    if verify != secret {
+        return Err(anyhow!("keyring 回读手机令牌不一致"));
+    }
+    Ok(())
+}
+
+/// 钥匙串里的手机令牌密钥。没有就返回 None，不落盘。
+pub fn keyring_otp_secret() -> Option<String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_OTP).ok()?;
+    match entry.get_password() {
+        Ok(secret) if !secret.trim().is_empty() => Some(secret),
+        _ => None,
+    }
+}
+
+/// 只删手机令牌密钥，不动账号和密码。
+pub fn keyring_clear_otp() -> Result<()> {
+    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_OTP) {
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Err(e) => return Err(anyhow!("删除 keyring 中的手机令牌失败: {e}")),
+        }
+    }
+    Ok(())
+}
+
 /// 从 OS keyring 删除凭据
 pub fn keyring_clear() -> Result<()> {
     for key in ["username", "password"] {

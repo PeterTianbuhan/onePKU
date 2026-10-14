@@ -166,7 +166,13 @@ export function Resource<T>({
         <div className="resource-error" role="status">
           <AlertCircle size={15} />
           <span>
-            {env?.stale ? "更新失败，当前显示上次数据。" : issue.message}
+            {issue.code === "auth"
+              ? env?.stale
+                ? `${issue.message} 下面仍是上次的数据。`
+                : issue.message
+              : env?.stale
+                ? "更新失败，当前显示上次数据。"
+                : issue.message}
           </span>
           {service && ["auth", "sms", "courseSms"].includes(issue.code) && (
             <button

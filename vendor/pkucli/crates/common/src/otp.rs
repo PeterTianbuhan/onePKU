@@ -28,17 +28,20 @@ const TOTP_DIGITS: u32 = 6;
 
 /// 从 Base32 编码的 secret 生成当前 TOTP 码
 pub fn generate_totp(secret_base32: &str) -> Result<String> {
-    let secret = data_encoding::BASE32_NOPAD
-        .decode(secret_base32.trim().as_bytes())
-        .or_else(|_| data_encoding::BASE32.decode(secret_base32.trim().as_bytes()))
-        .context("Base32 解码 TOTP secret 失败")?;
-
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .context("获取系统时间失败")?;
-    let counter = now.as_secs() / TOTP_PERIOD;
+    generate_totp_at(secret_base32, now.as_secs())
+}
 
-    generate_hotp(&secret, counter)
+/// 用指定的 Unix 时间生成 TOTP，便于对照 RFC 6238 的测试向量。
+pub fn generate_totp_at(secret_base32: &str, unix_secs: u64) -> Result<String> {
+    let compact: String = secret_base32.chars().filter(|c| !c.is_whitespace()).collect();
+    let secret = data_encoding::BASE32_NOPAD
+        .decode(compact.as_bytes())
+        .or_else(|_| data_encoding::BASE32.decode(compact.as_bytes()))
+        .context("Base32 解码 TOTP secret 失败")?;
+    generate_hotp(&secret, unix_secs / TOTP_PERIOD)
 }
 
 /// HOTP 算法 (RFC 4226)

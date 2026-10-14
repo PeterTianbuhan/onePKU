@@ -29,7 +29,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavHostController
 import me.petertian.onepku.data.card.fenToYuan
+import me.petertian.onepku.ui.components.LoginBanner
 import me.petertian.onepku.ui.components.SectionContent
+import me.petertian.onepku.ui.components.UiData
 import me.petertian.onepku.ui.navigation.Routes
 import me.petertian.onepku.ui.navigation.toLogin
 import java.text.SimpleDateFormat
@@ -51,8 +53,11 @@ fun TodayScreen(nav: NavHostController, vm: TodayViewModel = hiltViewModel()) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    LaunchedEffect(ui.loggedOut) {
-        if (ui.loggedOut) nav.toLogin()
+    val hasData = ui.assignments is UiData.Ready ||
+        ui.announcements is UiData.Ready ||
+        ui.cardBalance is UiData.Ready
+    LaunchedEffect(ui.loggedOut, hasData) {
+        if (ui.loggedOut && !hasData) nav.toLogin()
     }
 
     Scaffold(topBar = { TopAppBar(title = { Text("今日") }) }) { padding ->
@@ -66,6 +71,11 @@ fun TodayScreen(nav: NavHostController, vm: TodayViewModel = hiltViewModel()) {
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                if (ui.loginPrompt != null) {
+                    item(key = "login") {
+                        LoginBanner(ui.loginPrompt!!, onLogin = { nav.toLogin() })
+                    }
+                }
                 item(key = "assignments") {
                     TodaySection(title = "待交作业", action = "全部" to { nav.navigate(Routes.ASSIGNMENTS) }) {
                         SectionContent(

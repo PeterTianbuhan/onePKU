@@ -42,20 +42,27 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import me.petertian.onepku.core.session.Service
+import me.petertian.onepku.data.auth.AuthManager
 import me.petertian.onepku.data.card.CardBalance
 import me.petertian.onepku.data.card.MonthlyStat
 import me.petertian.onepku.data.card.TurnoverRecord
 import me.petertian.onepku.data.card.fenToYuan
 import me.petertian.onepku.data.repo.CardRepository
+import me.petertian.onepku.core.network.NeedsLoginException
+import me.petertian.onepku.ui.components.LoginBanner
 import me.petertian.onepku.ui.components.UiData
 import me.petertian.onepku.ui.components.ErrorBox
 import me.petertian.onepku.ui.components.LoadingBox
 import me.petertian.onepku.ui.components.SectionContent
+import me.petertian.onepku.ui.components.loadKeepingLast
 import me.petertian.onepku.ui.navigation.back
+import me.petertian.onepku.ui.navigation.toLogin
 import javax.inject.Inject
 
 data class CardUiState(
     val refreshing: Boolean = false,
+    val loginPrompt: String? = null,
     val balance: UiData<CardBalance> = UiData.Loading,
     val monthly: UiData<MonthlyStat> = UiData.Loading,
     val records: List<TurnoverRecord> = emptyList(),
@@ -68,6 +75,7 @@ data class CardUiState(
 @HiltViewModel
 class CardViewModel @Inject constructor(
     private val repo: CardRepository,
+    private val auth: AuthManager,
 ) : ViewModel() {
     private val _ui = MutableStateFlow(CardUiState())
     val ui: StateFlow<CardUiState> = _ui.asStateFlow()
@@ -77,41 +85,44 @@ class CardViewModel @Inject constructor(
     fun refresh() {
         viewModelScope.launch {
             _ui.update { it.copy(refreshing = true) }
+            val previous = _ui.value
             coroutineScope {
                 val balanceJob = async {
-                    try {
-                        UiData.Ready(repo.balance(true))
-                    } catch (e: Exception) {
-                        UiData.Failure(e.message ?: "余额加载失败")
-                    }
+                    loadKeepingLast(previous.balance, "余额加载失败") { repo.balance(true) }
                 }
                 val monthlyJob = async {
-                    try {
-                        UiData.Ready(repo.monthly())
-                    } catch (e: Exception) {
-                        UiData.Failure(e.message ?: "统计加载失败")
-                    }
+                    loadKeepingLast(previous.monthly, "统计加载失败") { repo.monthly() }
                 }
                 val recordsJob = async {
                     try {
-                        repo.turnover(1)
+                        Result.success(repo.turnover(1))
                     } catch (e: Exception) {
-                        null
+                        Result.failure(e)
                     }
                 }
-                _ui.update {
-                    it.copy(
-                        balance = balanceJob.await(),
-                        monthly = monthlyJob.await(),
-                    )
+                val (balance, balancePrompt) = balanceJob.await()
+                val (monthly, monthlyPrompt) = monthlyJob.await()
+                val recordsResult = recordsJob.await()
+                val page1 = recordsResult.getOrNull()
+                val recordsPrompt = recordsResult.exceptionOrNull()?.let { error ->
+                    (error as? NeedsLoginException)?.message
                 }
-                val page1 = recordsJob.await()
                 _ui.update {
+                    val keptRecords = page1?.records ?: it.records
+                    val loggedOut = !auth.isLoggedIn(Service.CARD)
+                    val fromData = if (loggedOut && (balance is UiData.Ready || monthly is UiData.Ready || keptRecords.isNotEmpty())) {
+                        auth.loggedOutPrompt()
+                    } else {
+                        null
+                    }
                     it.copy(
-                        records = page1?.records ?: emptyList(),
-                        recordsError = if (page1 == null) "流水加载失败" else null,
-                        page = 1,
-                        hasMore = (page1?.pages ?: 1) > 1,
+                        balance = balance,
+                        monthly = monthly,
+                        loginPrompt = balancePrompt ?: monthlyPrompt ?: recordsPrompt ?: fromData,
+                        records = keptRecords,
+                        recordsError = if (page1 == null && keptRecords.isEmpty()) "流水加载失败" else null,
+                        page = page1?.current?.toInt() ?: it.page,
+                        hasMore = page1?.let { next -> next.current < next.pages } ?: it.hasMore,
                     )
                 }
             }
@@ -168,6 +179,11 @@ fun CardScreen(nav: NavHostController, vm: CardViewModel = hiltViewModel()) {
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                if (ui.loginPrompt != null) {
+                    item(key = "login") {
+                        LoginBanner(ui.loginPrompt!!, onLogin = { nav.toLogin() })
+                    }
+                }
                 item(key = "balance") {
                     Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(20.dp)) {

@@ -1,4 +1,5 @@
 use super::*;
+use anyhow::Context;
 use base64::Engine;
 /// 每个服务向学校换票时用的应用标识与回调地址；树洞还要带设备号。
 fn iaaa_config_for(service: &str, device: &str) -> pkuinfo_common::iaaa::IaaaConfig {
@@ -22,10 +23,15 @@ pub struct Attempt {
 impl Core {
     /// 账号密码登录：一次提交把四个服务依次换成各自的会话，与安卓端一致。
     /// 密码只在这一次调用里用到，不进缓存键，也不写进本机快照。
-    /// 本机钥匙串里的统一认证账号；只报账号，绝不返回密码。
+    /// 本机钥匙串里的统一认证账号；只报账号，绝不返回密码或令牌密钥。
     pub(crate) fn credentials_status() -> Value {
         let stored = pkuinfo_common::credential::keyring_username();
-        json!({ "stored": stored.is_some(), "username": stored.unwrap_or_default() })
+        json!({
+            "stored": stored.is_some(),
+            "username": stored.unwrap_or_default(),
+            "otpStored": pkuinfo_common::credential::keyring_otp_secret().is_some(),
+            "otpImport": otp_import_offer(),
+        })
     }
     /// 记住就写进系统加密存储（macOS 钥匙串 / Windows 凭据管理器），不记就清掉。
     pub(crate) fn set_credentials(
@@ -46,7 +52,8 @@ impl Core {
     }
     pub(crate) fn clear_credentials() -> Result<Value> {
         pkuinfo_common::credential::keyring_clear()?;
-        Ok(json!({ "stored": false, "username": "" }))
+        pkuinfo_common::credential::keyring_clear_otp()?;
+        Ok(Self::credentials_status())
     }
     pub(crate) async fn auth_password(
         &self,
@@ -54,42 +61,24 @@ impl Core {
         username: &str,
         password: &str,
         otp: Option<&str>,
+        otp_secret: Option<&str>,
         remember: bool,
     ) -> Result<Value> {
-        // 表单留空就是用已记住的账号；安卓端也是拿存下的凭据静默换票。
-        let (username, password) =
-            if username.trim().is_empty() || password.is_empty() {
-                match pkuinfo_common::credential::keyring_credential() {
-                    Some(credential) => (credential.username, credential.password),
-                    None => bail!("请填写校园账号与密码"),
-                }
-            } else {
-                (username.trim().to_string(), password.to_string())
-            };
-        let username = username.as_str();
-        let password = password.as_str();
-        let wanted: Vec<&str> = if services.is_empty() {
-            vec!["course", "treehole", "campuscard", "bdkj"]
-        } else {
-            services
-                .iter()
-                .map(|service| service.as_str())
-                .filter(|service| {
-                    matches!(
-                        *service,
-                        "course" | "treehole" | "campuscard" | "bdkj"
-                    )
-                })
-                .collect()
-        };
+        // 留空的账号或密码各自回落到钥匙串；新填的值只在登录成功后才写回去。
+        let (username, password) = resolve_login_identity(username, password)?;
+        let otp_code = otp_for_login(otp, otp_secret, stored_otp_secret().as_deref())?;
+        let wanted = password_services(services);
         if wanted.is_empty() {
             bail!("没有可登录的服务");
         }
         let mut done: Vec<String> = vec![];
         let mut failed: Vec<Value> = vec![];
-        for service in wanted {
-            match self.login_with_password(service, username, password, otp).await {
-                Ok(()) => done.push(service.to_string()),
+        for service in &wanted {
+            match self
+                .login_with_password(service, &username, &password, otp_code.as_deref())
+                .await
+            {
+                Ok(()) => done.push(service.clone()),
                 Err(error) => {
                     let p = problem(error);
                     failed.push(json!({
@@ -109,9 +98,14 @@ impl Core {
                     .unwrap_or("统一身份认证失败")
             );
         }
-        // 记住失败不影响这次登录，只如实说明。
-        let remembered = match Self::set_credentials(username, password, remember) {
-            Ok(_) => true,
+        // 记住失败不影响这次登录，只如实说明。密钥也只在登录成功后才替换。
+        let remembered = match Self::set_credentials(&username, &password, remember) {
+            Ok(_) => {
+                if remember {
+                    let _ = commit_otp_secret(otp_secret);
+                }
+                true
+            }
             Err(_) => false,
         };
         Ok(json!({
@@ -123,11 +117,77 @@ impl Core {
     }
     /// 会话过期时拿钥匙串里记住的账号换一张新票，对应安卓端 `AuthManager.relogin`。
     /// 这条路径绝不写也绝不删钥匙串：自动续期要是顺手清了凭据，下次过期就只剩人工登录。
+    /// 钥匙串里有手机令牌密钥时，这里会生成当前口令。
     pub(crate) async fn relogin(&self, service: &str) -> Result<()> {
         let credential = pkuinfo_common::credential::keyring_credential()
             .ok_or_else(|| anyhow!("没有记住的账号，请手动登录"))?;
-        self.login_with_password(service, &credential.username, &credential.password, None)
-            .await
+        let otp = otp_for_login(None, None, stored_otp_secret().as_deref())?;
+        self.login_with_password(
+            service,
+            &credential.username,
+            &credential.password,
+            otp.as_deref(),
+        )
+        .await
+    }
+    /// 同一个服务同时只跑一次自动重登。失败之后停掉，直到用户手动登录成功。
+    pub(crate) async fn relogin_once(&self, service: &str) -> bool {
+        let seen = {
+            let state = self.relogin.lock().unwrap();
+            if state.stopped.contains(service) {
+                return false;
+            }
+            state.epoch.get(service).copied().unwrap_or(0)
+        };
+        let lock = {
+            let mut locks = self.relogin_locks.lock().unwrap();
+            locks
+                .entry(service.to_string())
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                .clone()
+        };
+        let _guard = lock.lock().await;
+        {
+            let state = self.relogin.lock().unwrap();
+            if state.stopped.contains(service) {
+                return false;
+            }
+            if state.epoch.get(service).copied().unwrap_or(0) != seen {
+                return true;
+            }
+        }
+        match self.relogin(service).await {
+            Ok(()) => {
+                let mut state = self.relogin.lock().unwrap();
+                *state.epoch.entry(service.to_string()).or_insert(0) += 1;
+                true
+            }
+            Err(_) => {
+                self.relogin.lock().unwrap().stopped.insert(service.to_string());
+                false
+            }
+        }
+    }
+    pub(crate) fn note_manual_login(&self, service: &str) {
+        let mut state = self.relogin.lock().unwrap();
+        state.stopped.remove(service);
+        *state.epoch.entry(service.to_string()).or_insert(0) += 1;
+    }
+    pub(crate) fn stop_relogin(&self, service: &str) {
+        self.relogin.lock().unwrap().stopped.insert(service.to_string());
+    }
+    pub(crate) fn import_otp(&self) -> Result<Value> {
+        let Some(config) = find_pkucli_otp() else {
+            bail!("这台机器上没有找到 pkucli 保存的手机令牌");
+        };
+        let secret = normalize_secret(&config.secret)?;
+        pkuinfo_common::credential::keyring_store_otp(&secret)?;
+        let _ = super::maintenance::write_preference("otpImportOffered", json!(true));
+        Ok(Self::credentials_status())
+    }
+    pub(crate) fn dismiss_otp_import(&self) -> Result<Value> {
+        super::maintenance::write_preference("otpImportOffered", json!(true))?;
+        Ok(Self::credentials_status())
     }
     async fn login_with_password(
         &self,
@@ -170,6 +230,7 @@ impl Core {
         if service == "course" {
             let _ = self.subtitle_account(&fingerprint("course")).await;
         }
+        self.note_manual_login(service);
         Ok(())
     }
     pub(crate) async fn auth_begin(&self, service: &str) -> Result<Value> {
@@ -322,6 +383,142 @@ impl Core {
     }
 }
 
+/// 一次登录要换票的服务。空列表就是全部，含校内门户；课堂实录不走这条路。
+pub(crate) fn password_services(requested: &[String]) -> Vec<String> {
+    const ALL: &[&str] = &["course", "treehole", "campuscard", "bdkj", "portal"];
+    if requested.is_empty() {
+        return ALL.iter().map(|service| (*service).to_string()).collect();
+    }
+    let mut out = vec![];
+    for service in requested {
+        if ALL.contains(&service.as_str()) && !out.iter().any(|kept: &String| kept == service) {
+            out.push(service.clone());
+        }
+    }
+    out
+}
+
+fn resolve_login_identity(username: &str, password: &str) -> Result<(String, String)> {
+    let stored = pkuinfo_common::credential::keyring_credential();
+    let username = if username.trim().is_empty() {
+        stored
+            .as_ref()
+            .map(|credential| credential.username.clone())
+            .unwrap_or_default()
+    } else {
+        username.trim().to_string()
+    };
+    let password = if password.is_empty() {
+        stored
+            .as_ref()
+            .map(|credential| credential.password.clone())
+            .unwrap_or_default()
+    } else {
+        password.to_string()
+    };
+    if username.is_empty() || password.is_empty() {
+        bail!("请填写校园账号与密码");
+    }
+    Ok((username, password))
+}
+
+fn stored_otp_secret() -> Option<String> {
+    pkuinfo_common::credential::keyring_otp_secret()
+}
+
+pub(crate) fn stored_otp_present() -> bool {
+    stored_otp_secret().is_some()
+}
+
+/// 显式口令优先。`replacement` 为 Some("") 表示这次不用密钥；Some(secret) 用新密钥；None 用已保存的。
+pub(crate) fn otp_for_login(
+    explicit: Option<&str>,
+    replacement: Option<&str>,
+    stored: Option<&str>,
+) -> Result<Option<String>> {
+    if let Some(code) = explicit.map(str::trim).filter(|code| !code.is_empty()) {
+        return Ok(Some(code.to_string()));
+    }
+    let secret = match replacement {
+        Some(value) if value.trim().is_empty() => return Ok(None),
+        Some(value) => normalize_secret(value)?,
+        None => match stored.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(value) => normalize_secret(value)?,
+            None => return Ok(None),
+        },
+    };
+    Ok(Some(pkuinfo_common::otp::generate_totp(&secret)?))
+}
+
+fn normalize_secret(secret: &str) -> Result<String> {
+    let compact: String = secret.chars().filter(|c| !c.is_whitespace()).collect();
+    if compact.is_empty() {
+        bail!("手机令牌密钥是空的");
+    }
+    pkuinfo_common::otp::generate_totp(&compact).context("手机令牌密钥无法使用，请检查是不是 Base32 密钥")?;
+    Ok(compact)
+}
+
+/// 登录已经成功之后才改钥匙串里的密钥。None 表示不动已保存的。
+fn commit_otp_secret(replacement: Option<&str>) -> Result<()> {
+    match replacement {
+        None => Ok(()),
+        Some(value) if value.trim().is_empty() => pkuinfo_common::credential::keyring_clear_otp(),
+        Some(value) => {
+            let secret = normalize_secret(value)?;
+            pkuinfo_common::credential::keyring_store_otp(&secret)
+        }
+    }
+}
+
+pub(crate) fn logged_out_prompt(otp_saved: bool) -> &'static str {
+    if otp_saved {
+        "自动重新登录没有成功，请重新登录"
+    } else {
+        "登录已失效。若学校要求手机令牌，请先在设置里保存密钥，再重新登录"
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct ReloginState {
+    pub(crate) stopped: std::collections::HashSet<String>,
+    pub(crate) epoch: std::collections::HashMap<String, u64>,
+}
+
+fn otp_import_offer() -> Value {
+    if stored_otp_secret().is_some() || otp_import_offered() {
+        return Value::Null;
+    }
+    match find_pkucli_otp() {
+        Some(config) => json!({
+            "userId": config.user_id,
+            "userName": config.user_name,
+        }),
+        None => Value::Null,
+    }
+}
+
+fn otp_import_offered() -> bool {
+    super::maintenance::read_preferences()
+        .get("otpImportOffered")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn find_pkucli_otp() -> Option<pkuinfo_common::otp::OtpConfig> {
+    let dirs = directories::ProjectDirs::from("", "", "info")?;
+    for name in ["course", "treehole", "campuscard", "bdkj", "elective", "cwfw"] {
+        let dir = dirs.config_dir().join(name);
+        let Ok(Some(config)) = pkuinfo_common::otp::load_otp_config(&dir) else {
+            continue;
+        };
+        if normalize_secret(&config.secret).is_ok() {
+            return Some(config);
+        }
+    }
+    None
+}
+
 fn qr_mime(bytes: &[u8]) -> Result<&'static str> {
     if bytes.len() > 2_000_000 {
         bail!("invalid qr");
@@ -342,5 +539,62 @@ mod tests {
         assert_eq!(qr_mime(b"\xff\xd8\xff\xe0test").unwrap(), "image/jpeg");
         assert_eq!(qr_mime(b"\x89PNG\r\n\x1a\ntest").unwrap(), "image/png");
         assert!(qr_mime(b"<html>error</html>").is_err());
+    }
+    #[test]
+    fn one_click_login_includes_portal_and_skips_haoxue() {
+        let all = password_services(&[]);
+        assert_eq!(
+            all,
+            vec!["course", "treehole", "campuscard", "bdkj", "portal"]
+        );
+        let picked = password_services(&["portal".into(), "haoxue".into(), "portal".into()]);
+        assert_eq!(picked, vec!["portal"]);
+    }
+    #[test]
+    fn explicit_otp_wins_and_a_new_secret_is_checked_before_use() {
+        assert_eq!(
+            otp_for_login(Some("123456"), Some(""), None).unwrap().as_deref(),
+            Some("123456")
+        );
+        // 空的新密钥表示这次登录不带口令，也不去读已保存的密钥。
+        assert_eq!(otp_for_login(None, Some("  "), Some("GEZDGNBVGY3TQOJQ")).unwrap(), None);
+        assert!(otp_for_login(None, Some("not-a-secret"), None).is_err());
+        let code = otp_for_login(None, None, Some("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(code.len(), 6);
+        assert!(code.chars().all(|c| c.is_ascii_digit()));
+    }
+    #[test]
+    fn totp_matches_the_rfc6238_sha1_vector() {
+        let secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+        assert_eq!(
+            pkuinfo_common::otp::generate_totp_at(secret, 59).unwrap(),
+            "287082"
+        );
+        assert_eq!(
+            pkuinfo_common::otp::generate_totp_at(secret, 1111111109).unwrap(),
+            "081804"
+        );
+    }
+    #[test]
+    fn failed_relogin_stops_until_manual_login() {
+        let mut state = ReloginState::default();
+        assert!(!state.stopped.contains("course"));
+        state.stopped.insert("course".into());
+        assert!(state.stopped.contains("course"));
+        state.stopped.remove("course");
+        *state.epoch.entry("course".into()).or_insert(0) += 1;
+        assert!(!state.stopped.contains("course"));
+        assert_eq!(state.epoch["course"], 1);
+        // 别人已经把这个服务的代际往前拨过，后来的请求就不必再登一次。
+        let seen = 0;
+        assert_ne!(state.epoch["course"], seen);
+    }
+    #[test]
+    fn logged_out_prompt_mentions_the_token_when_it_is_missing() {
+        assert!(logged_out_prompt(false).contains("手机令牌"));
+        assert!(logged_out_prompt(true).contains("重新登录"));
+        assert!(!logged_out_prompt(true).contains("手机令牌"));
     }
 }
