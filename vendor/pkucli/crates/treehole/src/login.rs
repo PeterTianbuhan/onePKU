@@ -169,7 +169,9 @@ pub async fn complete_treehole_login(
     Ok(())
 }
 pub async fn complete_gui_login(store: &Store, iaaa_token: &str, device_uuid: &str) -> Result<()> {
-    let cookie_store = store.load_cookie_store()?;
+    let cookie_store = std::sync::Arc::new(reqwest_cookie_store::CookieStoreMutex::new(
+        cookie_store::CookieStore::default(),
+    ));
     let client = client::build(cookie_store.clone())?;
 
     // 构造回调 URL

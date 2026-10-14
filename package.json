@@ -1,7 +1,7 @@
 {
   "name": "onepku",
   "private": true,
-  "version": "0.12.2",
+  "version": "0.12.3",
   "type": "module",
   "engines": {
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0"

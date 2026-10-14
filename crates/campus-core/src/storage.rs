@@ -67,19 +67,21 @@ fn current(key: &str, env: &Envelope) -> bool {
     let Some(req) = request_from_key(key) else {
         return false;
     };
-    if !cacheable(&req) || env.generation != fingerprint(owner(&req)) {
-        return false;
+    // 单用户：退出、过期或会话文件换过，都不把上次的快照扔掉。
+    cacheable(&req) && env.data.is_some()
+}
+fn restore_entries(entries: HashMap<String, Envelope>, now: i64) -> HashMap<String, Envelope> {
+    // Several old session buckets may map to the same single-user key. Keep
+    // the newest snapshot, never whichever HashMap entry happens to come last.
+    let mut entries: Vec<_> = entries.into_iter()
+        .filter(|(k, v)| current(k, v) && recent(v, now)).collect();
+    entries.sort_by_key(|(_, v)| v.updated_at.as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()).map(|d| d.timestamp()));
+    let mut restored = HashMap::new();
+    for (key, value) in entries {
+        if let Some(req) = request_from_key(&key) { restored.insert(request_key(&req), value); }
     }
-    if owner(&req) == "treehole" {
-        if Store::new("treehole")
-            .ok()
-            .and_then(|s| s.load_session().ok().flatten())
-            .is_none_or(|s| s.is_expired())
-        {
-            return false;
-        }
-    }
-    true
+    restored
 }
 fn atomic_write(p: &Path, data: &[u8]) -> Result<()> {
     let dir = p
@@ -122,12 +124,7 @@ impl Core {
             return;
         }
         let now = chrono::Utc::now().timestamp();
-        *self.cache.lock().unwrap() = saved
-            .entries
-            .into_iter()
-            .filter(|(k, v)| current(k, v) && recent(v, now))
-            .take(96)
-            .collect();
+        *self.cache.lock().unwrap() = restore_entries(saved.entries, now);
         *self.files.lock().unwrap() = saved
             .files
             .into_iter()
@@ -155,7 +152,7 @@ impl Core {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         let bytes = serde_json::to_vec(&Saved {
-            version: 1,
+            version: SNAPSHOT_VERSION,
             entries,
             files,
         })?;
@@ -190,6 +187,21 @@ impl Core {
 mod tests {
     use super::*;
     #[test]
+    fn session_bucket_migration_keeps_the_newest_successful_snapshot() {
+        let now = chrono::Utc::now().timestamp();
+        let envelope = |age, text| Envelope {
+            data: Some(json!(text)), updated_at: Some(chrono::DateTime::from_timestamp(now - age, 0).unwrap().to_rfc3339()),
+            stale: false, error: None, warnings: vec![], generation: "old-session".into(),
+        };
+        let entries = HashMap::from([
+            ("older:{\"kind\":\"courses\"}".into(), envelope(20, "old")),
+            ("newer:{\"kind\":\"courses\"}".into(), envelope(10, "new")),
+        ]);
+        let restored = restore_entries(entries, now);
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored["single:{\"kind\":\"courses\"}"].data, Some(json!("new")));
+    }
+    #[test]
     fn snapshots_are_private_and_replace_atomically() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("cache.json");
@@ -214,7 +226,7 @@ mod tests {
         }));
     }
     #[test]
-    fn old_or_account_mismatched_snapshots_are_rejected() {
+    fn old_snapshots_are_rejected_but_session_rotation_preserves_content() {
         let env = Envelope {
             data: Some(json!([])),
             updated_at: Some("2020-01-01T00:00:00Z".into()),
@@ -224,6 +236,15 @@ mod tests {
             generation: "other-account".into(),
         };
         assert!(!recent(&env, chrono::Utc::now().timestamp()));
-        assert!(!current("other-account:{\"kind\":\"courses\"}", &env));
+        // 过期太久的快照仍然丢掉；账号指纹不同不再单独丢掉。
+        let fresh = Envelope {
+            updated_at: Some(chrono::Utc::now().to_rfc3339()),
+            ..env
+        };
+        assert!(current("other-account:{\"kind\":\"courses\"}", &fresh));
+        assert!(!current(
+            "other-account:{\"kind\":\"authBegin\",\"service\":\"course\"}",
+            &fresh
+        ));
     }
 }

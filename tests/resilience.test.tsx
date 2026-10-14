@@ -18,10 +18,18 @@ const env = (data: unknown, error: unknown = null, stale = false) => ({
   updatedAt: "2026-09-09T03:00:00Z",
   generation: "test",
 });
-function Module({ kind }: { kind: string }) {
+function Module({
+  kind,
+  service,
+  login = () => {},
+}: {
+  kind: string;
+  service?: "treehole";
+  login?: (service: "treehole") => void;
+}) {
   const q = useResource<string>({ kind });
   return (
-    <Resource title={kind} q={q} login={() => {}}>
+    <Resource title={kind} q={q} login={login} service={service}>
       {(v) => <p>{v}</p>}
     </Resource>
   );
@@ -91,6 +99,32 @@ describe("independent campus resources", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("之前的通知")).toBeInTheDocument();
     expect(screen.queryByText("等待更新")).not.toBeInTheDocument();
+  });
+  it("keeps the last data on screen when login has expired", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () =>
+          env(
+            "上次的成绩",
+            { code: "auth", message: "登录已失效，请重新登录" },
+            true,
+          ),
+      })),
+    );
+    const login = vi.fn();
+    render(
+      <Wrapper>
+        <Module kind="成绩" service="treehole" login={login} />
+      </Wrapper>,
+    );
+    expect(await screen.findByText("上次的成绩")).toBeInTheDocument();
+    expect(
+      screen.getByText("登录已失效，请重新登录 下面仍是上次的数据。"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重新登录" }));
+    expect(login).toHaveBeenCalledWith("treehole", undefined);
   });
   it("keeps query results scoped to the requested search", async () => {
     let finish: (v: unknown) => void = () => {};

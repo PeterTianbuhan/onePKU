@@ -88,7 +88,7 @@ fn open_portal_notice(
         window.unminimize().map_err(|_| "窗口无法恢复")?;
         return window.set_focus().map_err(|_| "窗口无法激活".into());
     }
-    let window = reader_with_label(app, destination, title, Some(PORTAL_READER))?;
+    let window = reader_with_label(app, destination, title, Some(PORTAL_READER), None)?;
     let retained = window.clone();
     window.on_window_event(move |event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -115,7 +115,7 @@ fn web_url(url: &tauri::Url) -> bool {
 }
 
 fn reader(app: &tauri::AppHandle, url: tauri::Url, title: &str) -> Result<WebviewWindow, String> {
-    reader_with_label(app, url, title, None)
+    reader_with_label(app, url, title, None, None)
 }
 
 fn reader_with_label(
@@ -123,11 +123,17 @@ fn reader_with_label(
     url: tauri::Url,
     title: &str,
     retained_label: Option<&str>,
+    // A window.open popup must reuse the opener's WebKit configuration; returning a
+    // webview built from a fresh configuration aborts the whole app on macOS.
+    popup: Option<tauri::webview::NewWindowFeatures>,
 ) -> Result<WebviewWindow, String> {
     if !web_url(&url) {
         return Err("无法在原文窗口打开这个地址".into());
     }
-    let course_cookies = if url.scheme() == "https" && url.host_str() == Some("course.pku.edu.cn") {
+    let course_cookies = if popup.is_none()
+        && url.scheme() == "https"
+        && url.host_str() == Some("course.pku.edu.cn")
+    {
         app.state::<std::sync::Arc<campus_core::Core>>()
             .course_browser_cookies(url.as_str())
             .ok()
@@ -135,14 +141,15 @@ fn reader_with_label(
         None
     };
     let destination = url.clone();
-    let initial = if course_cookies.is_some() {
+    // WebKit itself loads the popup's request into the returned webview.
+    let initial = if course_cookies.is_some() || popup.is_some() {
         "about:blank".parse().unwrap()
     } else {
         url
     };
     let popup_app = app.clone();
     let is_portal_reader = retained_label == Some(PORTAL_READER);
-    let window = tauri::WebviewWindowBuilder::new(
+    let mut builder = tauri::WebviewWindowBuilder::new(
         app,
         retained_label
             .map(str::to_string)
@@ -197,14 +204,18 @@ fn reader_with_label(
             host
         ));
     })
-    .on_new_window(
-        move |url, _features| match reader(&popup_app, url, "原文") {
+    .on_new_window(move |url, features| {
+        match reader_with_label(&popup_app, url, "原文", None, Some(features)) {
             Ok(window) => tauri::webview::NewWindowResponse::Create { window },
             Err(_) => tauri::webview::NewWindowResponse::Deny,
-        },
-    )
-    .build()
-    .map_err(|_| "原文窗口未能打开，请重试".to_string())?;
+        }
+    });
+    if let Some(features) = popup {
+        builder = builder.window_features(features);
+    }
+    let window = builder
+        .build()
+        .map_err(|_| "原文窗口未能打开，请重试".to_string())?;
     if let Some(cookies) = course_cookies {
         // Copy only target-matching cookies into the native cookie store. Values
         // never enter JavaScript; narrow parent-domain cookies to this host.

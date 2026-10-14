@@ -23,8 +23,7 @@
 }
 .search-overlay {
   z-index: 160;
-  background: #23262c44;
-  backdrop-filter: blur(3px);
+  background: var(--overlay);
 }
 .search-workspace {
   position: fixed;
@@ -35,7 +34,7 @@
   background: var(--background);
   border: 1px solid var(--border);
   border-radius: 16px;
-  box-shadow: 0 22px 90px #12182238;
+  box-shadow: 0 18px 50px #00000024;
   overflow: hidden;
   outline: none;
   color: var(--text);
@@ -108,7 +107,7 @@
   color: var(--text);
 }
 .search-input-row input::placeholder {
-  color: #9a9da5;
+  color: var(--muted);
 }
 .search-filters {
   display: flex;
@@ -176,7 +175,7 @@
 }
 .search-result.selected {
   background: var(--primary-soft);
-  border-color: #ead8dd;
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
 }
 .search-result-icon {
   background: var(--sidebar);
@@ -188,7 +187,7 @@
   color: var(--muted);
 }
 .search-result.selected .search-result-icon {
-  background: white;
+  background: var(--background);
   color: var(--primary);
 }
 .search-result-copy {
@@ -218,7 +217,7 @@
   overflow: hidden;
 }
 .search-workspace mark {
-  background: #eedbad;
+  background: var(--warning-soft);
   color: inherit;
   border-radius: 2px;
 }
@@ -227,7 +226,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: #fafbfc;
+  background: var(--sidebar);
 }
 .search-preview-header {
   display: flex;
@@ -293,7 +292,7 @@
   line-height: 1.7;
 }
 .search-preview-placeholder svg {
-  color: #c3c6cd;
+  color: var(--muted);
 }
 .search-status {
   display: flex;
@@ -321,8 +320,8 @@
   max-width: 450px;
   max-height: 260px;
   overflow: auto;
-  background: white;
-  box-shadow: 0 4px 20px #0002;
+  background: var(--background);
+  box-shadow: 0 4px 20px #00000024;
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 14px;
@@ -350,7 +349,7 @@
   justify-content: center;
   flex-direction: column;
   gap: 16px;
-  background: #eaecef;
+  background: var(--hover);
   border: 1px solid var(--border);
   border-radius: 10px;
   color: var(--text);
@@ -387,11 +386,11 @@
   gap: 8px;
   padding: 10px 0;
   font-size: 11px;
-  background: #fafbfc;
+  background: var(--sidebar);
   z-index: 1;
 }
 .search-page-controls button {
-  background: white;
+  background: var(--background);
   border: 1px solid var(--border);
   border-radius: 5px;
   padding: 5px 8px;

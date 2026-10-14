@@ -80,6 +80,38 @@ afterEach(() => {
   delete document.documentElement.dataset.theme;
 });
 
+it("does not claim a successful keychain save when login alone succeeded", async () => {
+  const data = resources({
+    connected: true,
+    department: "物理学院",
+    source: "校内门户",
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url, options) => ({
+      ok: true,
+      json: async () => ({
+        data:
+          JSON.parse(options.body).kind === "authPassword"
+            ? { state: "success", failed: [], remembered: false }
+            : (data[JSON.parse(options.body).kind] ?? null),
+        error: null,
+        warnings: [],
+        stale: false,
+        generation: "single",
+      }),
+    })),
+  );
+  mount(<Settings login={() => {}} sessions={sessions("saved")} />);
+  fireEvent.click(await screen.findByRole("button", { name: "登录并保存" }));
+  expect(
+    await screen.findByText(/钥匙串未能完整保存账号或手机令牌/),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByText("已用新的账号登录，并保存到钥匙串"),
+  ).not.toBeInTheDocument();
+});
+
 it("lists every service as one connection card in the Android order", async () => {
   const data = resources({
     connected: true,

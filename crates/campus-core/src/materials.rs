@@ -156,7 +156,7 @@ fn scan(dir: &Path, generation: &str, course: Option<&Value>) -> Result<Vec<Valu
 
 // New writes use the current course label. Reads also include older folders for
 // the same Blackboard course ID; no files are moved when metadata is corrected.
-fn course_directories(root: &Path, course: &Value) -> Result<Vec<PathBuf>> {
+pub(crate) fn course_directories(root: &Path, course: &Value) -> Result<Vec<PathBuf>> {
     let id = course["id"].as_str().ok_or_else(|| anyhow!("invalid course"))?;
     valid_id(id)?;
     let name = course["name"].as_str().unwrap_or("课程");

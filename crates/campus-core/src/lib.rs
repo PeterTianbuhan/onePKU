@@ -16,6 +16,7 @@ mod downloads;
 mod haoxue;
 mod maintenance;
 mod materials;
+mod notebook;
 mod news;
 mod playback;
 mod platform;
@@ -145,6 +146,29 @@ pub enum Request {
         course: String,
         id: String,
     },
+    CourseNotebook {
+        course: String,
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        semester: String,
+    },
+    SaveCourseNotebook {
+        course: String,
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        semester: String,
+        text: String,
+        base: String,
+    },
+    RevealCourseNotebook {
+        course: String,
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        semester: String,
+    },
     Videos {
         course: String,
     },
@@ -260,10 +284,17 @@ pub enum Request {
         #[serde(default)]
         services: Vec<String>,
         otp: Option<String>,
+        /// 新的手机令牌密钥。缺省表示沿用已保存的；空字符串表示登录成功后清除。
+        #[serde(default)]
+        otp_secret: Option<String>,
         /// 记住就写进系统加密存储；不记就清掉之前记住的。
         #[serde(default)]
         remember: bool,
     },
+    /// 用户同意后，把 pkucli 的 otp.json 密钥抄进系统钥匙串。
+    ImportOtp,
+    /// 用户拒绝导入。只记一次，不再询问。
+    DismissOtpImport,
     /// 本机是否记住了统一认证账号（只回账号，不回密码）。
     Credentials,
     SaveCredentials {
@@ -344,6 +375,8 @@ pub struct Core {
     health: Mutex<HashMap<String, maintenance::Health>>,
     keep_alive: std::sync::atomic::AtomicBool,
     auth: Mutex<HashMap<String, auth::Attempt>>,
+    relogin: Mutex<auth::ReloginState>,
+    relogin_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     files: Mutex<HashMap<String, downloads::FileRef>>,
     jobs: Mutex<HashMap<String, downloads::Job>>,
     download_queue: Mutex<Option<std::sync::mpsc::SyncSender<downloads::Task>>>,
@@ -393,26 +426,28 @@ fn owner(req: &Request) -> &'static str {
         | Request::Holes { .. }
         | Request::Hole { .. } => "treehole",
         Request::CardStats { .. } | Request::Card | Request::Transactions { .. } => "campuscard",
+        Request::PortalDetect => "portal",
         _ => "public",
     }
 }
 /// 会话过期时允许自动重登再重试的，只有重复一次没有副作用的读取；写操作和负责
 /// 打开窗口的请求一律排除。课程表不落快照，但同样是换不到票就要人工登录的读取。
 fn may_relogin(req: &Request, service: &str) -> bool {
-    matches!(service, "course" | "treehole" | "campuscard" | "bdkj")
-        && (storage::cacheable(req) || matches!(req, Request::Timetable))
+    matches!(service, "course" | "treehole" | "campuscard" | "bdkj" | "portal")
+        && (storage::cacheable(req)
+            || matches!(req, Request::Timetable | Request::PortalDetect))
 }
-/// 快照键的前缀是当前账号基准；静默续期把基准换掉之后要按新基准重建同一个键。
-/// 密码登录的键里不能带凭证，只记账号与目标服务。
-fn request_key(req: &Request, generation: &str) -> String {
+/// 单用户快照不按账号分桶。退出或会话过期之后，同一个键仍能读到上次的数据。
+/// 密码登录的键里不能带密码或令牌密钥。
+fn request_key(req: &Request) -> String {
     match req {
         Request::AuthPassword {
             username, services, ..
-        } => format!("{generation}:authPassword:{username}:{services:?}"),
+        } => format!("single:authPassword:{username}:{services:?}"),
         Request::SaveCredentials { username, .. } => {
-            format!("{generation}:saveCredentials:{username}")
+            format!("single:saveCredentials:{username}")
         }
-        other => format!("{generation}:{}", serde_json::to_string(other).unwrap()),
+        other => format!("single:{}", serde_json::to_string(other).unwrap()),
     }
 }
 pub fn fingerprint(service: &str) -> String {
@@ -425,6 +460,19 @@ pub fn fingerprint(service: &str) -> String {
     let mut hash = Sha256::new();
     hash.update(&b);
     format!("{:x}", hash.finalize())
+}
+/// 短信挑战要清掉还没验证的内容。登录失效保留上次的数据。
+fn wipe_verified_content(out: &mut Envelope) -> bool {
+    let wipe = out
+        .error
+        .as_ref()
+        .is_some_and(|error| matches!(error.code.as_str(), "sms" | "courseSms"));
+    if wipe {
+        out.data = None;
+        out.stale = false;
+        out.updated_at = None;
+    }
+    wipe
 }
 fn problem(e: anyhow::Error) -> Problem {
     let s = format!("{e:#}");
@@ -480,6 +528,7 @@ fn problem(e: anyhow::Error) -> Problem {
         || s.contains("40001")
         || s.contains("登录失效")
         || s.contains("登录已失效")
+        || s.contains("会话已失效")
     {
         ("auth", "登录已失效，请重新登录")
     } else if s.contains("timed out") || s.contains("超时") || s.contains("elapsed") {
@@ -537,26 +586,37 @@ impl Core {
     async fn execute(self: &Arc<Self>, req: Request) -> Envelope {
         let service = owner(&req);
         let mut generation = fingerprint(service);
-        let mut key = request_key(&req, &generation);
+        let key = request_key(&req);
         let mut result = tokio::time::timeout(Duration::from_secs(75), self.dispatch(&req))
             .await
             .map_err(|_| anyhow!("超时"))
             .and_then(|v| v);
-        // 会话过期就用在手钥匙串里的账号静默换一次票再重试；写操作绝不自动重放。
+        // 会话过期就用钥匙串里的账号静默换一次票再重试。每个服务同时只有一次，
+        // 失败后停住，直到用户自己登录成功。写操作绝不自动重放。
         let expired = result
             .as_ref()
             .err()
             .map(|e| problem(anyhow!("{e}")))
             .is_some_and(|p| p.code == "auth");
-        if expired && may_relogin(&req, service) && self.relogin(service).await.is_ok() {
-            // 换票改写了 session.json，基准得跟着挪到新的那份：这是我们自己替用户续的会话，
-            // 不是切账号。继续按旧基准走就会被当成「账号已更新」，把刚取到的数据丢掉。
-            generation = fingerprint(service);
-            key = request_key(&req, &generation);
-            result = tokio::time::timeout(Duration::from_secs(75), self.dispatch(&req))
-                .await
-                .map_err(|_| anyhow!("超时"))
-                .and_then(|v| v);
+        let mut relogin_failed = false;
+        if expired && may_relogin(&req, service) {
+            if self.relogin_once(service).await {
+                // 换票改写了 session.json，基准得跟着挪到新的那份，避免被当成「账号已更新」。
+                generation = fingerprint(service);
+                result = tokio::time::timeout(Duration::from_secs(75), self.dispatch(&req))
+                    .await
+                    .map_err(|_| anyhow!("超时"))
+                    .and_then(|v| v);
+                let still_logged_out = result.as_ref().err().is_some_and(|error| {
+                    problem(anyhow!("{error}")).code == "auth"
+                });
+                if still_logged_out {
+                    self.stop_relogin(service);
+                    relogin_failed = true;
+                }
+            } else {
+                relogin_failed = true;
+            }
         }
         if generation != fingerprint(service) {
             return Envelope {
@@ -592,31 +652,22 @@ impl Core {
                 });
                 old.stale = old.data.is_some();
                 old.error = Some(problem(e));
+                if relogin_failed && old.error.as_ref().is_some_and(|e| e.code == "auth") {
+                    old.error = Some(Problem {
+                        code: "auth".into(),
+                        message: auth::logged_out_prompt(auth::stored_otp_present()).into(),
+                    });
+                }
                 old
             }
         };
-        // Authentication failures must not continue displaying private stale content.
-        if out
-            .error
-            .as_ref()
-            .is_some_and(|e| matches!(e.code.as_str(), "auth" | "sms" | "courseSms"))
-        {
-            out.data = None;
-            out.stale = false;
-            out.updated_at = None;
+        // 短信验证仍不能把未验证的内容留在界面上。登录失效只标记为未登录，上次的数据继续显示。
+        if wipe_verified_content(&mut out) {
             cache.retain(|k, _| {
                 k.split_once(':')
                     .and_then(|(_, j)| serde_json::from_str::<Request>(j).ok())
                     .is_none_or(|r| owner(&r) != service)
             });
-        }
-        if matches!(
-            req,
-            Request::AuthPoll { .. } | Request::SmsVerify { .. } | Request::AuthPassword { .. }
-        )
-            && out.data.as_ref().is_some_and(|d| d["state"] == "success")
-        {
-            cache.clear();
         }
         if out.error.is_none()
             && matches!(
@@ -769,6 +820,23 @@ impl Core {
             Request::TrashLocalMaterial { course, id } => {
                 self.trash_local_material(course, id).await?
             }
+            Request::CourseNotebook {
+                course,
+                name,
+                semester,
+            } => self.course_notebook(course, name, semester)?,
+            Request::SaveCourseNotebook {
+                course,
+                name,
+                semester,
+                text,
+                base,
+            } => self.save_course_notebook(course, name, semester, text, base)?,
+            Request::RevealCourseNotebook {
+                course,
+                name,
+                semester,
+            } => self.reveal_course_notebook(course, name, semester)?,
             Request::AllCourses => self.all_courses().await?,
             Request::Videos { course } => self.videos(course, &mut warnings).await?,
             Request::PlaybackPrepare {
@@ -968,11 +1036,21 @@ impl Core {
                 password,
                 services,
                 otp,
+                otp_secret,
                 remember,
             } => {
-                self.auth_password(services, username, password, otp.as_deref(), *remember)
-                    .await?
+                self.auth_password(
+                    services,
+                    username,
+                    password,
+                    otp.as_deref(),
+                    otp_secret.as_deref(),
+                    *remember,
+                )
+                .await?
             }
+            Request::ImportOtp => self.import_otp()?,
+            Request::DismissOtpImport => self.dismiss_otp_import()?,
             Request::Credentials => Self::credentials_status(),
             Request::SaveCredentials {
                 username,
@@ -1142,12 +1220,35 @@ mod tests {
         assert_eq!(problem.code, "haoxueAmbiguous");
     }
     #[test]
+    fn auth_expiry_keeps_the_last_snapshot() {
+        let mut out = Envelope {
+            data: Some(json!(["上次的作业"])),
+            updated_at: Some("2026-10-14T00:00:00Z".into()),
+            stale: true,
+            error: Some(Problem {
+                code: "auth".into(),
+                message: "登录已失效，请重新登录".into(),
+            }),
+            warnings: vec![],
+            generation: "single".into(),
+        };
+        assert!(!wipe_verified_content(&mut out));
+        assert_eq!(out.data.as_ref().unwrap()[0], "上次的作业");
+        out.error = Some(Problem {
+            code: "sms".into(),
+            message: "树洞需要短信验证".into(),
+        });
+        assert!(wipe_verified_content(&mut out));
+        assert!(out.data.is_none());
+    }
+    #[test]
     fn only_idempotent_session_reads_may_relogin() {
         // Request 里带着密码，测试失败时只回显 kind，不要把这个枚举做成 Debug。
         for kind in [
             json!({ "kind": "assignments" }),
             json!({ "kind": "card" }),
             json!({ "kind": "timetable" }),
+            json!({ "kind": "portalDetect" }),
         ] {
             let request = serde_json::from_value::<Request>(kind.clone()).unwrap();
             assert!(

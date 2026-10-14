@@ -4,6 +4,7 @@ import { AssignmentWorkspace } from "./Assignments";
 import CourseNotices from "../components/CourseNotices";
 import LearningGrades from "../components/LearningGrades";
 import LocalMaterials from "../components/LocalMaterials";
+import CourseNotebook from "../components/CourseNotebook";
 import CourseReviews from "../components/CourseReviews";
 import { ArrowLeft, BookOpen, ChevronRight, Play } from "lucide-react";
 import {
@@ -175,6 +176,11 @@ function CourseDetail({
           </Button>
         </div>
       </header>
+      <CourseNotebook
+        key={course.id}
+        course={course}
+        lectureLabel={replayLabel}
+      />
       <div className="tabs">
         <button
           className={tab === "notices" ? "active" : ""}
