@@ -169,6 +169,9 @@ pub enum Request {
         #[serde(default)]
         semester: String,
     },
+    CourseVideos {
+        course: String,
+    },
     Videos {
         course: String,
     },
@@ -384,6 +387,7 @@ pub struct Core {
 fn owner(req: &Request) -> &'static str {
     match req {
         Request::BookingGrid { .. } | Request::BookingApplications => "bdkj",
+        Request::Videos { .. } => "haoxue",
         Request::Download { .. }
         | Request::DownloadStatus { .. }
         | Request::DownloadRetry { .. }
@@ -410,6 +414,7 @@ fn owner(req: &Request) -> &'static str {
         | Request::OpenAssignment { .. }
         | Request::Courses
         | Request::AllCourses
+        | Request::CourseVideos { .. }
         | Request::HaoxueRecord { .. }
         | Request::Recordings { .. }
         | Request::RecordingSessions { .. }
@@ -433,7 +438,7 @@ fn owner(req: &Request) -> &'static str {
 /// 会话过期时允许自动重登再重试的，只有重复一次没有副作用的读取；写操作和负责
 /// 打开窗口的请求一律排除。课程表不落快照，但同样是换不到票就要人工登录的读取。
 fn may_relogin(req: &Request, service: &str) -> bool {
-    matches!(service, "course" | "treehole" | "campuscard" | "bdkj" | "portal")
+    matches!(service, "course" | "treehole" | "campuscard" | "bdkj" | "portal" | "haoxue")
         && (storage::cacheable(req)
             || matches!(req, Request::Timetable | Request::PortalDetect))
 }
@@ -520,7 +525,7 @@ fn problem(e: anyhow::Error) -> Problem {
         // 播放器里的「重试」也只是再撞一次 401。
         (
             "haoxueAuth",
-            "课堂实录登录已失效，请重新连接课堂实录",
+            "课堂实录需要补充授权；已有教学网连接仍然可用",
         )
     } else if s.contains("未登录")
         || s.contains("过期")
@@ -597,7 +602,7 @@ impl Core {
             .as_ref()
             .err()
             .map(|e| problem(anyhow!("{e}")))
-            .is_some_and(|p| p.code == "auth");
+            .is_some_and(|p| p.code == "auth" || (service == "haoxue" && p.code == "haoxueAuth"));
         let mut relogin_failed = false;
         if expired && may_relogin(&req, service) {
             if self.relogin_once(service).await {
@@ -608,7 +613,7 @@ impl Core {
                     .map_err(|_| anyhow!("超时"))
                     .and_then(|v| v);
                 let still_logged_out = result.as_ref().err().is_some_and(|error| {
-                    problem(anyhow!("{error}")).code == "auth"
+                    matches!(problem(anyhow!("{error}")).code.as_str(), "auth" | "haoxueAuth")
                 });
                 if still_logged_out {
                     self.stop_relogin(service);
@@ -674,6 +679,7 @@ impl Core {
                 req,
                 Request::Courses
                     | Request::AllCourses
+                    | Request::CourseVideos { .. }
                     | Request::Videos { .. }
                     | Request::Scores
                     | Request::Exams
@@ -746,7 +752,11 @@ impl Core {
             Request::PortalDetect => news::portal_detect().await?,
             Request::PortalLogout => news::portal_logout()?,
             Request::ServiceLogout { service } => Self::service_logout(service)?,
-            Request::HaoxueRelay { url, cookies } => haoxue::relay_login(url, cookies).await?,
+            Request::HaoxueRelay { url, cookies } => {
+                let result = haoxue::relay_login(url, cookies).await?;
+                self.note_manual_login("haoxue");
+                result
+            },
             Request::HaoxueCandidates { name } => haoxue::candidates(name).await?,
             Request::SetHaoxueCourse { name, id } => haoxue::set_course(name, id)?,
             Request::SetDepartment { value } => news::set_department(value)?,
@@ -773,7 +783,11 @@ impl Core {
                 v["keepAlive"] = json!(self.keep_alive.load(std::sync::atomic::Ordering::Relaxed));
                 v
             }
-            Request::HaoxueLogin { payload } => haoxue::save_session(payload)?,
+            Request::HaoxueLogin { payload } => {
+                let result = haoxue::save_session(payload)?;
+                self.note_manual_login("haoxue");
+                result
+            },
             Request::HaoxueStatus => haoxue::status(),
             Request::HaoxueLogout => {
                 haoxue::clear_session()?;
@@ -838,6 +852,7 @@ impl Core {
                 semester,
             } => self.reveal_course_notebook(course, name, semester)?,
             Request::AllCourses => self.all_courses().await?,
+            Request::CourseVideos { course } => self.course_videos(course, &mut warnings).await?,
             Request::Videos { course } => self.videos(course, &mut warnings).await?,
             Request::PlaybackPrepare {
                 course,
@@ -1149,8 +1164,13 @@ mod tests {
         let list: Request =
             serde_json::from_value(json!({ "kind": "videos", "course": "量子力学" })).unwrap();
         assert!(matches!(list, Request::Videos { .. }));
-        // 回放只归课堂实录，不再要求教学网会话。
-        assert_eq!(owner(&list), "public");
+        // 额外目录使用课堂实录授权；教学网回放沿用已有教学网会话。
+        assert_eq!(owner(&list), "haoxue");
+        assert!(may_relogin(&list, "haoxue"));
+        let teaching: Request = serde_json::from_value(json!({"kind":"courseVideos","course":"_103991_1"})).unwrap();
+        assert_eq!(owner(&teaching), "course");
+        assert!(storage::cacheable(&teaching));
+        assert!(may_relogin(&teaching, "course"));
         assert!(storage::cacheable(&list));
         // 「按课程」「按日期」的原始目录不再对外提供：回放只从课程页那一份列表进。
         for kind in [

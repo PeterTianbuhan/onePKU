@@ -18,10 +18,7 @@ const replay = {
   time: "2026-09-21",
   url: "https://example.test/replay",
 };
-const videosKey = [
-  "resource",
-  { kind: "videos", course: "视觉艺术与计算美学" },
-];
+const videosKey = ["resource", { kind: "courseVideos", course: "art" }];
 const envelope = (data: unknown, generation = "account") => ({
   data,
   generation,
@@ -46,7 +43,7 @@ afterEach(() => {
   history.replaceState(null, "", "/");
   localStorage.clear();
 });
-function mount(video?: string) {
+function mount(video?: string, source = "course") {
   history.replaceState(
     null,
     "",
@@ -54,6 +51,7 @@ function mount(video?: string) {
       pageLink("课程", {
         course: "art",
         tab: "videos",
+        source,
         ...(video ? { video } : {}),
       }),
     )}`,
@@ -77,8 +75,8 @@ function mount(video?: string) {
         request.kind === "allCourses"
           ? [{ id: "art", name: "视觉艺术与计算美学" }]
           : request.kind === "haoxueStatus"
-            ? { connected: true }
-            : request.kind === "videos"
+            ? { connected: false }
+            : request.kind === "courseVideos" || request.kind === "videos"
               ? [replay]
               : request.kind === "playbackPrepare"
                 ? {
@@ -185,4 +183,52 @@ it("does not retain the previous account's replay after an account change", asyn
     screen.queryByLabelText(`${replay.title} 视频`),
   ).not.toBeInTheDocument();
   expect(requests.filter((r) => r.kind === "playbackClose")).toHaveLength(1);
+});
+
+it("plays teaching-network replays without requiring a separate classroom connection", async () => {
+  const { requests } = mount();
+  fireEvent.click(
+    await screen.findByRole("button", { name: "播放", exact: true }),
+  );
+  await readyPlayer();
+  expect(
+    screen.queryByRole("button", { name: "连接课堂实录" }),
+  ).not.toBeInTheDocument();
+  expect(requests).toContainEqual({ kind: "courseVideos", course: "art" });
+  expect(requests.some((r) => r.kind === "videos")).toBe(false);
+});
+
+it("prefers the more complete classroom catalog without a separate login gate", async () => {
+  const { requests } = mount(undefined, "");
+  fireEvent.click(
+    await screen.findByRole("button", { name: "播放", exact: true }),
+  );
+  await readyPlayer();
+  expect(requests).toContainEqual({
+    kind: "videos",
+    course: "视觉艺术与计算美学",
+  });
+  expect(
+    screen.queryByRole("button", { name: "连接课堂实录" }),
+  ).not.toBeInTheDocument();
+});
+
+it("lets the user use teaching-network replays when classroom authorization is unavailable", async () => {
+  const { client } = mount(undefined, "");
+  await screen.findByRole("button", { name: "播放", exact: true });
+  await act(async () => {
+    client.setQueryData(
+      ["resource", { kind: "videos", course: "视觉艺术与计算美学" }],
+      {
+        ...envelope(null),
+        error: { code: "haoxueAuth", message: "课堂实录授权需要补充验证" },
+      },
+    );
+  });
+  await screen.findByRole("button", { name: "连接课堂实录" });
+  fireEvent.click(screen.getByRole("button", { name: "查看教学网回放" }));
+  await screen.findByRole("button", { name: "播放", exact: true });
+  expect(
+    screen.queryByRole("button", { name: "连接课堂实录" }),
+  ).not.toBeInTheDocument();
 });

@@ -161,6 +161,7 @@ export function serviceFor(request: Request): Service | undefined {
     [
       "courses",
       "allCourses",
+      "courseVideos",
       "content",
       "localMaterials",
       "assignments",

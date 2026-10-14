@@ -717,21 +717,31 @@ impl Core {
         course: &str,
         video_id: &str,
     ) -> Result<(CourseApi, PlaybackMedia, Manifest)> {
-        let api = self.course_api()?;
-        // 课程标识与课次标识直接来自好学，解析回放不再回教学网列表认领课次。
-        let learner = haoxue::Haoxue::from_session()?;
-        let replay = learner.replay(course, video_id).await?;
-        let playlist = replay
-            .sources
-            .first()
-            .ok_or_else(|| anyhow!("该课堂没有可用的录像地址"))?;
-        // 分片与密钥要带好学 app-login 令牌；教学网 Cookie 换不到这些地址。
-        let api = api.with_media_token(&learner.cookie_token);
-        let media = api.fresh_client()?.playback_media_at(&playlist.url).await?;
-        let title = if replay.time.is_empty() {
-            replay.title.clone()
+        let (api, media, title) = if course.starts_with('_') {
+            let api = self.course_api()?;
+            let c = self.find_course(course).await?;
+            let video = api.list_videos(course, c["name"].as_str().unwrap_or("课程"))
+                .await?.into_iter().find(|v| v.hash_id == video_id)
+                .ok_or_else(|| anyhow!("回放已变化，请刷新课程列表"))?;
+            let media = api.playback_media(&video).await?;
+            (api, media, format!("{} · {}", video.title, video.time))
         } else {
-            format!("{} · {}", replay.title, replay.time)
+            let api = self.course_api()?;
+            let learner = haoxue::Haoxue::from_session()?;
+            let replay = learner.replay(course, video_id).await?;
+            let playlist = replay
+                .sources
+                .first()
+                .ok_or_else(|| anyhow!("该课堂没有可用的录像地址"))?;
+            // 分片与密钥要带好学 app-login 令牌；教学网 Cookie 换不到这些地址。
+            let api = api.with_media_token(&learner.cookie_token);
+            let media = api.fresh_client()?.playback_media_at(&playlist.url).await?;
+            let title = if replay.time.is_empty() {
+                replay.title.clone()
+            } else {
+                format!("{} · {}", replay.title, replay.time)
+            };
+            (api, media, title)
         };
         let manifest = Manifest {
             version: 1,

@@ -319,3 +319,27 @@ pub fn confirm_send_sms(prompt: &str) -> Result<bool> {
     io::stdin().read_line(&mut input)?;
     Ok(!input.trim().eq_ignore_ascii_case("n"))
 }
+
+/// Compatibility with the desktop app's previous per-service keychain entries.
+/// Returns the old session binding so the caller can verify identity before reuse.
+pub fn onepku_legacy_credential() -> Option<(Credential, String)> {
+    let entry = keyring::Entry::new("me.petertian.onepku.login", "course").ok()?;
+    let raw = entry.get_password().ok()?;
+    let data: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let username = data["username"].as_str()?.trim();
+    let password = data["password"].as_str()?;
+    if username.is_empty() || password.is_empty() { return None; }
+    Some((Credential {
+        username: username.into(), password: password.into(), source: CredentialSource::Keyring,
+    }, data["generation"].as_str().unwrap_or_default().into()))
+}
+
+pub fn clear_onepku_legacy_credentials() -> Result<()> {
+    for service in ["course", "treehole", "campuscard", "bdkj"] {
+        match keyring::Entry::new("me.petertian.onepku.login", service)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => {},
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}

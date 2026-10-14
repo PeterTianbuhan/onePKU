@@ -34,6 +34,11 @@ pub struct Job {
 }
 pub(crate) enum DownloadSource {
     File(FileRef),
+    CourseVideo {
+        course: String,
+        semester: String,
+        video: pku_course::api::VideoInfo,
+    },
     Video {
         replay: crate::haoxue::ReplayRef,
     },
@@ -460,7 +465,7 @@ impl Core {
         }
         let id = &task.id;
         let cancel = task.cancel.clone();
-        let seconds = if matches!(&task.source, DownloadSource::Video { .. }) {
+        let seconds = if matches!(&task.source, DownloadSource::Video { .. } | DownloadSource::CourseVideo { .. }) {
             7200
         } else {
             300
@@ -473,6 +478,7 @@ impl Core {
             r=tokio::time::timeout(Duration::from_secs(seconds),async {
                 match task.source {
                     DownloadSource::File(f)=>self.save_file(id,f,cancel.clone()).await,
+                    DownloadSource::CourseVideo{course,semester,video}=>self.save_course_video(id,&course,&semester,&video,&task.generation,cancel.clone()).await,
                     DownloadSource::Video{replay}=>self.save_video(id,&replay,&task.generation,cancel.clone()).await,
                 }
             })=>r.map_err(|_|anyhow!("下载超时，请重试")).and_then(|v|v),
@@ -552,11 +558,119 @@ impl Core {
         }
         Ok(json!({"accepted":accepted,"failed":failures}))
     }
+    pub(crate) async fn download_course_video(
+        self: &Arc<Self>,
+        course: &str,
+        video_id: &str,
+    ) -> Result<Value> {
+        let c = self.find_course(course).await?;
+        let video = self
+            .course_api()?
+            .list_videos(course, c["name"].as_str().unwrap_or("课程"))
+            .await?
+            .into_iter()
+            .find(|v| v.hash_id == video_id)
+            .ok_or_else(|| anyhow!("回放已变化，请刷新列表"))?;
+        let semester = c["semester"].as_str().unwrap_or("未标注学期").to_string();
+        self.enqueue_download(
+            format!("video:{course}:{video_id}"),
+            format!("{} · {}", video.course_name, video.time),
+            DownloadSource::CourseVideo {
+                course: course.into(),
+                semester,
+                video,
+            },
+        )
+    }
+    async fn save_course_video(
+        &self,
+        id: &str,
+        course: &str,
+        semester: &str,
+        video: &pku_course::api::VideoInfo,
+        generation: &str,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<String> {
+        let api = self.course_api()?;
+        let dir = archive_directory(semester, &format!("{} {}", video.course_name, course))?
+            .join("课程回放");
+        std::fs::create_dir_all(&dir)?;
+        let temp = dir.join(format!(".onepku-{id}.mp4"));
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(temp.clone());
+        let account = self
+            .course_account(generation)
+            .await
+            .unwrap_or_else(|_| generation.into());
+        let resume = playback::shared_cache_root(&account, course, &video.hash_id)?;
+        let dirs = directories::ProjectDirs::from("me", "petertian", "OnePKU")
+            .ok_or_else(|| anyhow!("无法定位回放缓存"))?;
+        let playback_cache = playback::adopt_account_cache(
+            &dirs.cache_dir().join("playback-v1"),
+            &accounts::root()?,
+            &account,
+            course,
+            &video.hash_id,
+        )?;
+        let ffmpeg = [
+            "/opt/homebrew/bin/ffmpeg",
+            "/usr/local/bin/ffmpeg",
+            "/usr/bin/ffmpeg",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|p| p.is_file())
+        .unwrap_or_else(|| PathBuf::from("ffmpeg"));
+        api.download_video_to(video,&temp,&resume,&ffmpeg,&cancel,|p| {if generation!=fingerprint("course") {cancel.store(true,Ordering::Relaxed);}if let Some(j)=self.jobs.lock().unwrap().get_mut(id) {j.state=json!({"state":"running","phase":p.phase,"bytes":p.bytes,"completed":p.completed,"segments":p.total});}},
+            |signature, legacy, count, shared| playback::reuse_playback_parts(&playback_cache,shared,course,&video.hash_id,signature,legacy,count)).await?;
+        if cancel.load(Ordering::Relaxed) || generation != fingerprint("course") {
+            bail!("cancelled")
+        }
+        let filename = format!(
+            "{} {}.mp4",
+            folder_component(&video.title),
+            folder_component(&video.time)
+        );
+        let hash = file_digest(&temp)?;
+        if cancel.load(Ordering::Relaxed) || generation != fingerprint("course") {
+            bail!("cancelled")
+        }
+        let path = finish_archive(&temp, &dir, &filename, &hash)?;
+        let _ = std::fs::remove_dir_all(&resume);
+        playback::prune_empty(&resume);
+        let meta = json!({"title":video.title,"time":video.time,"course":course,"semester":semester,"source":"教学网课堂实录","recordingId":video.hash_id,"sha256":hash,"downloadedAt":chrono::Utc::now().to_rfc3339()});
+        let sidecar = path.with_file_name(format!(
+            "{}.source.json",
+            path.file_name().unwrap().to_string_lossy()
+        ));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .private_mode()
+            .open(sidecar)
+        {
+            Ok(mut f) => {
+                f.write_all(&serde_json::to_vec_pretty(&meta)?)?;
+                f.sync_all()?;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e.into()),
+        }
+        Ok(path.display().to_string())
+    }
     pub(crate) async fn download_video(
         self: &Arc<Self>,
         course: &str,
         video_id: &str,
     ) -> Result<Value> {
+        if course.starts_with('_') {
+            return self.download_course_video(course, video_id).await;
+        }
         let replay = crate::haoxue::replay_ref(course, video_id).await?;
         self.enqueue_download(
             format!("video:{course}:{video_id}"),

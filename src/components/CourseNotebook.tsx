@@ -297,7 +297,7 @@ function NotebookEditor({
         }));
       } else {
         const rows = await action<Replay[]>({
-          kind: "videos",
+          kind: "courseVideos",
           course: course.id,
         });
         candidates = [...rows]

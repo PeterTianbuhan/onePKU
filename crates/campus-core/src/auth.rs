@@ -25,7 +25,8 @@ impl Core {
     /// 密码只在这一次调用里用到，不进缓存键，也不写进本机快照。
     /// 本机钥匙串里的统一认证账号；只报账号，绝不返回密码或令牌密钥。
     pub(crate) fn credentials_status() -> Value {
-        let stored = pkuinfo_common::credential::keyring_username();
+        let stored = pkuinfo_common::credential::keyring_username()
+            .or_else(|| pkuinfo_common::credential::onepku_legacy_credential().map(|(c, _)| c.username));
         json!({
             "stored": stored.is_some(),
             "username": stored.unwrap_or_default(),
@@ -41,6 +42,7 @@ impl Core {
     ) -> Result<Value> {
         if !remember {
             pkuinfo_common::credential::keyring_clear()?;
+            pkuinfo_common::credential::clear_onepku_legacy_credentials()?;
             return Ok(Self::credentials_status());
         }
         let username = username.trim();
@@ -48,10 +50,12 @@ impl Core {
             bail!("要记住登录，请填写完整的校园账号与密码");
         }
         pkuinfo_common::credential::keyring_store(username, password)?;
+        pkuinfo_common::credential::clear_onepku_legacy_credentials()?;
         Ok(Self::credentials_status())
     }
     pub(crate) fn clear_credentials() -> Result<Value> {
         pkuinfo_common::credential::keyring_clear()?;
+        pkuinfo_common::credential::clear_onepku_legacy_credentials()?;
         pkuinfo_common::credential::keyring_clear_otp()?;
         Ok(Self::credentials_status())
     }
@@ -119,8 +123,19 @@ impl Core {
     /// 这条路径绝不写也绝不删钥匙串：自动续期要是顺手清了凭据，下次过期就只剩人工登录。
     /// 钥匙串里有手机令牌密钥时，这里会生成当前口令。
     pub(crate) async fn relogin(&self, service: &str) -> Result<()> {
-        let credential = pkuinfo_common::credential::keyring_credential()
-            .ok_or_else(|| anyhow!("没有记住的账号，请手动登录"))?;
+        let credential = if let Some(credential) = pkuinfo_common::credential::keyring_credential() {
+            credential
+        } else if let Some((credential, generation)) = pkuinfo_common::credential::onepku_legacy_credential() {
+            if generation != fingerprint("course") {
+                let identity = self.course_api()?.account_identity().await?;
+                if identity.user_name != credential.username {
+                    bail!("记住的账号与当前教学网身份不一致，请手动登录");
+                }
+            }
+            credential
+        } else {
+            bail!("没有记住的账号，请手动登录");
+        };
         let otp = otp_for_login(None, None, stored_otp_secret().as_deref())?;
         self.login_with_password(
             service,
@@ -196,6 +211,9 @@ impl Core {
         password: &str,
         otp: Option<&str>,
     ) -> Result<()> {
+        if service == "haoxue" {
+            return crate::haoxue::login_password(username, password, otp).await;
+        }
         let store = Store::new(service)?;
         let device = if service == "treehole" {
             pku_treehole::login::get_device_uuid(&store)
@@ -399,7 +417,8 @@ pub(crate) fn password_services(requested: &[String]) -> Vec<String> {
 }
 
 fn resolve_login_identity(username: &str, password: &str) -> Result<(String, String)> {
-    let stored = pkuinfo_common::credential::keyring_credential();
+    let stored = pkuinfo_common::credential::keyring_credential()
+        .or_else(|| pkuinfo_common::credential::onepku_legacy_credential().map(|(c, _)| c));
     let username = if username.trim().is_empty() {
         stored
             .as_ref()

@@ -30,6 +30,7 @@ pub(crate) fn cacheable(req: &Request) -> bool {
         req,
         Request::Courses
             | Request::AllCourses
+            | Request::CourseVideos { .. }
             | Request::Videos { .. }
             | Request::Scores
             | Request::Exams

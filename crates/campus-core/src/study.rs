@@ -194,7 +194,18 @@ impl Core {
             .cloned()
             .ok_or_else(|| anyhow!("课程不在当前账号列表中"))
     }
-    /// 回放只要好学源：直接拿课名去课堂实录里查，不再经过教学网账号。
+    pub(crate) async fn course_videos(&self, course: &str, warnings: &mut Vec<String>) -> Result<Value> {
+        let c = self.find_course(course).await?;
+        let videos = self
+            .course_api()?
+            .list_videos(course, c["name"].as_str().unwrap_or(""))
+            .await?;
+        if videos.len() >= 100 {
+            warnings.push("当前显示前 100 条回放，完整列表请在教学网查看".into());
+        }
+        Ok(serde_json::to_value(videos)?)
+    }
+    /// 额外的课堂实录目录使用独立授权。
     pub(crate) async fn videos(&self, name: &str, warnings: &mut Vec<String>) -> Result<Value> {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 200 {

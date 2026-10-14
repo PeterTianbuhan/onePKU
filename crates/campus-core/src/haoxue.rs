@@ -508,6 +508,43 @@ pub(crate) async fn relay_login(url: &str, cookies: &[(String, String)]) -> Resu
         }
     }
 }
+/// 使用已记住的统一认证凭据换取课堂实录票据；不要求用户再次输入，也不改写凭据。
+pub(crate) async fn login_password(username: &str, password: &str, otp: Option<&str>) -> Result<()> {
+    let builder = reqwest::Client::builder()
+        .cookie_store(true)
+        .user_agent(ANDROID_UA)
+        .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() < 6
+                && attempt.url().scheme() == "https"
+                && matches!(attempt.url().host_str(), Some("passport.pku.edu.cn" | "iaaa.pku.edu.cn")) {
+                attempt.follow()
+            } else { attempt.stop() }
+        }));
+    let client = pkuinfo_common::tls::apply_extra_roots(builder)?.build()?;
+    client.get("https://passport.pku.edu.cn/auth/login")
+        .query(&[("redirect", "https://passport.pku.edu.cn/auth/app-login")])
+        .send().await?.error_for_status()?;
+    let config = pkuinfo_common::iaaa::IaaaConfig {
+        app_id: "resource".into(),
+        redirect_url: "https://passport.pku.edu.cn".into(),
+    };
+    let token = pkuinfo_common::iaaa::login_password(&client, &config, username, password, otp).await?;
+    // 回调带票据，网络错误必须去掉 URL，避免凭据进入日志或界面。
+    client.get(&config.redirect_url)
+        .query(&[("token", token.token.as_str())])
+        .send().await.map_err(|_| anyhow!("课堂实录换票失败"))?
+        .error_for_status().map_err(|_| anyhow!("课堂实录换票失败"))?;
+    let response = client.get("https://passport.pku.edu.cn/auth/app-login")
+        .send().await?.error_for_status()?;
+    let body = response.text().await?;
+    let raw = extract_payload(&body).ok_or_else(|| anyhow!("课堂实录未返回登录授权"))?;
+    let payload = Value::String(raw);
+    let (_, _, _, account) = parse_payload(&payload)?;
+    if account != username.trim() { bail!("课堂实录返回的身份与当前账号不一致"); }
+    save_session(&payload)?;
+    Ok(())
+}
 /// 好学会话单独保存；令牌与 Cookie 只落在这份私有会话里，不进返回值。
 pub(crate) fn save_session(payload: &Value) -> Result<Value> {
     let (token, cookie_token, name, account) = parse_payload(payload)?;

@@ -240,17 +240,19 @@ type Candidate = {
 };
 
 function Videos({ course, login }: { course: Course; login: Login }) {
-  // 回放只要好学源：直接拿课名去课堂实录查，不再要求连接教学网。
-  const q = useResource<Replay[]>({ kind: "videos", course: course.name });
-  const haoxue = useResource<{ connected: boolean }>({ kind: "haoxueStatus" });
-  const connected = haoxue.data?.data?.connected ?? false;
+  const [params, navigate] = usePageParams("课程");
+  const extraSource = params.get("source") !== "course";
+  const q = useResource<Replay[]>(
+    extraSource
+      ? { kind: "videos", course: course.name }
+      : { kind: "courseVideos", course: course.id },
+  );
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState("");
   const [playing, setPlaying] = useState<{
     video: Replay;
     generation: string;
   }>();
-  const [params, navigate] = usePageParams("课程");
 
   const videoId = params.get("video");
   const ambiguous = q.data?.error?.code === "haoxueAmbiguous";
@@ -295,37 +297,18 @@ function Videos({ course, login }: { course: Course; login: Login }) {
       )
       .finally(() => {
         setConnecting(false);
-        void haoxue.refetch();
         // 列表也可能停在「课堂实录登录已失效」上，连上就重新取一次。
         void q.refetch();
       });
-  }
-  if (!connected && !haoxue.data?.error && !haoxue.isFetching) {
-    return (
-      <>
-        <Empty>
-          课程回放由课堂实录提供。连接后这门课的每节课堂都能直接播放。
-        </Empty>
-        <Button
-          variant="primary"
-          disabled={connecting}
-          onClick={() => void connect()}
-        >
-          连接课堂实录
-        </Button>
-        {connectError && (
-          <p className="inline-error" role="alert">
-            {connectError}
-          </p>
-        )}
-      </>
-    );
   }
   if (ambiguous) {
     return (
       <section className="resource resource-plain" aria-label="同名课程选择">
         <div className="resource-head">
           <h2>课程回放</h2>
+          <Button onClick={() => navigate({ source: "course", video: null })}>
+            查看教学网回放
+          </Button>
         </div>
         <p>
           好学上有几门同名的「{course.name}
@@ -390,19 +373,32 @@ function Videos({ course, login }: { course: Course; login: Login }) {
           className="resource-plain"
           heading={
             <span className="subtle">
-              课堂实录 · {q.data?.data?.length ?? 0} 节回放
+              {extraSource ? "课堂实录" : "教学网"} ·{" "}
+              {q.data?.data?.length ?? 0} 节回放
             </span>
           }
           extra={
-            q.data?.error?.code === "haoxueAuth" ? (
+            <>
               <Button
-                variant="primary"
-                disabled={connecting}
-                onClick={() => void connect()}
+                onClick={() =>
+                  navigate({
+                    source: extraSource ? "course" : null,
+                    video: null,
+                  })
+                }
               >
-                连接课堂实录
+                {extraSource ? "查看教学网回放" : "查看课堂实录回放"}
               </Button>
-            ) : undefined
+              {q.data?.error?.code === "haoxueAuth" ? (
+                <Button
+                  variant="primary"
+                  disabled={connecting}
+                  onClick={() => void connect()}
+                >
+                  连接课堂实录
+                </Button>
+              ) : undefined}
+            </>
           }
         >
           {(videos) =>
@@ -431,7 +427,9 @@ function Videos({ course, login }: { course: Course; login: Login }) {
               </div>
             ) : (
               <Empty>
-                这门课在课堂实录里还没有可播放的回放（课程目录和本学期的课堂记录都查过）。
+                {extraSource
+                  ? "本次课堂实录查询未找到可播放回放。"
+                  : "教学网暂未列出回放，可以查看课堂实录回放的额外目录。"}
               </Empty>
             )
           }
