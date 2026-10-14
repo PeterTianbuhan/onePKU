@@ -90,7 +90,7 @@ describe("independent campus resources", () => {
       await screen.findByText("更新失败，当前显示上次数据。"),
     ).toBeInTheDocument();
     expect(screen.getByText("之前的通知")).toBeInTheDocument();
-    expect(screen.queryByText("等待更新")).not.toBeInTheDocument();
+    expect(screen.queryByText("没有数据")).not.toBeInTheDocument();
   });
   it("keeps query results scoped to the requested search", async () => {
     let finish: (v: unknown) => void = () => {};

@@ -302,7 +302,7 @@ export default function Notices({ login }: { login: Login }) {
                 ? "没有找到匹配的通知"
                 : unreadOnly
                   ? "未读通知已看完"
-                  : "这个来源暂无已加载通知"}
+                  : "这个来源没有通知"}
             </Empty>
           )}
           {source !== "all" && news.hasMore(source) && (
