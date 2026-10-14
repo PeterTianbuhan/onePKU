@@ -30,6 +30,9 @@ object Ua {
 /** 会话失效（被重定向回登录页 / 401），需要重新登录。 */
 class SessionExpiredException(message: String = "登录会话已过期") : Exception(message)
 
+/** 自动重登已经失败或没有密钥。界面应显示未登录，并保留上次的数据。 */
+class NeedsLoginException(message: String = "登录已失效，请重新登录") : Exception(message)
+
 /** 树洞要求短信验证（code 40002）。 */
 class SmsVerificationRequiredException : Exception("树洞需要短信验证")
 

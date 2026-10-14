@@ -39,14 +39,19 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import me.petertian.onepku.core.session.Service
+import me.petertian.onepku.data.auth.AuthManager
 import me.petertian.onepku.data.course.AssignmentSummary
 import me.petertian.onepku.data.repo.CourseRepository
 import me.petertian.onepku.ui.components.EmptyBox
 import me.petertian.onepku.ui.components.ErrorBox
 import me.petertian.onepku.ui.components.LoadingBox
+import me.petertian.onepku.ui.components.LoginBanner
 import me.petertian.onepku.ui.components.UiData
+import me.petertian.onepku.ui.components.loadKeepingLast
 import me.petertian.onepku.ui.navigation.Routes
 import me.petertian.onepku.ui.navigation.back
+import me.petertian.onepku.ui.navigation.toLogin
 import me.petertian.onepku.ui.today.deadlineLabel
 import javax.inject.Inject
 
@@ -58,11 +63,13 @@ data class AssignmentsUiState(
     val refreshing: Boolean = false,
     val filter: AssignmentFilter = AssignmentFilter.PENDING,
     val items: UiData<List<AssignmentSummary>> = UiData.Loading,
+    val loginPrompt: String? = null,
 )
 
 @HiltViewModel
 class AssignmentsViewModel @Inject constructor(
     private val repo: CourseRepository,
+    private val auth: AuthManager,
 ) : ViewModel() {
     private val _ui = MutableStateFlow(AssignmentsUiState())
     val ui: StateFlow<AssignmentsUiState> = _ui.asStateFlow()
@@ -76,13 +83,16 @@ class AssignmentsViewModel @Inject constructor(
     private fun load(force: Boolean) {
         viewModelScope.launch {
             _ui.update { it.copy(refreshing = true) }
-            val result = try {
+            val (data, prompt) = loadKeepingLast(_ui.value.items, "作业加载失败") {
                 val list = repo.courses(force).filter { c -> c.isCurrent }
-                UiData.Ready(repo.assignments(list, force))
-            } catch (e: Exception) {
-                UiData.Failure(e.message ?: "作业加载失败")
+                repo.assignments(list, force)
             }
-            _ui.update { it.copy(refreshing = false, items = result) }
+            val shown = prompt ?: if (!auth.isLoggedIn(Service.COURSE) && data is UiData.Ready) {
+                auth.loggedOutPrompt()
+            } else {
+                null
+            }
+            _ui.update { it.copy(refreshing = false, items = data, loginPrompt = shown) }
         }
     }
 }
@@ -124,7 +134,12 @@ fun AssignmentsScreen(nav: NavHostController, vm: AssignmentsViewModel = hiltVie
             ) {
                 when (val data = ui.items) {
                     is UiData.Loading -> LoadingBox()
-                    is UiData.Failure -> ErrorBox(data.message, onRetry = vm::refresh)
+                    is UiData.Failure -> Column(Modifier.fillMaxSize()) {
+                        ui.loginPrompt?.let { prompt ->
+                            LoginBanner(prompt, onLogin = { nav.toLogin() })
+                        }
+                        ErrorBox(data.message, modifier = Modifier.weight(1f), onRetry = vm::refresh)
+                    }
                     is UiData.Ready -> {
                         val now = System.currentTimeMillis()
                         val filtered = data.value.filter { a ->
@@ -139,7 +154,12 @@ fun AssignmentsScreen(nav: NavHostController, vm: AssignmentsViewModel = hiltVie
                             }
                         }
                         if (filtered.isEmpty()) {
-                            EmptyBox("暂无符合条件的作业")
+                            Column(Modifier.fillMaxSize()) {
+                                ui.loginPrompt?.let { prompt ->
+                                    LoginBanner(prompt, onLogin = { nav.toLogin() })
+                                }
+                                EmptyBox("暂无符合条件的作业", modifier = Modifier.weight(1f))
+                            }
                         } else {
                             // 待交按最快到期在上;其余筛选按最近提交在上,没有提交时间的退回截止时间倒序。
                             val ordered = filtered.sortedWith(
@@ -155,6 +175,11 @@ fun AssignmentsScreen(nav: NavHostController, vm: AssignmentsViewModel = hiltVie
                                 contentPadding = PaddingValues(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
+                                if (ui.loginPrompt != null) {
+                                    item(key = "login") {
+                                        LoginBanner(ui.loginPrompt!!, onLogin = { nav.toLogin() })
+                                    }
+                                }
                                 items(ordered, key = { "${it.courseId}-${it.contentId}" }) { a ->
                                     Card(
                                         Modifier.fillMaxWidth().clickable {

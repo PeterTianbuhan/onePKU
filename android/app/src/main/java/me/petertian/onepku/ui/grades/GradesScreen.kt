@@ -50,7 +50,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import me.petertian.onepku.core.network.NeedsLoginException
 import me.petertian.onepku.core.network.SmsVerificationRequiredException
+import me.petertian.onepku.core.session.Service
+import me.petertian.onepku.data.auth.AuthManager
 import me.petertian.onepku.data.repo.GradeScopeStore
 import me.petertian.onepku.data.repo.TreeholeRepository
 import me.petertian.onepku.data.treehole.GradeScope
@@ -60,9 +63,11 @@ import me.petertian.onepku.data.treehole.ScopeOverride
 import me.petertian.onepku.data.treehole.countsAsMajor
 import me.petertian.onepku.ui.components.ErrorBox
 import me.petertian.onepku.ui.components.LoadingBox
+import me.petertian.onepku.ui.components.LoginBanner
 import me.petertian.onepku.ui.components.UiData
 import me.petertian.onepku.ui.components.formatTerm
 import me.petertian.onepku.ui.navigation.back
+import me.petertian.onepku.ui.navigation.toLogin
 import javax.inject.Inject
 
 data class GradesUiState(
@@ -73,12 +78,14 @@ data class GradesUiState(
     val editing: Boolean = false,
     val needSms: Boolean = false,
     val smsInfo: String? = null,
+    val loginPrompt: String? = null,
 )
 
 @HiltViewModel
 class GradesViewModel @Inject constructor(
     private val repo: TreeholeRepository,
     private val scopeStore: GradeScopeStore,
+    private val auth: AuthManager,
 ) : ViewModel() {
     private val _ui = MutableStateFlow(GradesUiState())
     val ui: StateFlow<GradesUiState> = _ui.asStateFlow()
@@ -102,16 +109,24 @@ class GradesViewModel @Inject constructor(
         scopeStore.reload()
         viewModelScope.launch {
             _ui.update { it.copy(refreshing = true) }
-            val result = try {
+            val previous = _ui.value.report
+            val (data, prompt) = try {
                 _ui.update { s -> s.copy(needSms = false) }
-                UiData.Ready(repo.scores(force))
+                UiData.Ready(repo.scores(force)) to null
             } catch (e: SmsVerificationRequiredException) {
                 _ui.update { s -> s.copy(needSms = true) }
-                UiData.Failure("树洞需要短信验证后才能查看成绩")
+                UiData.Failure("树洞需要短信验证后才能查看成绩") to null
             } catch (e: Exception) {
-                UiData.Failure(e.message ?: "成绩加载失败")
+                val message = (e as? NeedsLoginException)?.message
+                val kept = if (previous is UiData.Ready) previous else UiData.Failure(e.message ?: "成绩加载失败")
+                kept to message
             }
-            _ui.update { it.copy(refreshing = false, report = result) }
+            val shown = prompt ?: if (!auth.isLoggedIn(Service.TREEHOLE) && data is UiData.Ready) {
+                auth.loggedOutPrompt()
+            } else {
+                null
+            }
+            _ui.update { it.copy(refreshing = false, report = data, loginPrompt = shown) }
         }
     }
 
@@ -169,15 +184,30 @@ fun GradesScreen(nav: NavHostController, vm: GradesViewModel = hiltViewModel()) 
         ) {
             when (val data = ui.report) {
                 is UiData.Loading -> LoadingBox()
-                is UiData.Failure -> ErrorBox(data.message, onRetry = vm::refresh)
-                is UiData.Ready -> GradesContent(data.value, ui, vm)
+                is UiData.Failure -> Column(Modifier.fillMaxSize()) {
+                    ui.loginPrompt?.let { prompt ->
+                        LoginBanner(prompt, onLogin = { nav.toLogin() })
+                    }
+                    ErrorBox(data.message, modifier = Modifier.weight(1f), onRetry = vm::refresh)
+                }
+                is UiData.Ready -> Column(Modifier.fillMaxSize()) {
+                    ui.loginPrompt?.let { prompt ->
+                        LoginBanner(prompt, onLogin = { nav.toLogin() })
+                    }
+                    GradesContent(data.value, ui, vm, Modifier.weight(1f))
+                }
             }
         }
     }
 }
 
 @Composable
-private fun GradesContent(report: ScoreReport, ui: GradesUiState, vm: GradesViewModel) {
+private fun GradesContent(
+    report: ScoreReport,
+    ui: GradesUiState,
+    vm: GradesViewModel,
+    modifier: Modifier = Modifier,
+) {
     val scope = ui.scope
     val override = ui.override
     val stats = report.stats(scope, override)
@@ -197,7 +227,7 @@ private fun GradesContent(report: ScoreReport, ui: GradesUiState, vm: GradesView
     }
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {

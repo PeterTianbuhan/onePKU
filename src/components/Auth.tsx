@@ -24,8 +24,8 @@ export default function Auth({
   const [error, setError] = useState("");
   const [code, setCode] = useState("");
   const [cooldown, setCooldown] = useState(0);
-  // 与安卓端一致：账号密码一次提交，四个服务依次换回会话，免去逐页扫码。
-  const [mode, setMode] = useState<"qr" | "password">("qr");
+  // 账号密码是默认入口，扫码留在下一步。一次提交把教学网、树洞、校园卡、北大空间和校内门户都换上。
+  const [mode, setMode] = useState<"qr" | "password">("password");
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
@@ -33,7 +33,11 @@ export default function Auth({
   const [partial, setPartial] = useState<string[]>([]);
   // 与安卓端一样：账号密码可以存进系统加密存储，会话过期后自动换票。
   const [remember, setRemember] = useState(true);
-  const stored = useResource<{ stored: boolean; username: string }>({
+  const stored = useResource<{
+    stored: boolean;
+    username: string;
+    otpStored?: boolean;
+  }>({
     kind: "credentials",
   });
   const active = useRef(true);
@@ -154,8 +158,7 @@ export default function Auth({
         username: user,
         password,
         otp: otp.trim() || null,
-        // 门户只是用来认院系的，不参与「一次连全部数据服务」。
-        services: everywhere && service !== "portal" ? [] : [service],
+        services: everywhere ? [] : [service],
         remember,
       });
       for (const name of result.done) resetService(client, name as Service);
@@ -264,7 +267,12 @@ export default function Auth({
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
-          <label htmlFor="iaaa-otp">动态口令（未开启可留空）</label>
+          <label htmlFor="iaaa-otp">
+            动态口令
+            {stored.data?.data?.otpStored
+              ? "（已保存手机令牌，留空会自动填写）"
+              : "（未保存密钥时可手填，或到设置里保存）"}
+          </label>
           <input
             id="iaaa-otp"
             type="password"
@@ -273,16 +281,14 @@ export default function Auth({
             value={otp}
             onChange={(e) => setOtp(e.target.value)}
           />
-          {service !== "portal" && (
-            <label className="auth-check">
-              <input
-                type="checkbox"
-                checked={everywhere}
-                onChange={(e) => setEverywhere(e.target.checked)}
-              />
-              一次连接全部服务（教学网、树洞、校园卡、北大空间）
-            </label>
-          )}
+          <label className="auth-check">
+            <input
+              type="checkbox"
+              checked={everywhere}
+              onChange={(e) => setEverywhere(e.target.checked)}
+            />
+            一次连接全部服务（教学网、树洞、校园卡、北大空间、校内门户）
+          </label>
           <label className="auth-check">
             <input
               type="checkbox"

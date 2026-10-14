@@ -143,7 +143,12 @@ export default function Settings({
   const client = useQueryClient();
   const prefs = useResource<Preferences>({ kind: "preferences" });
   const haoxue = useResource<Haoxue>({ kind: "haoxueStatus" });
-  const credentials = useResource<{ stored: boolean; username: string }>({
+  const credentials = useResource<{
+    stored: boolean;
+    username: string;
+    otpStored?: boolean;
+    otpImport?: { userId?: string; userName?: string } | null;
+  }>({
     kind: "credentials",
   });
   const college = useResource<DepartmentState>({ kind: "departments" });
@@ -160,6 +165,11 @@ export default function Settings({
   const [haoxueError, setHaoxueError] = useState("");
   const [credentialMessage, setCredentialMessage] = useState("");
   const [credentialError, setCredentialError] = useState("");
+  const [accountDraft, setAccountDraft] = useState("");
+  const [passwordDraft, setPasswordDraft] = useState("");
+  const [secretDraft, setSecretDraft] = useState("");
+  const [clearSecret, setClearSecret] = useState(false);
+  const [savingLogin, setSavingLogin] = useState(false);
   const [detecting, setDetecting] = useState(false);
   const [portalMessage, setPortalMessage] = useState("");
   const [portalError, setPortalError] = useState("");
@@ -194,7 +204,10 @@ export default function Settings({
       .catch(() => {});
   }
   const learner = haoxue.data?.data;
-  const portalConnected = portal.data?.data?.connected ?? false;
+  const portalSession = sessions?.find((item) => item.service === "portal");
+  const portalConnected = portalSession
+    ? ["saved", "verified"].includes(portalSession.state)
+    : (portal.data?.data?.connected ?? false);
   const portalDepartment = portal.data?.data?.department ?? "";
 
   const profileQuery = useProfile();
@@ -307,9 +320,16 @@ export default function Settings({
             service="portal"
             name={serviceNames.portal}
             scope={serviceScope.portal}
-            state={portalConnected ? "已连接" : "尚未连接"}
+            state={
+              portalSession
+                ? stateText(portalSession.state)
+                : portalConnected
+                  ? "已连接"
+                  : "尚未连接"
+            }
             connected={portalConnected}
             message={
+              portalSession?.message ||
               portalError ||
               portalMessage ||
               (portalConnected && portalDepartment
@@ -424,30 +444,157 @@ export default function Settings({
         <h2>登录与凭证</h2>
         <SettingRow
           label="统一身份认证"
-          description="账号密码可以记在系统加密存储里（macOS 钥匙串 / Windows 凭据管理器），会话过期时应用用它静默重连；作业提交等写操作绝不自动重放。"
+          description="账号、密码和手机令牌密钥可以随时改。改完要点「登录并保存」，登录成功后才会替换钥匙串里的旧值；失败则原来的仍然有效。密钥只进系统钥匙串，不写进普通文件。会话过期时用已保存的值自动重登一次。"
+          stacked
           control={
             <Button
               onClick={() => {
                 setCredentialError("");
                 void action({ kind: "clearCredentials" })
                   .then(() => {
-                    setCredentialMessage("已清除记住的账号");
+                    setCredentialMessage("已清除记住的账号和手机令牌");
+                    setAccountDraft("");
+                    setPasswordDraft("");
+                    setSecretDraft("");
+                    setClearSecret(false);
                     void credentials.refetch();
                   })
                   .catch(() => setCredentialError("未能清除，请重试"));
               }}
-              disabled={!credentials.data?.data?.stored}
+              disabled={
+                !credentials.data?.data?.stored &&
+                !credentials.data?.data?.otpStored
+              }
             >
               清除
             </Button>
           }
           status={
             credentials.data?.data?.stored
-              ? `已记住 ${credentials.data.data.username}`
+              ? `已记住 ${credentials.data.data.username}${credentials.data.data.otpStored ? "，已保存手机令牌" : ""}`
               : credentialMessage || undefined
           }
           error={credentialError || undefined}
-        />
+        >
+          <form
+            className="auth-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setCredentialError("");
+              setCredentialMessage("");
+              setSavingLogin(true);
+              void action<{
+                failed?: { message: string }[];
+                remembered?: boolean;
+              }>({
+                kind: "authPassword",
+                username: accountDraft,
+                password: passwordDraft,
+                otp: null,
+                otpSecret: clearSecret ? "" : secretDraft.trim() || null,
+                services: [],
+                remember: true,
+              })
+                .then((result) => {
+                  const failed = result.failed ?? [];
+                  setCredentialMessage(
+                    failed.length
+                      ? `已登录部分服务。未成功：${failed.map((item) => item.message).join("；")}`
+                      : "已用新的账号登录，并保存到钥匙串",
+                  );
+                  setPasswordDraft("");
+                  setSecretDraft("");
+                  setClearSecret(false);
+                  refreshSessions();
+                  void credentials.refetch();
+                  void client.invalidateQueries({ queryKey: ["resource"] });
+                })
+                .catch((error: Error) =>
+                  setCredentialError(
+                    error.message || "登录没有成功，钥匙串里的账号没有改动",
+                  ),
+                )
+                .finally(() => setSavingLogin(false));
+            }}
+          >
+            <label htmlFor="settings-user">校园账号</label>
+            <input
+              id="settings-user"
+              autoComplete="username"
+              value={accountDraft}
+              placeholder={credentials.data?.data?.username || "学号或职工号"}
+              onChange={(event) => setAccountDraft(event.target.value)}
+            />
+            <label htmlFor="settings-pass">密码</label>
+            <input
+              id="settings-pass"
+              type="password"
+              autoComplete="current-password"
+              value={passwordDraft}
+              placeholder="留空则继续用已保存的密码"
+              onChange={(event) => setPasswordDraft(event.target.value)}
+            />
+            <label htmlFor="settings-secret">手机令牌密钥</label>
+            <input
+              id="settings-secret"
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              value={secretDraft}
+              placeholder={
+                credentials.data?.data?.otpStored
+                  ? "已保存。要更换就贴上新的 Base32 密钥"
+                  : "Base32 密钥，没有可以留空"
+              }
+              onChange={(event) => setSecretDraft(event.target.value)}
+            />
+            <label className="auth-check">
+              <input
+                type="checkbox"
+                checked={clearSecret}
+                onChange={(event) => setClearSecret(event.target.checked)}
+              />
+              登录成功后清除已保存的手机令牌
+            </label>
+            <Button type="submit" variant="primary" disabled={savingLogin}>
+              {savingLogin ? "正在登录…" : "登录并保存"}
+            </Button>
+          </form>
+          {credentials.data?.data?.otpImport && (
+            <div className="auth-form">
+              <p>
+                这台电脑上有 pkucli 保存的手机令牌
+                {credentials.data.data.otpImport.userName
+                  ? `（${credentials.data.data.otpImport.userName}）`
+                  : ""}
+                。导入后会放进系统钥匙串，之后登录和自动重登都会用它。
+              </p>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  setCredentialError("");
+                  void action({ kind: "importOtp" })
+                    .then(() => {
+                      setCredentialMessage("已把 pkucli 的手机令牌导入钥匙串");
+                      void credentials.refetch();
+                    })
+                    .catch(() => setCredentialError("没有导入成功"));
+                }}
+              >
+                导入
+              </Button>
+              <Button
+                onClick={() => {
+                  void action({ kind: "dismissOtpImport" }).finally(() =>
+                    credentials.refetch(),
+                  );
+                }}
+              >
+                暂不导入
+              </Button>
+            </div>
+          )}
+        </SettingRow>
         <SettingRow
           label="保持登录"
           description="运行时每 15 分钟做一次轻量会话检查；学校要求验证或令牌到期时仍需重新登录。"

@@ -35,8 +35,8 @@ class CourseRepository @Inject constructor(
     private val auth: AuthManager,
     @ApplicationContext private val context: Context,
 ) {
-    private val coursesCache = ScopedCache<Unit, List<CourseInfo>>({ auth.cacheScope(Service.COURSE) }, TTL)
-    private val assignmentsCache = ScopedCache<String, List<AssignmentSummary>>({ auth.cacheScope(Service.COURSE) }, TTL)
+    private val coursesCache = TtlCache<Unit, List<CourseInfo>>(TTL)
+    private val assignmentsCache = TtlCache<String, List<AssignmentSummary>>(TTL)
 
     private suspend fun <T> run(block: suspend CourseApi.() -> T): T = withReauth(auth, Service.COURSE) {
         api.block()
@@ -76,8 +76,6 @@ class CourseRepository @Inject constructor(
                         }
                     } catch (e: CancellationException) {
                         throw e
-                    } catch (e: AccountChangedException) {
-                        throw e
                     } catch (e: Exception) {
                         emptyList()
                     }
@@ -89,28 +87,23 @@ class CourseRepository @Inject constructor(
     suspend fun assignmentsForCourse(courseId: String, courseName: String): List<AssignmentSummary> =
         run { listAssignmentsForCourse(CourseInfo(courseId, courseName, true)) }
 
-    /** 下载附件到 应用专属 Download/OnePKU/<账号>/<courseName>/,换账号看不到上一账号的文件。 */
+    /** 下载附件到应用专属 Download/OnePKU/<courseName>/。 */
     suspend fun download(courseName: String, attachment: Attachment): File {
         val dir = File(
             context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
-            "OnePKU/${accountDir()}/${sanitize(courseName)}",
+            "OnePKU/${sanitize(courseName)}",
         )
         val dest = File(dir, sanitize(attachment.name))
         if (dest.exists() && dest.length() > 0) return dest
         return run { downloadFile(attachment.url, dest) }
     }
 
-    /** 预览用:落到缓存的 previews/<账号> 目录,不混进课程资料;同名文件不重复下载。 */
+    /** 预览用:落到缓存的 previews 目录,不混进课程资料;同名文件不重复下载。 */
     suspend fun cachedFile(attachment: Attachment): File {
-        val dir = File(context.cacheDir, "previews/${accountDir()}").apply { mkdirs() }
+        val dir = File(context.cacheDir, "previews").apply { mkdirs() }
         val dest = File(dir, sanitize(attachment.name))
         if (dest.exists() && dest.length() > 0) return dest
         return run { downloadFile(attachment.url, dest) }
-    }
-
-    private fun accountDir(): String {
-        val uid = auth.sessionUid(Service.COURSE).ifBlank { "anonymous" }
-        return sha256(uid.toByteArray()).take(24)
     }
 
     private fun sanitize(name: String): String =

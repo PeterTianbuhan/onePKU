@@ -34,23 +34,30 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import me.petertian.onepku.core.session.Service
+import me.petertian.onepku.data.auth.AuthManager
 import me.petertian.onepku.data.course.CourseInfo
 import me.petertian.onepku.data.repo.CourseRepository
 import me.petertian.onepku.ui.components.ErrorBox
 import me.petertian.onepku.ui.components.LoadingBox
+import me.petertian.onepku.ui.components.LoginBanner
 import me.petertian.onepku.ui.components.UiData
 import me.petertian.onepku.ui.components.formatTerm
+import me.petertian.onepku.ui.components.loadKeepingLast
 import me.petertian.onepku.ui.navigation.Routes
+import me.petertian.onepku.ui.navigation.toLogin
 import javax.inject.Inject
 
 data class CoursesUiState(
     val refreshing: Boolean = false,
     val courses: UiData<List<CourseInfo>> = UiData.Loading,
+    val loginPrompt: String? = null,
 )
 
 @HiltViewModel
 class CoursesViewModel @Inject constructor(
     private val repo: CourseRepository,
+    private val auth: AuthManager,
 ) : ViewModel() {
     private val _ui = MutableStateFlow(CoursesUiState())
     val ui: StateFlow<CoursesUiState> = _ui.asStateFlow()
@@ -62,12 +69,15 @@ class CoursesViewModel @Inject constructor(
     private fun load(force: Boolean) {
         viewModelScope.launch {
             _ui.update { it.copy(refreshing = true) }
-            val result = try {
-                UiData.Ready(repo.courses(force))
-            } catch (e: Exception) {
-                UiData.Failure(e.message ?: "课程加载失败")
+            val (data, prompt) = loadKeepingLast(_ui.value.courses, "课程加载失败") {
+                repo.courses(force)
             }
-            _ui.update { it.copy(refreshing = false, courses = result) }
+            val shown = prompt ?: if (!auth.isLoggedIn(Service.COURSE) && data is UiData.Ready) {
+                auth.loggedOutPrompt()
+            } else {
+                null
+            }
+            _ui.update { it.copy(refreshing = false, courses = data, loginPrompt = shown) }
         }
     }
 }
@@ -85,7 +95,12 @@ fun CourseListScreen(nav: NavHostController, vm: CoursesViewModel = hiltViewMode
         ) {
             when (val data = ui.courses) {
                 is UiData.Loading -> LoadingBox()
-                is UiData.Failure -> ErrorBox(data.message, onRetry = vm::refresh)
+                is UiData.Failure -> Column(Modifier.fillMaxSize()) {
+                    ui.loginPrompt?.let { prompt ->
+                        LoginBanner(prompt, onLogin = { nav.toLogin() })
+                    }
+                    ErrorBox(data.message, modifier = Modifier.weight(1f), onRetry = vm::refresh)
+                }
                 is UiData.Ready -> {
                     val groups = data.value
                         .groupBy { it.semester }
@@ -103,6 +118,11 @@ fun CourseListScreen(nav: NavHostController, vm: CoursesViewModel = hiltViewMode
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
+                        if (ui.loginPrompt != null) {
+                            item(key = "login") {
+                                LoginBanner(ui.loginPrompt!!, onLogin = { nav.toLogin() })
+                            }
+                        }
                         groups.forEach { (semester, list) ->
                             item(key = "sem-$semester") {
                                 Text(

@@ -5,7 +5,7 @@ import kotlinx.coroutines.withContext
 import me.petertian.onepku.core.network.CookieStores
 import me.petertian.onepku.core.network.HttpFactory
 import me.petertian.onepku.core.network.requireBody
-import me.petertian.onepku.core.network.SessionExpiredException
+import me.petertian.onepku.core.network.NeedsLoginException
 import me.petertian.onepku.core.network.Ua
 import me.petertian.onepku.core.session.Credentials
 import me.petertian.onepku.core.session.Service
@@ -33,6 +33,7 @@ class AuthManager @Inject constructor(
     private val cookieStores: CookieStores,
     private val portal: PortalApi,
 ) {
+    private val reloginGate = ReloginGate()
 
     fun isLoggedIn(service: Service): Boolean = sessionStore.isLoggedIn(service)
 
@@ -40,32 +41,100 @@ class AuthManager @Inject constructor(
 
     fun hasCredentials(): Boolean = sessionStore.credentials() != null
 
-    fun cacheScope(service: Service): String = sessionStore.cacheScope(service)
-
-    fun sessionUid(service: Service): String = sessionStore.session(service)?.uid?.trim().orEmpty()
-
     fun storedUsername(): String? = sessionStore.credentials()?.username
 
-    suspend fun login(service: Service, username: String, password: String, otpCode: String? = null) {
-        sessionStore.saveCredentials(Credentials(username, password))
+    fun otpStored(): Boolean = sessionStore.otpStored()
+
+    fun stopRelogin(service: Service) {
+        reloginGate.noteFailure(service.key)
+    }
+
+    /**
+     * 密码只在某个服务登录成功之后才写入加密存储。
+     * `otpSecret` 为 null 表示沿用已保存的密钥；空字符串表示成功后清除。
+     */
+    suspend fun login(
+        service: Service,
+        username: String,
+        password: String,
+        otpCode: String? = null,
+        otpSecret: String? = null,
+        remember: Boolean = true,
+    ) {
+        val (user, pass) = resolveIdentity(username, password)
+        val code = otpFor(otpCode, otpSecret)
         try {
             when (service) {
-                Service.COURSE -> loginCourse(username, password, otpCode)
-                Service.TREEHOLE -> loginTreehole(username, password, otpCode)
-                Service.CARD -> loginCard(username, password, otpCode)
-                Service.PORTAL -> loginPortal(username, password, otpCode)
+                Service.COURSE -> loginCourse(user, pass, code)
+                Service.TREEHOLE -> loginTreehole(user, pass, code)
+                Service.CARD -> loginCard(user, pass, code)
+                Service.PORTAL -> loginPortal(user, pass, code)
             }
         } catch (e: Exception) {
             sessionStore.clear(service)
             throw e
         }
+        reloginGate.noteSuccess(service.key)
+        if (remember) {
+            sessionStore.saveCredentials(Credentials(user, pass))
+            when {
+                otpSecret == null -> Unit
+                otpSecret.isBlank() -> sessionStore.clearOtpSecret()
+                else -> sessionStore.saveOtpSecret(otpSecret.filter { !it.isWhitespace() })
+            }
+        }
     }
 
-    /** 用已存凭证重登;无凭证抛 SessionExpiredException。 */
-    suspend fun relogin(service: Service) {
-        val cred = sessionStore.credentials()
-            ?: throw SessionExpiredException("请先登录")
-        login(service, cred.username, cred.password)
+    /**
+     * 用已存凭证重登一次。同时只跑一个；失败后停止，直到手动登录成功。
+     * 不改钥匙串里的账号、密码和密钥。
+     */
+    suspend fun relogin(service: Service, manual: Boolean = false) {
+        if (!manual && reloginGate.isStopped(service.key)) throw NeedsLoginException(loggedOutPrompt())
+        val seen = reloginGate.seen(service.key)
+        val lock = reloginGate.lock(service.key)
+        lock.lock()
+        try {
+            if (!manual && reloginGate.isStopped(service.key)) throw NeedsLoginException(loggedOutPrompt())
+            if (reloginGate.peerRefreshed(service.key, seen) && isLoggedIn(service)) return
+            try {
+                val cred = sessionStore.credentials()
+                    ?: throw NeedsLoginException("没有保存的账号，请重新登录")
+                login(service, cred.username, cred.password, remember = false)
+            } catch (e: NeedsLoginException) {
+                reloginGate.noteFailure(service.key)
+                throw e
+            } catch (e: Exception) {
+                reloginGate.noteFailure(service.key)
+                throw NeedsLoginException(loggedOutPrompt())
+            }
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    private fun resolveIdentity(username: String, password: String): Pair<String, String> {
+        val stored = sessionStore.credentials()
+        val user = username.trim().ifEmpty { stored?.username.orEmpty() }
+        val pass = password.ifEmpty { stored?.password.orEmpty() }
+        if (user.isEmpty() || pass.isEmpty()) throw IllegalArgumentException("请填写校园账号与密码")
+        return user to pass
+    }
+
+    private fun otpFor(explicit: String?, replacement: String?): String? {
+        if (!explicit.isNullOrBlank()) return explicit.trim()
+        val secret = when {
+            replacement == null -> sessionStore.otpSecret()
+            replacement.isBlank() -> null
+            else -> replacement.filter { !it.isWhitespace() }
+        } ?: return null
+        return Totp.generate(secret)
+    }
+
+    fun loggedOutPrompt(): String = if (sessionStore.otpStored()) {
+        "自动重新登录没有成功，请重新登录"
+    } else {
+        "登录已失效。若学校要求手机令牌，请先在设置里保存密钥，再重新登录"
     }
 
     fun logout(service: Service) {

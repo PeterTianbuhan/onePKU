@@ -15,9 +15,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,6 +36,32 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import me.petertian.onepku.BuildConfig
+import me.petertian.onepku.core.network.NeedsLoginException
+
+/** 加载失败时留下上次成功的数据，并在需要重新登录时给出提示。 */
+suspend fun <T> loadKeepingLast(
+    previous: UiData<T>,
+    fallback: String,
+    load: suspend () -> T,
+): Pair<UiData<T>, String?> {
+    return try {
+        UiData.Ready(load()) to null
+    } catch (error: Exception) {
+        val prompt = (error as? NeedsLoginException)?.message
+        val data = if (previous is UiData.Ready) previous else UiData.Failure(error.message ?: fallback)
+        data to prompt
+    }
+}
+
+@Composable
+fun LoginBanner(message: String, onLogin: () -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp)) {
+            Text(message, style = MaterialTheme.typography.bodyMedium)
+            TextButton(onClick = onLogin) { Text("重新登录") }
+        }
+    }
+}
 
 /** 页面级异步数据状态。 */
 sealed interface UiData<out T> {
