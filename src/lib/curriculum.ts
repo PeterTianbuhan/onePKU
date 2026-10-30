@@ -815,7 +815,63 @@ function assignByPlan(
   return { ...course, sectionId: null, via: null };
 }
 
+/** 全部方案汇总的「规范化课名 → (课号, 学分)」，由 scripts/curriculum/catalog.mjs 生成。 */
+export type Catalog = Map<string, [string, number | null][]>;
+export function buildCatalog(raw: {
+  courses: Record<string, [string, number | null][]>;
+}): Catalog {
+  const out: Catalog = new Map();
+  for (const [name, pairs] of Object.entries(raw.courses)) {
+    const key = normalizeCourseName(name);
+    const merged = out.get(key) ?? [];
+    for (const [code, credits] of pairs)
+      if (!merged.some(([c, x]) => c === code && x === credits))
+        merged.push([code, credits]);
+    out.set(key, merged);
+  }
+  return out;
+}
+export async function loadCatalog(): Promise<Catalog> {
+  const raw = await import("../../data/curriculum/catalog.json");
+  return buildCatalog(
+    raw.default as unknown as Parameters<typeof buildCatalog>[0],
+  );
+}
+/**
+ * 教学网在修课只有课名：按课名在全部方案里找课号和学分。
+ * 课号不唯一时只认本方案里列出的那一个；学分各方案说法不一时取本方案的，再不行就不填。
+ */
+function lookupCurrent(
+  name: string,
+  catalog: Catalog,
+  index: SectionIndex,
+): { code: string | null; credits: number | null } {
+  const key = normalizeCourseName(name);
+  const pairs = catalog.get(key) ?? catalog.get(variantBase(key)) ?? [];
+  const codes = [...new Set(pairs.map(([code]) => code))];
+  const inPlan = codes.filter((code) => index.byCode.has(code));
+  const code =
+    codes.length === 1 ? codes[0] : inPlan.length === 1 ? inPlan[0] : null;
+  if (!code) return { code: null, credits: null };
+  const credits = [
+    ...new Set(
+      pairs
+        .filter(([c, x]) => c === code && x !== null)
+        .map(([, x]) => x as number),
+    ),
+  ];
+  return {
+    code,
+    credits:
+      credits.length === 1
+        ? credits[0]
+        : (index.byCode.get(code)?.credits ?? null),
+  };
+}
+
 export type ProgressOptions = {
+  /** 有了它，教学网在修课按课名补上课号和学分。 */
+  catalog?: Catalog;
   englishLevel?: EnglishLevel | null;
   /** 按方向分列的类别，键是 `<方案 id>|<系列 id>` 里的系列 id，值是选定的课程组 id。 */
   directions?: Record<string, string>;
@@ -947,14 +1003,17 @@ export function computeProgress(
     const key = normalizeCourseName(c.name);
     if (seen.has(key)) continue;
     seen.add(key);
+    const found = options.catalog
+      ? lookupCurrent(c.name, options.catalog, index)
+      : { code: null, credits: null };
     matched.push(
-      // 教学网课程列表不含学分，在修课程的学分不由方案回填。
+      // 教学网课程列表不含课号和学分，靠全部方案的课名目录补；补不上的只认手填学分。
       assign(
         {
           key: `course:${c.id}`,
-          code: null,
+          code: found.code,
           name: c.name,
-          credits: null,
+          credits: found.credits,
           status: "inProgress",
           term: c.semester ?? "本学期",
           category: "在修",

@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseVolume } from "./parse.mjs";
 import { fetchVolume, manifest, sourceDir } from "./fetch.mjs";
+import { writeCatalog } from "./catalog.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../..");
@@ -272,3 +273,6 @@ writeFileSync(
 );
 console.table(summary);
 console.log(`共 ${index.length} 份方案，索引写入 data/curriculum/index.json`);
+console.log(
+  `课名目录写入 data/curriculum/catalog.json：${writeCatalog()} 个课名`,
+);

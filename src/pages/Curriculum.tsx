@@ -9,6 +9,7 @@ import {
   directionsFor,
   IGNORE,
   inferProfile,
+  loadCatalog,
   loadPlan,
   migrateOverrideKeys,
   normalizeCourseName,
@@ -440,6 +441,11 @@ function PlanProgress({
     queryFn: () => loadPlan(planId),
     staleTime: Infinity,
   });
+  const catalog = useQuery({
+    queryKey: ["curriculumCatalog"],
+    queryFn: loadCatalog,
+    staleTime: Infinity,
+  });
   const entry = planIndex.find((p) => p.id === planId);
   const overrides = useMemo(
     () => overridesForPlan(profile, planId),
@@ -452,6 +458,7 @@ function PlanProgress({
             englishLevel: profile.englishLevel,
             directions: directionsFor(planId, profile.directions),
             manualCredits: profile.manualCredits,
+            catalog: catalog.data,
           })
         : null,
     [
@@ -462,6 +469,7 @@ function PlanProgress({
       profile.englishLevel,
       profile.directions,
       profile.manualCredits,
+      catalog.data,
       planId,
     ],
   );
@@ -674,7 +682,7 @@ function ProgressView({
                 <input
                   className="course-credit"
                   aria-label={`学分 ${c.name}`}
-                  title="教学网在修课程列表不提供学分，手填后才计入合计"
+                  title="没在培养方案里查到这门课的学分，手填后才计入合计"
                   inputMode="decimal"
                   placeholder="?"
                   defaultValue={c.credits ?? ""}
@@ -959,7 +967,7 @@ function CourseList({
           title={
             c.credits === null
               ? c.status === "inProgress"
-                ? "教学网在修课程列表不提供学分，手填后才计入合计"
+                ? "没在培养方案里查到这门课的学分，手填后才计入合计"
                 : "成绩记录与当前培养方案均未提供可用学分"
               : "手填学分以这里为准，清空即回到成绩或方案的口径"
           }

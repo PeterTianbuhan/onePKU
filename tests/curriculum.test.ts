@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeProgress,
   defaultVersion,
+  buildCatalog,
   inferProfile,
   migrateOverrideKeys,
   normalizeCourseName,
@@ -1130,6 +1131,67 @@ describe("courses outside the plan", () => {
       [],
     );
     expect(legacy.pending.map((c) => c.name)).toEqual(["软件设计实践"]);
+  });
+});
+
+describe("in-progress courses from the catalog", () => {
+  const catalog = buildCatalog({
+    courses: {
+      人工智能引论: [["04834040", 3]],
+      离散数学基础: [
+        ["04835310", 3],
+        ["04835310", 2],
+      ],
+      计算机视觉: [
+        ["04814150", 3],
+        ["04835030", 3],
+      ],
+    },
+  });
+  const current = (name: string) => ({ id: name, name, current: true });
+  const inProgress = (p: Progress) =>
+    p.sections
+      .flatMap((s) => [s, ...s.children])
+      .flatMap((s) => s.courses)
+      .concat(p.pending)
+      .filter((c) => c.status === "inProgress");
+  it("fills code and credits by name, preferring the plan when sources disagree", () => {
+    const progress = computeProgress(
+      plan,
+      [],
+      ["人工智能引论", "离散数学基础", "计算机视觉", "太极拳"].map(current),
+      {},
+      { catalog },
+    );
+    const byName = Object.fromEntries(
+      inProgress(progress).map((c) => [c.name, c]),
+    );
+    expect(byName["人工智能引论"]).toMatchObject({
+      code: "04834040",
+      credits: 3,
+      via: "code",
+    });
+    // 各方案学分不一致：取本方案的 3。
+    expect(byName["离散数学基础"]).toMatchObject({
+      code: "04835310",
+      credits: 3,
+    });
+    // 两个课号都不在本方案：不猜，进待确认。
+    expect(byName["计算机视觉"]).toMatchObject({
+      code: null,
+      credits: null,
+      sectionId: null,
+    });
+    expect(byName["太极拳"]).toMatchObject({ code: null, credits: null });
+    expect(progress.totals.inProgress).toBe(6);
+  });
+  it("leaves in-progress courses without codes when no catalog is loaded", () => {
+    const progress = computeProgress(plan, [], [current("人工智能引论")]);
+    expect(inProgress(progress)[0]).toMatchObject({
+      code: null,
+      credits: null,
+      via: "name",
+    });
   });
 });
 

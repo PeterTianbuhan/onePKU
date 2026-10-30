@@ -20,7 +20,8 @@
     "predev": "node scripts/pdf-assets.mjs",
     "curriculum:fetch": "node scripts/curriculum/fetch.mjs",
     "curriculum:build": "node scripts/curriculum/build.mjs",
-    "curriculum:check": "node scripts/curriculum/check.mjs"
+    "curriculum:check": "node scripts/curriculum/check.mjs",
+    "curriculum:catalog": "node scripts/curriculum/catalog.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.23",
