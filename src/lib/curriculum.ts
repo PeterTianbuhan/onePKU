@@ -242,6 +242,8 @@ export type MatchedCourse = {
   key: string;
   /** 8 位课号；教学网在修课和旧缓存的成绩没有。 */
   code: string | null;
+  /** 课名在全部方案的目录里有、但课号不唯一且都不在本方案：确定是方案外的课。 */
+  outsidePlan?: boolean;
   name: string;
   credits: number | null;
   status: CourseStatus;
@@ -810,7 +812,7 @@ function assignByPlan(
     return { ...course, sectionId: t.free, via: "category" };
   // 有课号、课号和课名都不在方案里：别的专业或方向的课，按自主选修「全校课程均可」计入。
   // 没有课号时分不清是方案外的课还是方案里改了名的课，仍进待确认。
-  if (course.code && t.free)
+  if ((course.code || course.outsidePlan) && t.free)
     return { ...course, sectionId: t.free, via: "outside" };
   return { ...course, sectionId: null, via: null };
 }
@@ -840,19 +842,28 @@ export async function loadCatalog(): Promise<Catalog> {
 /**
  * 教学网在修课只有课名：按课名在全部方案里找课号和学分。
  * 课号不唯一时只认本方案里列出的那一个；学分各方案说法不一时取本方案的，再不行就不填。
+ * 几个课号都不在本方案时不挑课号，但它确定是方案外的课，学分一致就照填。
  */
 function lookupCurrent(
   name: string,
   catalog: Catalog,
   index: SectionIndex,
-): { code: string | null; credits: number | null } {
+): { code: string | null; credits: number | null; outsidePlan: boolean } {
   const key = normalizeCourseName(name);
   const pairs = catalog.get(key) ?? catalog.get(variantBase(key)) ?? [];
   const codes = [...new Set(pairs.map(([code]) => code))];
   const inPlan = codes.filter((code) => index.byCode.has(code));
   const code =
     codes.length === 1 ? codes[0] : inPlan.length === 1 ? inPlan[0] : null;
-  if (!code) return { code: null, credits: null };
+  if (!code) {
+    const all = [...new Set(pairs.map(([, x]) => x).filter((x) => x !== null))];
+    const outside = codes.length > 1 && inPlan.length === 0;
+    return {
+      code: null,
+      credits: outside && all.length === 1 ? all[0] : null,
+      outsidePlan: outside,
+    };
+  }
   const credits = [
     ...new Set(
       pairs
@@ -862,6 +873,7 @@ function lookupCurrent(
   ];
   return {
     code,
+    outsidePlan: false,
     credits:
       credits.length === 1
         ? credits[0]
@@ -1005,13 +1017,14 @@ export function computeProgress(
     seen.add(key);
     const found = options.catalog
       ? lookupCurrent(c.name, options.catalog, index)
-      : { code: null, credits: null };
+      : { code: null, credits: null, outsidePlan: false };
     matched.push(
       // 教学网课程列表不含课号和学分，靠全部方案的课名目录补；补不上的只认手填学分。
       assign(
         {
           key: `course:${c.id}`,
           code: found.code,
+          outsidePlan: found.outsidePlan,
           name: c.name,
           credits: found.credits,
           status: "inProgress",

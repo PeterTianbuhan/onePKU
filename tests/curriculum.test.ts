@@ -1176,14 +1176,15 @@ describe("in-progress courses from the catalog", () => {
       code: "04835310",
       credits: 3,
     });
-    // 两个课号都不在本方案：不猜，进待确认。
+    // 两个课号都不在本方案：不挑课号，但确定是方案外的课，学分一致就计入自主选修。
     expect(byName["计算机视觉"]).toMatchObject({
       code: null,
-      credits: null,
-      sectionId: null,
+      credits: 3,
+      sectionId: "3-2",
+      via: "outside",
     });
     expect(byName["太极拳"]).toMatchObject({ code: null, credits: null });
-    expect(progress.totals.inProgress).toBe(6);
+    expect(progress.totals.inProgress).toBe(9);
   });
   it("leaves in-progress courses without codes when no catalog is loaded", () => {
     const progress = computeProgress(plan, [], [current("人工智能引论")]);
