@@ -76,7 +76,10 @@ CI 按路径分工，不看改动落在哪条分支：
 
 - `android/**` 的改动触发 `.github/workflows/android.yml`，构建调试 APK 并上传产物。
 - `android/` 之外的改动触发 `.github/workflows/desktop.yml`，在 Windows x64 与 macOS Apple Silicon 上跑检查并上传测试安装包；`android/**`、`docs/**` 与 `*.md` 被它忽略。
-- 两个工作流都不会自动发布 Release。发布由维护者打 `v*` 标签触发 `.github/workflows/release.yml`；Release 一旦发布，`android.yml` 也会触发一次，从该标签指向的提交构建 APK 挂到同一个 Release 上，所以发版时两端各自核对产物文件名（`OnePKU.app.zip` 与 `onepku-android-v<Android 版本>.apk`）。只想发 Android 版时用 `onepku-for-android-vX.Y.Z` 这种前缀标签，`release.yml` 的 `if: startsWith(github.ref, 'refs/tags/v')` 不会命中它。
+- 这两个工作流只出测试包，不发 Release。发布走 `.github/workflows/release.yml`，有两个通道，应用内「设置 → 版本与更新」可切换：
+  - **稳定版**：Peter 把 `package.json` 与 `src-tauri/tauri.conf.json` 的版本改好、打 `v<版本>` 标签推上去，CI 构建 macOS 与 Windows，两端都传完后自动发布为 Latest，再调用 `android.yml` 把 APK 挂上去。标签和 `package.json` 版本不一致会直接失败。
+  - **每日构建**：每天北京时间 04:00 从 `main` 构建（没有新提交就跳过），也可在 Actions 里手动运行。版本号是「下一个补丁版本-nightly.UTC 时间」，放在固定的 `nightly` 预发布里，每次删掉重建，APK 也一起挂上。`releases/latest` 不包含预发布，所以稳定通道看不到它。从每日构建切回稳定版时，稳定通道会提供当前稳定版，即使版本号更低。
+  - 只想发 Android 版时用 `onepku-for-android-vX.Y.Z` 这种前缀标签，不会触发 `release.yml`。
 - 没有硬件或账号验证的部分在提交说明里照实写，不能把成功编译描述为完整功能验收。
 
 桌面端的平台差异尽量放在 `crates/campus-core/src/platform.rs` 和 `src-tauri/tauri.{macos,windows}.conf.json`，业务命令和凭证边界保持共享。Windows 移植同时修改了 vendored 会话持久化与 ffmpeg 进程启动；可回馈的增量见 `contributions/pkucli-windows.patch`。不要把个人 Rust/C++ 工具链、安装缓存、账号数据、测试日志或构建产物提交进 Git。

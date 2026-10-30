@@ -1,21 +1,85 @@
-# 推送 v* 标签时构建 macOS（Apple Silicon）和 Windows x64，生成草稿 Release：
-# OnePKU.app.zip（手动下载）、OnePKU.app.tar.gz + .sig 与 latest.json（应用内更新）。
-# 草稿由维护者检查后手动发布；发布后应用内“检查更新”即可看到。
-# 这里只打桌面端的包。Release 被 published 时 .github/workflows/android.yml 会另外触发一次，
-# 从同一份代码构建 onepku-android-v<Android 版本>.apk 挂到同一个 Release 上；两端版本号互不对应。
+# 桌面端发布，两个通道，应用内「设置 → 版本与更新」按通道取对应的 latest.json：
+# - 稳定版：推送 v* 标签时构建 macOS（Apple Silicon）和 Windows x64，先建草稿 Release，
+#   两端都传完后自动发布并标为 Latest。资产：OnePKU.app.zip（手动下载）、
+#   OnePKU.app.tar.gz + .sig、Windows 安装包 + .sig 与 latest.json（应用内更新）。
+# - 每日构建：每天北京时间 04:00 从 main 构建（main 自上次每日构建以来没有新提交就跳过），
+#   也可以手动运行。版本号是「下一个补丁版本-nightly.UTC 时间」，如 0.12.4-nightly.202610302000：
+#   比当前稳定版新、比下一个稳定版旧。固定放在 nightly 标签的预发布里，每次先删掉旧的再重建，
+#   所以 releases/latest 永远指向稳定版，不会把每日构建推给稳定通道。
+# 推送每次 main 都会由 desktop.yml 出测试安装包；每日构建只是一天一次的可自动更新版本。
+# 两个通道发布后都会触发 android.yml，把同一提交的 APK 挂到同一个 Release 上
+# （用 GITHUB_TOKEN 发布的 Release 不会触发 release 事件，所以这里显式调用）。
 name: Release
 on:
   push:
     tags: ["v*"]
+  schedule:
+    - cron: "0 20 * * *"
   workflow_dispatch:
 permissions:
   contents: write
+  actions: write
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.plan.outputs.channel }}
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
+      skip: ${{ steps.plan.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          base=$(node -p "require('./package.json').version")
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="$GITHUB_REF_NAME"
+            if [ "${tag#v}" != "$base" ]; then
+              echo "标签 $tag 与 package.json 的版本 $base 不一致" >&2
+              exit 1
+            fi
+            echo "channel=stable" >> "$GITHUB_OUTPUT"
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+            echo "version=$base" >> "$GITHUB_OUTPUT"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "每日构建只从 main 出" >&2
+            exit 1
+          fi
+          next=$(node -p "const [a,b,c]=require('./package.json').version.split('-')[0].split('.').map(Number); [a,b,c+1].join('.')")
+          version="$next-nightly.$(date -u +%Y%m%d%H%M)"
+          built=$(git ls-remote origin refs/tags/nightly | cut -f1)
+          skip=false
+          if [ "$EVENT" = "schedule" ] && [ "$built" = "$GITHUB_SHA" ]; then
+            skip=true
+          fi
+          echo "channel=nightly" >> "$GITHUB_OUTPUT"
+          echo "tag=nightly" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+          echo "每日构建 $version（跳过：$skip）"
+      - name: Recreate the nightly pre-release at this commit
+        if: steps.plan.outputs.channel == 'nightly' && steps.plan.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          gh release delete nightly --cleanup-tag --yes || true
+          gh release create nightly --target "$GITHUB_SHA" --prerelease \
+            --title "OnePKU 每日构建 $VERSION" \
+            --notes "每天从 main 自动打包（提交 $GITHUB_SHA）。可能有问题，只给愿意尝鲜的人用；应用内在「设置 → 版本与更新」切换到「每日构建」即可自动更新。"
+
   macos:
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,30 +97,35 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: node scripts/curriculum/check.mjs
+      - name: Stamp version
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: node scripts/set-version.mjs "$VERSION"
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "OnePKU ${{ github.ref_name }}"
+          tagName: ${{ needs.prepare.outputs.tag }}
+          releaseName: ${{ needs.prepare.outputs.channel == 'stable' && format('OnePKU {0}', needs.prepare.outputs.tag) || format('OnePKU 每日构建 {0}', needs.prepare.outputs.version) }}
           releaseBody: "更新内容见仓库 CHANGELOG.md。首次安装的打开方法见 README「安装」。"
-          releaseDraft: true
-          prerelease: false
+          releaseDraft: ${{ needs.prepare.outputs.channel == 'stable' }}
+          prerelease: ${{ needs.prepare.outputs.channel == 'nightly' }}
           includeUpdaterJson: true
           args: --target aarch64-apple-darwin -- --locked
       - name: Zip .app for manual download
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           APP=target/aarch64-apple-darwin/release/bundle/macos/OnePKU.app
           ditto -c -k --keepParent "$APP" OnePKU.app.zip
-          gh release upload "${{ github.ref_name }}" OnePKU.app.zip --clobber
+          gh release upload "$TAG" OnePKU.app.zip --clobber
 
   windows:
     # Serialize latest.json updates: tauri-action reads existing platforms before adding this one.
-    needs: macos
+    needs: [prepare, macos]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -74,16 +143,36 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run curriculum:check
+      - name: Stamp version
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: node scripts/set-version.mjs "$env:VERSION"
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "OnePKU ${{ github.ref_name }}"
+          tagName: ${{ needs.prepare.outputs.tag }}
+          releaseName: ${{ needs.prepare.outputs.channel == 'stable' && format('OnePKU {0}', needs.prepare.outputs.tag) || format('OnePKU 每日构建 {0}', needs.prepare.outputs.version) }}
           releaseBody: "更新内容见仓库 CHANGELOG.md。首次安装的打开方法见 README「安装」。"
-          releaseDraft: true
-          prerelease: false
+          releaseDraft: ${{ needs.prepare.outputs.channel == 'stable' }}
+          prerelease: ${{ needs.prepare.outputs.channel == 'nightly' }}
           includeUpdaterJson: true
           args: --target x86_64-pc-windows-msvc --bundles nsis -- --locked
+
+  publish:
+    needs: [prepare, macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the stable release
+        if: needs.prepare.outputs.channel == 'stable'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+      - name: Attach the Android APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: gh workflow run android.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f release_tag="$TAG"

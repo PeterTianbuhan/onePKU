@@ -18,6 +18,60 @@ async fn campus(
         .await
         .map_err(|_| "服务暂不可用".into())
 }
+/// 两个更新通道：稳定版跟 GitHub 上最新的正式 Release，每日构建跟固定的 nightly 预发布。
+const STABLE_FEED: &str =
+    "https://github.com/PeterTianbuhan/onePKU/releases/latest/download/latest.json";
+const NIGHTLY_FEED: &str =
+    "https://github.com/PeterTianbuhan/onePKU/releases/download/nightly/latest.json";
+
+/// 按通道检查更新，返回与更新插件 `check()` 相同的结构，前端照旧用插件的 Update 下载安装。
+/// 稳定通道上，正在用每日构建（版本号带预发布后缀）时，只要稳定版不同就提供，
+/// 这样从每日构建切回稳定版时会装回当前稳定版，哪怕版本号更低。
+#[tauri::command]
+async fn check_update(
+    window: tauri::WebviewWindow,
+    channel: String,
+) -> Result<Option<serde_json::Value>, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    if window.label() != "main" {
+        return Err("此窗口不可执行本地操作".into());
+    }
+    let feed = match channel.as_str() {
+        "stable" => STABLE_FEED,
+        "nightly" => NIGHTLY_FEED,
+        _ => return Err("未知的更新通道".into()),
+    };
+    let mut builder = window
+        .updater_builder()
+        .endpoints(vec![feed.parse().map_err(|_| "更新地址无效")?])
+        .map_err(|e| e.to_string())?
+        .timeout(std::time::Duration::from_secs(20));
+    if channel == "stable" {
+        builder = builder.version_comparator(|current, remote| {
+            if current.pre.is_empty() {
+                remote.version > current
+            } else {
+                remote.version != current
+            }
+        });
+    }
+    let update = builder
+        .build()
+        .map_err(|e| e.to_string())?
+        .check()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(update.map(|update| {
+        serde_json::json!({
+            "currentVersion": update.current_version,
+            "version": update.version,
+            "date": update.raw_json.get("pub_date").and_then(|d| d.as_str()),
+            "body": update.body,
+            "rawJson": update.raw_json,
+            "rid": window.resources_table().add(update),
+        })
+    }))
+}
 #[tauri::command]
 async fn choose_assignment_file(
     window: tauri::WebviewWindow,
@@ -208,7 +262,7 @@ async fn open_booking(
 }
 fn main() {
     tauri::Builder::default()
-        // 更新只从 tauri.conf.json 里写死的 GitHub Release 地址取，并用内置公钥校验签名。
+        // 更新只从 check_update 里写死的两个 GitHub Release 地址取，并用内置公钥校验签名。
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(campus_core::Core::new())
@@ -219,6 +273,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             campus,
+            check_update,
             choose_assignment_file,
             choose_course_files,
             choose_download_folder,

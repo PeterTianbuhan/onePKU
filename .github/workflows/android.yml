@@ -12,6 +12,11 @@ on:
       - "android/**"
       - ".github/workflows/android.yml"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "把 APK 挂到这个 Release 上（release.yml 发布稳定版或每日构建后调用）"
+        required: false
+        default: ""
   release:
     types: [published]
 
@@ -64,7 +69,8 @@ jobs:
           retention-days: 30
 
       - name: Attach APK to GitHub Release
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || inputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
           files: android/${{ steps.version.outputs.apk }}

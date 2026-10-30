@@ -4514,3 +4514,8 @@ input[type="checkbox"] {
   font-size: 12px;
   margin: 0;
 }
+.update-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}

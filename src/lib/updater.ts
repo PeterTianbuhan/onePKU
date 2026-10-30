@@ -18,10 +18,42 @@ export function inApp(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
-/** 返回 null 表示已是最新。 */
-export async function checkForUpdate(): Promise<UpdateHandle | null> {
-  const { check } = await import("@tauri-apps/plugin-updater");
-  const update = await check({ timeout: 20_000 }).catch((error: unknown) => {
+/** 稳定版跟正式 Release；每日构建跟 main 每天自动打的 nightly 预发布。 */
+export type UpdateChannel = "stable" | "nightly";
+const channelKey = "onepku.updateChannel";
+export function readChannel(): UpdateChannel {
+  try {
+    return localStorage.getItem(channelKey) === "nightly"
+      ? "nightly"
+      : "stable";
+  } catch {
+    return "stable";
+  }
+}
+export function saveChannel(channel: UpdateChannel) {
+  try {
+    localStorage.setItem(channelKey, channel);
+  } catch {
+    // 存不下就只在这次打开里生效。
+  }
+}
+/** 当前装的是不是每日构建：版本号带 -nightly 后缀。 */
+export function isNightly(version = APP_VERSION): boolean {
+  return version.includes("-nightly.");
+}
+
+/** 返回 null 表示已是最新。按通道由原生端选更新地址，下载安装仍走更新插件。 */
+export async function checkForUpdate(
+  channel: UpdateChannel = readChannel(),
+): Promise<UpdateHandle | null> {
+  const [{ invoke }, { Update }] = await Promise.all([
+    import("@tauri-apps/api/core"),
+    import("@tauri-apps/plugin-updater"),
+  ]);
+  const metadata = await invoke<ConstructorParameters<typeof Update>[0] | null>(
+    "check_update",
+    { channel },
+  ).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     if (
       message.includes("platforms") &&
@@ -32,9 +64,14 @@ export async function checkForUpdate(): Promise<UpdateHandle | null> {
         "此版本尚未提供当前系统的更新包，请稍后重试或查看 Releases。",
       );
     }
+    // 每日构建每天先删掉旧包再重新上传，中间十几分钟取不到更新清单。
+    if (channel === "nightly" && message.includes("valid release JSON")) {
+      throw new Error("每日构建正在重新打包，请过一会儿再检查。");
+    }
     throw error;
   });
-  if (!update) return null;
+  if (!metadata) return null;
+  const update = new Update(metadata);
   return {
     version: update.version,
     date: update.date ?? null,

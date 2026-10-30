@@ -1,12 +1,34 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { checkForUpdate } from "../src/lib/updater";
+import { checkForUpdate, isNightly } from "../src/lib/updater";
+// 原生端 check_update 返回插件 check() 同样的元数据，前端用插件的 Update 包一层。
 const mocks = vi.hoisted(() => ({ check: vi.fn() }));
-vi.mock("@tauri-apps/plugin-updater", () => ({ check: mocks.check }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (_cmd: string, args: { channel: string }) => mocks.check(args),
+}));
+vi.mock("@tauri-apps/plugin-updater", () => ({
+  Update: class {
+    version: string;
+    date?: string;
+    body?: string;
+    downloadAndInstall: unknown;
+    constructor(m: {
+      version: string;
+      date?: string;
+      body?: string;
+      downloadAndInstall: unknown;
+    }) {
+      this.version = m.version;
+      this.date = m.date;
+      this.body = m.body;
+      this.downloadAndInstall = m.downloadAndInstall;
+    }
+  },
+}));
 afterEach(() => vi.resetAllMocks());
 it("returns null only when the updater reports no newer version", async () => {
   mocks.check.mockResolvedValue(null);
   expect(await checkForUpdate()).toBeNull();
-  expect(mocks.check).toHaveBeenCalledWith({ timeout: 20_000 });
+  expect(mocks.check).toHaveBeenCalledWith({ channel: "stable" });
 });
 it("explains a missing platform package instead of claiming the app is current", async () => {
   for (const error of [
@@ -43,4 +65,19 @@ it("preserves progress and signature failures from the native installer", async 
   ]);
   downloadAndInstall.mockRejectedValue(new Error("invalid signature"));
   await expect(update!.install(progress)).rejects.toThrow("invalid signature");
+});
+it("asks the native side for the chosen channel", async () => {
+  mocks.check.mockResolvedValue(null);
+  await checkForUpdate("nightly");
+  expect(mocks.check).toHaveBeenCalledWith({ channel: "nightly" });
+});
+it("explains a missing nightly feed while it is being rebuilt", async () => {
+  mocks.check.mockRejectedValue(
+    "Could not fetch a valid release JSON from the remote",
+  );
+  await expect(checkForUpdate("nightly")).rejects.toThrow("重新打包");
+});
+it("recognises nightly builds by their version suffix", () => {
+  expect(isNightly("0.12.4-nightly.202610301209")).toBe(true);
+  expect(isNightly("0.12.3")).toBe(false);
 });

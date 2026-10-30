@@ -3,7 +3,11 @@ import {
   APP_VERSION,
   checkForUpdate,
   inApp,
+  isNightly,
+  readChannel,
   relaunchApp,
+  saveChannel,
+  type UpdateChannel,
   type UpdateHandle,
 } from "../lib/updater";
 import { isMacOS } from "../lib/platform";
@@ -31,11 +35,18 @@ function mb(n: number) {
 /** 设置页“版本”一行：当前版本、检查、下载安装、重启。 */
 export default function UpdateSettings() {
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
+  const [channel, setChannel] = useState<UpdateChannel>(readChannel);
+
+  function switchChannel(next: UpdateChannel) {
+    saveChannel(next);
+    setChannel(next);
+    setPhase({ kind: "idle" });
+  }
 
   async function check() {
     setPhase({ kind: "checking" });
     try {
-      const update = await checkForUpdate();
+      const update = await checkForUpdate(channel);
       setPhase(
         update
           ? { kind: "available", update }
@@ -87,9 +98,20 @@ export default function UpdateSettings() {
         : `下载中 ${mb(phase.done)}`}
     </span>
   ) : (
-    <Button disabled={phase.kind === "checking"} onClick={() => void check()}>
-      {phase.kind === "checking" ? "正在检查…" : "检查更新"}
-    </Button>
+    <span className="update-controls">
+      <select
+        aria-label="更新通道"
+        value={channel}
+        disabled={phase.kind === "checking"}
+        onChange={(e) => switchChannel(e.target.value as UpdateChannel)}
+      >
+        <option value="stable">稳定版</option>
+        <option value="nightly">每日构建</option>
+      </select>
+      <Button disabled={phase.kind === "checking"} onClick={() => void check()}>
+        {phase.kind === "checking" ? "正在检查…" : "检查更新"}
+      </Button>
+    </span>
   );
 
   const status =
@@ -99,7 +121,11 @@ export default function UpdateSettings() {
         ? phase.update.notes
         : phase.kind === "ready"
           ? "新版本已安装，重新启动后生效。"
-          : undefined;
+          : channel === "stable" && isNightly()
+            ? "正在用每日构建。检查更新会装回当前稳定版，版本号可能比现在低。"
+            : channel === "nightly"
+              ? "每日构建每天从最新代码自动打包，可能有问题；随时可以切回稳定版。"
+              : undefined;
 
   return (
     <SettingRow
