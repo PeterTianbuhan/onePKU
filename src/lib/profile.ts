@@ -2,6 +2,8 @@
 import { useResource, action } from "./api";
 import {
   ENGLISH_LEVELS,
+  courseCode,
+  type DraftCourse,
   type EnglishLevel,
   type Overrides,
 } from "./curriculum";
@@ -17,6 +19,8 @@ export type Profile = {
   directions: Record<string, string>;
   /** 手填学分，键是规范化课程名；已修与在修都以此为准，0 也是有效值。 */
   manualCredits: Record<string, number>;
+  /** 下学期选课草稿，按课号存；只在本机，不会提交到选课网。 */
+  draft: DraftCourse[];
   inferred: boolean;
   updatedAt: string;
 };
@@ -29,6 +33,7 @@ export const emptyProfile: Profile = {
   overrides: {},
   directions: {},
   manualCredits: {},
+  draft: [],
   inferred: false,
   updatedAt: "",
 };
@@ -77,6 +82,18 @@ export function normalizeProfile(value: unknown): Profile | null {
             ),
           )
         : {},
+    draft: Array.isArray(v.draft)
+      ? v.draft.flatMap((item: unknown) => {
+          const d = item as Partial<DraftCourse> | null;
+          const code = courseCode(d?.code);
+          if (!code || typeof d?.name !== "string") return [];
+          const credits =
+            typeof d.credits === "number" && Number.isFinite(d.credits)
+              ? d.credits
+              : null;
+          return [{ code, name: d.name, credits }];
+        })
+      : [],
     inferred: Boolean(v.inferred),
     updatedAt: typeof v.updatedAt === "string" ? v.updatedAt : "",
   };

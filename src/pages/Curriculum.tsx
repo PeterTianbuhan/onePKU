@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { GraduationCap } from "lucide-react";
-import { action, useResource, type Course } from "../lib/api";
+import { action, openOfficial, useResource, type Course } from "../lib/api";
 import type { Scores } from "../lib/grades";
 import {
   computeProgress,
@@ -17,7 +17,9 @@ import {
   planIndex,
   planIndexMeta,
   sectionChoices,
+  type DraftCourse,
   type MatchedCourse,
+  type PlanCandidate,
   type Progress,
   type ProgressSection,
 } from "../lib/curriculum";
@@ -48,6 +50,7 @@ const statusLabel: Record<MatchedCourse["status"], string> = {
   passed: "已获",
   failed: "未通过",
   inProgress: "在修",
+  planned: "草稿",
   withdrawn: "退课",
   other: "其他",
 };
@@ -65,10 +68,16 @@ function fmt(n: number) {
 }
 /** 圆环与缺口用的数值：学分系列按学分，门数系列按已通过门数。 */
 function measure(s: ProgressSection) {
-  if (s.unit === "门") return { value: s.passedCount, pending: 0, unit: "门" };
+  if (s.unit === "门")
+    return { value: s.passedCount, pending: 0, draft: 0, unit: "门" };
   if (s.unit === "学时")
-    return { value: s.earned, pending: s.inProgress, unit: "学时" };
-  return { value: s.earned, pending: s.inProgress, unit: "学分" };
+    return { value: s.earned, pending: s.inProgress, draft: 0, unit: "学时" };
+  return {
+    value: s.earned,
+    pending: s.inProgress,
+    draft: s.draft,
+    unit: "学分",
+  };
 }
 /** 这一类（含其子类）里有没有教学网的在修课程。 */
 function holdsInProgress(s: ProgressSection): boolean {
@@ -80,7 +89,7 @@ function holdsInProgress(s: ProgressSection): boolean {
 function gap(s: ProgressSection) {
   if (s.min === undefined || s.unit === "学时") return null;
   const m = measure(s);
-  return Math.max(0, s.min - m.value - m.pending);
+  return Math.max(0, s.min - m.value - m.pending - m.draft);
 }
 /** 「恢复自动判断」的哨兵，不会与真实系列 id 冲突。 */
 const AUTO = "__auto__";
@@ -99,6 +108,9 @@ type Editor = {
   pinned: Record<string, string>;
   onCredit: (name: string, credits: number | null) => void;
   onOverride: (course: MatchedCourse, sectionId: string | null) => void;
+  /** 在中栏列出能填这一类的课。 */
+  focus: string | null;
+  onFocus: (sectionId: string) => void;
 };
 function gapText(s: ProgressSection) {
   const g = gap(s);
@@ -359,6 +371,7 @@ export default function Curriculum({
             onCredit={(name, credits) =>
               void persist(withManualCredit(saved, name, credits))
             }
+            onDraft={(draft) => void persist({ ...saved, draft })}
           />
           {saved.secondaryPlanId && (
             <PlanProgress
@@ -391,6 +404,7 @@ export default function Curriculum({
               onCredit={(name, credits) =>
                 void persist(withManualCredit(saved, name, credits))
               }
+              onDraft={(draft) => void persist({ ...saved, draft })}
             />
           )}
           <p className="subtle curriculum-footnote">
@@ -425,6 +439,7 @@ function PlanProgress({
   onOverride,
   onDirection,
   onCredit,
+  onDraft,
 }: {
   planId: string;
   profile: Profile;
@@ -435,6 +450,7 @@ function PlanProgress({
   onOverride: (course: MatchedCourse, sectionId: string | null) => void;
   onDirection: (sectionId: string, groupId: string | null) => void;
   onCredit: (name: string, credits: number | null) => void;
+  onDraft: (draft: DraftCourse[]) => void;
 }) {
   const plan = useQuery({
     queryKey: ["plan", planId],
@@ -459,6 +475,7 @@ function PlanProgress({
             directions: directionsFor(planId, profile.directions),
             manualCredits: profile.manualCredits,
             catalog: catalog.data,
+            draft: profile.draft,
           })
         : null,
     [
@@ -470,6 +487,7 @@ function PlanProgress({
       profile.directions,
       profile.manualCredits,
       catalog.data,
+      profile.draft,
       planId,
     ],
   );
@@ -499,6 +517,8 @@ function PlanProgress({
       onDirection={onDirection}
       onCredit={onCredit}
       onOverride={onOverride}
+      draft={profile.draft}
+      onDraft={onDraft}
     />
   );
 }
@@ -513,6 +533,8 @@ function ProgressView({
   onDirection,
   onCredit,
   onOverride,
+  draft,
+  onDraft,
 }: {
   progress: Progress;
   courseNote: string;
@@ -523,11 +545,21 @@ function ProgressView({
   onDirection: (sectionId: string, groupId: string | null) => void;
   onCredit: (name: string, credits: number | null) => void;
   onOverride: (course: MatchedCourse, sectionId: string | null) => void;
+  draft: DraftCourse[];
+  onDraft: (draft: DraftCourse[]) => void;
 }) {
   const { plan, sections, pending, ignored, totals } = progress;
   const splits = directionSplits(plan);
   const choices = sectionChoices(progress);
-  const editor: Editor = { choices, pinned, onCredit, onOverride };
+  const [focus, setFocus] = useState<string | null>(null);
+  const editor: Editor = {
+    choices,
+    pinned,
+    onCredit,
+    onOverride,
+    focus,
+    onFocus: setFocus,
+  };
   const unknownCourses = sections
     .flatMap((s) => [s, ...s.children])
     .flatMap((s) => s.courses)
@@ -631,9 +663,13 @@ function ProgressView({
               detail={
                 s.min === undefined
                   ? "方案未标注要求"
-                  : m.pending
-                    ? `在修 ${fmt(m.pending)} · ${gapText(s)}`
-                    : gapText(s)
+                  : [
+                      m.pending ? `在修 ${fmt(m.pending)}` : "",
+                      m.draft ? `草稿 ${fmt(m.draft)}` : "",
+                      gapText(s),
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")
               }
               selected={selected === s.id}
               onSelect={() => setSelected(s.id)}
@@ -709,33 +745,48 @@ function ProgressView({
           </ul>
         </div>
       )}
-      <div
-        className="section-detail"
-        role="tabpanel"
-        aria-label={current ? `${current.name}明细` : "全部学分系列明细"}
-      >
-        {current?.note && <p className="subtle detail-note">{current.note}</p>}
-        {current ? (
-          <>
-            {current.children.map((c) => (
-              <DetailRow key={c.id} section={c} autoOpen editor={editor} />
-            ))}
-            {(current.courses.length > 0 || current.children.length === 0) && (
-              <>
-                {current.children.length > 0 && (
-                  <p className="subtle curriculum-hint">
-                    本类直属课程（不含上面各系列的课）
-                  </p>
-                )}
-                <CourseList courses={current.courses} editor={editor} />
-              </>
-            )}
-          </>
-        ) : (
-          sections.map((s) => (
-            <DetailRow key={s.id} section={s} top editor={editor} />
-          ))
-        )}
+      <div className="planner">
+        <div
+          className="section-detail planner-gaps"
+          role="tabpanel"
+          aria-label={current ? `${current.name}明细` : "全部学分系列明细"}
+        >
+          {current?.note && (
+            <p className="subtle detail-note">{current.note}</p>
+          )}
+          {current ? (
+            <>
+              {current.children.map((c) => (
+                <DetailRow key={c.id} section={c} autoOpen editor={editor} />
+              ))}
+              {(current.courses.length > 0 ||
+                current.children.length === 0) && (
+                <>
+                  {current.children.length > 0 && (
+                    <p className="subtle curriculum-hint">
+                      本类直属课程（不含上面各系列的课）
+                    </p>
+                  )}
+                  <CourseList courses={current.courses} editor={editor} />
+                </>
+              )}
+            </>
+          ) : (
+            sections.map((s) => (
+              <DetailRow key={s.id} section={s} top editor={editor} />
+            ))
+          )}
+        </div>
+        <div className="planner-side">
+          <CandidatePanel
+            progress={progress}
+            sectionId={focus ?? current?.id ?? null}
+            choices={choices}
+            draft={draft}
+            onDraft={onDraft}
+          />
+          <DraftPanel progress={progress} draft={draft} onDraft={onDraft} />
+        </div>
       </div>
       {ignored.length > 0 && (
         <details className="settings-explanation">
@@ -874,9 +925,20 @@ function DetailRow({
           {section.requirement || target !== null ? (
             <span className="subtle">{requirementText(section)}</span>
           ) : null}
+          {target === null && section.requirement && (
+            <span className="badge" title="这条要求只有文字，没有自动核对">
+              未自动检查
+            </span>
+          )}
           {section.note && <span className="subtle">· {section.note}</span>}
         </div>
         <div className="detail-bar" aria-hidden="true">
+          {m.draft > 0 && (
+            <i
+              className="draft"
+              style={{ width: `${ratio(m.value + m.pending + m.draft)}%` }}
+            />
+          )}
           <i
             className="pending"
             style={{ width: `${ratio(m.value + m.pending)}%` }}
@@ -892,11 +954,22 @@ function DetailRow({
         {m.pending > 0 && (
           <span className="subtle"> · 在修 {fmt(m.pending)}</span>
         )}
+        {m.draft > 0 && <span className="subtle"> · 草稿 {fmt(m.draft)}</span>}
         <span className={`detail-gap ${complete ? "complete" : ""}`}>
           {gapText(section)}
         </span>
       </div>
       {section.note && <p className="subtle detail-note">{section.note}</p>}
+      {!hasChildren && (
+        <button
+          type="button"
+          className={`text-button detail-find ${editor.focus === section.id ? "active" : ""}`}
+          aria-pressed={editor.focus === section.id}
+          onClick={() => editor.onFocus(section.id)}
+        >
+          找课
+        </button>
+      )}
       {(hasCourses || hasChildren) && (
         <button
           type="button"
@@ -944,7 +1017,10 @@ function CourseList({
   if (courses.length === 0)
     return <p className="subtle course-list-empty">这一类暂无计入的课程。</p>;
   const doing = courses.filter((c) => c.status === "inProgress");
-  const done = courses.filter((c) => c.status !== "inProgress");
+  const planned = courses.filter((c) => c.status === "planned");
+  const done = courses.filter(
+    (c) => c.status !== "inProgress" && c.status !== "planned",
+  );
   const missing = doing.filter((c) => c.credits === null).length;
   const row = (c: MatchedCourse) => {
     const pinned =
@@ -1010,11 +1086,194 @@ function CourseList({
           <li className="course-group">在修课程 {doing.length} 门</li>
         )}
         {doing.map(row)}
+        {planned.length > 0 && (
+          <li className="course-group">草稿中 {planned.length} 门</li>
+        )}
+        {planned.map(row)}
         {done.length > 0 && (
           <li className="course-group">已修课程 {done.length} 门</li>
         )}
         {done.map(row)}
       </ul>
     </>
+  );
+}
+
+/** 一类及其所有子类的 id。 */
+function subtreeIds(sections: ProgressSection[], id: string): Set<string> {
+  const out = new Set<string>();
+  const walk = (s: ProgressSection, inside: boolean) => {
+    const hit = inside || s.id === id;
+    if (hit) out.add(s.id);
+    s.children.forEach((c) => walk(c, hit));
+  };
+  sections.forEach((s) => walk(s, false));
+  return out;
+}
+function findSection(
+  sections: ProgressSection[],
+  id: string,
+): ProgressSection | null {
+  for (const s of sections) {
+    if (s.id === id) return s;
+    const hit = findSection(s.children, id);
+    if (hit) return hit;
+  }
+  return null;
+}
+function toggleDraft(draft: DraftCourse[], c: PlanCandidate): DraftCourse[] {
+  return draft.some((d) => d.code === c.code)
+    ? draft.filter((d) => d.code !== c.code)
+    : [...draft, { code: c.code, name: c.name, credits: c.credits }];
+}
+
+/** 中栏：选中一类，列出方案里能填它、还没修也没在修的课。 */
+function CandidatePanel({
+  progress,
+  sectionId,
+  choices,
+  draft,
+  onDraft,
+}: {
+  progress: Progress;
+  sectionId: string | null;
+  choices: { id: string; label: string }[];
+  draft: DraftCourse[];
+  onDraft: (draft: DraftCourse[]) => void;
+}) {
+  const section = sectionId ? findSection(progress.sections, sectionId) : null;
+  const label = (id: string) => choices.find((c) => c.id === id)?.label ?? id;
+  const ids = section ? subtreeIds(progress.sections, section.id) : null;
+  const rows = ids
+    ? progress.candidates.filter((c) => c.sectionIds.some((id) => ids.has(id)))
+    : [];
+  const g = section ? gap(section) : null;
+  return (
+    <section className="planner-panel" aria-label="候选课程">
+      <h3>{section ? `能填「${section.name}」的课` : "候选课程"}</h3>
+      {!section ? (
+        <p className="subtle">
+          在左边点一类的「找课」，这里列出方案里能填它的课。
+        </p>
+      ) : (
+        <>
+          <p className="subtle">
+            {g === null
+              ? "方案没有给这一类学分要求。"
+              : g === 0
+                ? "这一类已满足（含在修与草稿）。"
+                : `还差 ${fmt(g)} ${measure(section).unit}。`}
+          </p>
+          {rows.length === 0 ? (
+            <p className="subtle">
+              方案没有为这一类列出具体课程（或都已修完），要从全校开课目录里挑。
+            </p>
+          ) : (
+            <ul className="candidate-list">
+              {rows.map((c) => {
+                const others = c.sectionIds.filter((id) => !ids!.has(id));
+                return (
+                  <li key={c.code}>
+                    <div className="grow">
+                      <strong>{c.name}</strong>
+                      <span className="subtle">
+                        {c.code}
+                        {c.credits !== null ? ` · ${fmt(c.credits)} 学分` : ""}
+                        {c.term ? ` · 建议 ${c.term}` : ""}
+                      </span>
+                      {others.length > 0 && (
+                        <span className="subtle candidate-multi">
+                          也能计入：{others.map(label).join("、")}
+                        </span>
+                      )}
+                    </div>
+                    <Button
+                      variant="quiet"
+                      aria-pressed={c.inDraft}
+                      onClick={() => onDraft(toggleDraft(draft, c))}
+                    >
+                      {c.inDraft ? "移出草稿" : "放入草稿"}
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <p className="subtle planner-placeholder">
+            本学期开课信息（班号、教师、上课时间）需导入后显示。
+          </p>
+        </>
+      )}
+    </section>
+  );
+}
+
+/** 右栏：下学期草稿，只存本机，选课仍在选课网原站完成。 */
+function DraftPanel({
+  progress,
+  draft,
+  onDraft,
+}: {
+  progress: Progress;
+  draft: DraftCourse[];
+  onDraft: (draft: DraftCourse[]) => void;
+}) {
+  const placed = new Map<string, string>();
+  const walk = (s: ProgressSection, path: string) => {
+    for (const c of s.courses)
+      if (c.status === "planned" && c.code) placed.set(c.code, path);
+    s.children.forEach((child) => walk(child, `${path} · ${child.name}`));
+  };
+  progress.sections.forEach((s) => walk(s, s.name));
+  const total = draft.reduce((n, d) => n + (d.credits ?? 0), 0);
+  const deltas = progress.sections.filter((s) => s.draft > 0);
+  return (
+    <section className="planner-panel" aria-label="下学期草稿">
+      <h3>下学期草稿</h3>
+      {draft.length === 0 ? (
+        <p className="subtle">
+          还没有课。从中间的候选里放进来，左边的缺口会跟着变。
+        </p>
+      ) : (
+        <>
+          <p className="draft-total">
+            <strong>{fmt(total)}</strong> 学分 · {draft.length} 门
+          </p>
+          {deltas.length > 0 && (
+            <p className="subtle">
+              {deltas.map((s) => `${s.name} +${fmt(s.draft)}`).join(" · ")}
+            </p>
+          )}
+          <ul className="candidate-list">
+            {draft.map((d) => (
+              <li key={d.code}>
+                <div className="grow">
+                  <strong>{d.name}</strong>
+                  <span className="subtle">
+                    {d.code}
+                    {d.credits !== null ? ` · ${fmt(d.credits)} 学分` : ""}
+                    {` · ${placed.get(d.code) ?? "待确认归类"}`}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="text-button"
+                  aria-label={`移出草稿 ${d.name}`}
+                  onClick={() =>
+                    onDraft(draft.filter((x) => x.code !== d.code))
+                  }
+                >
+                  移出
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <p className="subtle planner-placeholder">
+        课表与时间冲突检查：有了开课时间数据后显示。
+      </p>
+      <Button onClick={() => void openOfficial("elective")}>去选课</Button>
+    </section>
   );
 }

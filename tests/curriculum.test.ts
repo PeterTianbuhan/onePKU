@@ -1196,6 +1196,45 @@ describe("in-progress courses from the catalog", () => {
   });
 });
 
+describe("semester draft and candidates", () => {
+  it("lists unfinished plan courses and counts drafted ones as draft credits", () => {
+    const passed = {
+      ...score("人工智能引论", "3", "90", "专业必修"),
+      kch: "04834040",
+    };
+    const withdrawn = {
+      ...score("离散数学基础", "3", "W", "任选"),
+      kch: "04835310",
+    };
+    const before = computeProgress(plan, [passed, withdrawn], []);
+    const codes = before.candidates.map((c) => c.code);
+    expect(codes).not.toContain("04834040");
+    // 退课的课还要重修，仍是候选。
+    expect(codes).toContain("04835310");
+    const after = computeProgress(
+      plan,
+      [passed, withdrawn],
+      [],
+      {},
+      {
+        draft: [
+          { code: "04835310", name: "离散数学基础", credits: 3 },
+          // 已修的课放进草稿也不重复计入。
+          { code: "04834040", name: "人工智能引论", credits: 3 },
+        ],
+      },
+    );
+    expect(after.totals.draft).toBe(3);
+    expect(after.candidates.find((c) => c.code === "04835310")?.inDraft).toBe(
+      true,
+    );
+    const free = after.sections
+      .flatMap((s) => [s, ...s.children])
+      .find((s) => s.courses.some((c) => c.status === "planned"))!;
+    expect(free.draft).toBe(3);
+  });
+});
+
 describe("migrateOverrideKeys", () => {
   const rows: GradeCourse[] = [
     { ...score("数学分析（Ⅱ）", "5", "90", "专业必修"), kch: "00132302" },

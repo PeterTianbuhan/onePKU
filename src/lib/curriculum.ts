@@ -228,7 +228,13 @@ export function migrateOverrideKeys(
   return changed ? next : overrides;
 }
 export type CourseStatus =
-  "passed" | "failed" | "inProgress" | "withdrawn" | "other";
+  | "passed"
+  | "failed"
+  | "inProgress"
+  /** 放进学期草稿、还没选的课。 */
+  | "planned"
+  | "withdrawn"
+  | "other";
 export type MatchVia =
   | "code"
   | "name"
@@ -259,6 +265,8 @@ export type ProgressSection = CreditRange & {
   requirement: string | null;
   earned: number;
   inProgress: number;
+  /** 学期草稿里计入这一类的学分。 */
+  draft: number;
   passedCount: number;
   courses: MatchedCourse[];
   children: ProgressSection[];
@@ -269,13 +277,32 @@ export type Progress = {
   sections: ProgressSection[];
   pending: MatchedCourse[];
   ignored: MatchedCourse[];
+  /** 方案里列出、还没修也没在修的课，供「从缺口找课」用。 */
+  candidates: PlanCandidate[];
   totals: {
     required: number | null;
     earned: number;
     inProgress: number;
+    draft: number;
     unknownCredits: number;
   };
   usesRequirements: boolean;
+};
+/** 学期草稿里的一门课，只存本机。 */
+export type DraftCourse = {
+  code: string;
+  name: string;
+  credits: number | null;
+};
+export type PlanCandidate = {
+  code: string;
+  name: string;
+  credits: number | null;
+  /** 方案建议的修读学期，如「大二/上」。 */
+  term: string | null;
+  /** 这门课能计入的学分系列；多于一个就是一课填多个缺口。 */
+  sectionIds: string[];
+  inDraft: boolean;
 };
 
 export const IGNORE = "ignore";
@@ -319,6 +346,8 @@ const PUBLIC_KEYWORDS: [RegExp, RegExp][] = [
 
 type SectionIndex = {
   byCode: Map<string, { sectionId: string; credits: number | null }>;
+  /** 方案课程按课号汇总：同一课号可能列在好几个课程组里。 */
+  listed: Map<string, { course: PlanCourse; sectionIds: Set<string> }>;
   byName: Map<
     string,
     { sectionId: string; credits: number | null; via: MatchVia }
@@ -348,6 +377,7 @@ function makeSection(
     unit: range.unit,
     earned: 0,
     inProgress: 0,
+    draft: 0,
     passedCount: 0,
     courses: [],
     children: [],
@@ -697,6 +727,7 @@ function buildSections(
     string,
     { sectionId: string; credits: number | null; via: MatchVia }
   >();
+  const listed: SectionIndex["listed"] = new Map();
   for (const g of plan.groups) {
     for (const c of g.courses) {
       const sectionId = sectionForGroup(g, c);
@@ -704,6 +735,14 @@ function buildSections(
       const key = normalizeCourseName(c.name);
       if (skip.has(key)) continue;
       const code = courseCode(c.code);
+      if (code) {
+        const entry = listed.get(code) ?? {
+          course: c,
+          sectionIds: new Set<string>(),
+        };
+        entry.sectionIds.add(sectionId);
+        listed.set(code, entry);
+      }
       if (code && !byCode.has(code))
         byCode.set(code, { sectionId, credits: c.credits });
       if (!byName.has(key))
@@ -726,7 +765,14 @@ function buildSections(
   }
   return {
     sections,
-    index: { byCode, byName, categoryTargets: targets, publicChildren, flat },
+    index: {
+      byCode,
+      listed,
+      byName,
+      categoryTargets: targets,
+      publicChildren,
+      flat,
+    },
     usesRequirements,
   };
 }
@@ -882,6 +928,8 @@ function lookupCurrent(
 }
 
 export type ProgressOptions = {
+  /** 下学期草稿：按课号放进来的课，计入各类的「草稿中」。 */
+  draft?: DraftCourse[];
   /** 有了它，教学网在修课按课名补上课号和学分。 */
   catalog?: Catalog;
   englishLevel?: EnglishLevel | null;
@@ -1040,6 +1088,38 @@ export function computeProgress(
       ),
     );
   }
+  // 草稿里的课：已修或在修的不再重复计入；退课、挂科的课还可以再放进来。
+  const holds = (m: MatchedCourse) =>
+    m.status === "passed" || m.status === "inProgress";
+  const takenCodes = new Set(
+    matched
+      .filter(holds)
+      .map((m) => m.code)
+      .filter((c): c is string => c !== null),
+  );
+  const drafted = new Set<string>();
+  for (const d of options.draft ?? []) {
+    if (takenCodes.has(d.code) || drafted.has(d.code)) continue;
+    drafted.add(d.code);
+    matched.push(
+      assign(
+        {
+          key: `draft:${d.code}`,
+          code: courseCode(d.code),
+          name: d.name,
+          credits: d.credits,
+          status: "planned",
+          term: "草稿",
+          category: "草稿",
+          score: "",
+          via: null,
+          sectionId: null,
+        },
+        index,
+        overrides,
+      ),
+    );
+  }
   const pending: MatchedCourse[] = [];
   const ignored: MatchedCourse[] = [];
   let unknownCredits = 0;
@@ -1068,6 +1148,8 @@ export function computeProgress(
     } else if (m.status === "inProgress") {
       // 在修没填学分就只是列出，不计成「缺学分」的方案缺口。
       if (m.credits !== null) section.inProgress += m.credits;
+    } else if (m.status === "planned") {
+      if (m.credits !== null) section.draft += m.credits;
     }
   }
   // 父级汇总子级。
@@ -1076,21 +1158,41 @@ export function computeProgress(
       rollup(child);
       s.earned += child.earned;
       s.inProgress += child.inProgress;
+      s.draft += child.draft;
       s.passedCount += child.passedCount;
     }
   };
   sections.forEach(rollup);
   const earned = sections.reduce((n, s) => n + s.earned, 0);
   const inProgress = sections.reduce((n, s) => n + s.inProgress, 0);
+  const draft = sections.reduce((n, s) => n + s.draft, 0);
+  const takenNames = new Set(
+    matched.filter(holds).map((m) => normalizeCourseName(m.name)),
+  );
+  const candidates: PlanCandidate[] = [];
+  for (const [code, { course, sectionIds }] of index.listed) {
+    if (takenCodes.has(code)) continue;
+    if (takenNames.has(normalizeCourseName(course.name))) continue;
+    candidates.push({
+      code,
+      name: course.name,
+      credits: course.credits,
+      term: course.term,
+      sectionIds: [...sectionIds],
+      inDraft: drafted.has(code),
+    });
+  }
   return {
     plan,
     sections,
     pending,
     ignored,
+    candidates,
     totals: {
       required: recomputeRequired(plan, sections),
       earned,
       inProgress,
+      draft,
       unknownCredits,
     },
     usesRequirements,

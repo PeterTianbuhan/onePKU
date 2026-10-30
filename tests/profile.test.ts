@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   emptyProfile,
+  normalizeProfile,
   overridesForPlan,
   type Profile,
 } from "../src/lib/profile";
@@ -37,5 +38,23 @@ describe("overridesForPlan", () => {
   });
   it("reads an empty scope without a plan", () => {
     expect(overridesForPlan(profile({}), null)).toEqual({});
+  });
+});
+
+describe("draft", () => {
+  it("keeps valid draft courses and drops malformed ones", () => {
+    const saved = normalizeProfile({
+      draft: [
+        { code: "04835310", name: "离散数学基础", credits: 3 },
+        { code: "4835310", name: "课号不对", credits: 3 },
+        { code: "04830080", name: "代数结构与组合数学", credits: "3" },
+        null,
+      ],
+    });
+    expect(saved?.draft).toEqual([
+      { code: "04835310", name: "离散数学基础", credits: 3 },
+      { code: "04830080", name: "代数结构与组合数学", credits: null },
+    ]);
+    expect(normalizeProfile({})?.draft).toEqual([]);
   });
 });

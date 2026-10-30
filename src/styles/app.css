@@ -3950,7 +3950,7 @@ input[type="checkbox"] {
 }
 .detail-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
   column-gap: 20px;
   row-gap: 8px;
@@ -3991,6 +3991,104 @@ input[type="checkbox"] {
 }
 .detail-bar i.pending {
   opacity: 0.28;
+}
+.detail-bar i.draft {
+  background: transparent;
+  border: 1px dashed var(--primary);
+}
+.detail-find.active {
+  font-weight: 600;
+}
+
+/* 课程规划：左缺口树，右侧上候选、下学期草稿；窄屏上下排。
+   页面内容最宽约 1180px，三栏会把课程行挤坏，所以右侧两块叠放。 */
+.planner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.planner-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+@media (min-width: 1100px) {
+  .planner {
+    grid-template-columns: minmax(0, 1.75fr) minmax(260px, 1fr);
+  }
+  .planner-side {
+    position: sticky;
+    top: 16px;
+  }
+}
+.planner-panel {
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-default);
+  background: var(--background);
+}
+.planner-panel h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.planner-panel > .subtle {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.planner-panel > button {
+  align-self: flex-start;
+}
+.planner-placeholder {
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+}
+.candidate-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.planner-panel[aria-label="候选课程"] .candidate-list {
+  max-height: 56vh;
+  overflow-y: auto;
+}
+.candidate-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.candidate-list li:first-child {
+  border-top: none;
+}
+.candidate-list .grow {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 14px;
+}
+.candidate-list .subtle {
+  font-size: 12px;
+}
+.candidate-multi {
+  color: var(--primary);
+}
+.draft-total {
+  margin: 0;
+  font-size: 14px;
+}
+.draft-total strong {
+  font-size: 22px;
+  font-weight: 650;
 }
 .detail-numbers {
   display: flex;
@@ -4050,6 +4148,9 @@ input[type="checkbox"] {
 .course-credit {
   min-width: 0;
   text-align: right;
+}
+.course-list select {
+  max-width: 132px;
 }
 .course-group {
   color: var(--muted);
