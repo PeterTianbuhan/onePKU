@@ -168,6 +168,12 @@ pub struct CourseScore {
     pub xnd: String, // 学年度 e.g. "25-26"
     #[serde(default)]
     pub xq: String, // 学期 "1" or "2" or "3"
+    #[serde(default)]
+    pub kch: String, // 课程号，8 位字符串，保留前导 0
+    #[serde(default)]
+    pub jxbh: String, // 教学班号
+    #[serde(default)]
+    pub kctx: String, // 课程体系 (通选课/专业必修/思想政治/体育/...)
 }
 
 /// 学期GPA

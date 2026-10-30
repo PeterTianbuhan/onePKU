@@ -181,13 +181,66 @@ export type CurrentCourse = {
   semester?: string;
   current?: boolean;
 };
+/** 手动归类：成绩里有课号的按 8 位课号做键，没有课号的（教学网在修课）按规范化课程名。 */
 export type Overrides = Record<string, string>;
+/** 只认 8 位数字课号；成绩缺字段或旧缓存时为 null。 */
+export function courseCode(raw: string | undefined | null): string | null {
+  const t = raw?.trim() ?? "";
+  return /^\d{8}$/.test(t) ? t : null;
+}
+/** 一门课的手动归类该写在哪个键上。 */
+export function overrideKeyOf(course: { code: string | null; name: string }) {
+  return course.code ?? normalizeCourseName(course.name);
+}
+/**
+ * 旧版按课程名存手动归类。成绩里能查到课号的，把归类搬到课号键上；
+ * 查不到课号的（只在教学网出现的在修课）原样保留。没有变化时返回原对象。
+ * 键可能带「<方案 id>:」前缀（双学位），前缀原样保留。
+ */
+export function migrateOverrideKeys(
+  overrides: Overrides,
+  scores: GradeCourse[],
+): Overrides {
+  const codesByName = new Map<string, Set<string>>();
+  for (const row of scores) {
+    const code = courseCode(row.kch);
+    if (!code) continue;
+    const name = normalizeCourseName(row.kcmc);
+    const codes = codesByName.get(name) ?? new Set<string>();
+    codes.add(code);
+    codesByName.set(name, codes);
+  }
+  const next: Overrides = { ...overrides };
+  let changed = false;
+  for (const [key, sectionId] of Object.entries(overrides)) {
+    // 课程名经 NFKC 后可能含「:」，只有真正的方案 id 才算前缀。
+    const prefix =
+      planIndex.find((p) => key.startsWith(`${p.id}:`))?.id.concat(":") ?? "";
+    const codes = codesByName.get(key.slice(prefix.length));
+    if (!codes) continue;
+    for (const code of codes) {
+      // 课号键已经有归类时以它为准，不拿旧的课名归类覆盖。
+      if (next[prefix + code] === undefined) next[prefix + code] = sectionId;
+    }
+    delete next[key];
+    changed = true;
+  }
+  return changed ? next : overrides;
+}
 export type CourseStatus =
   "passed" | "failed" | "inProgress" | "withdrawn" | "other";
 export type MatchVia =
-  "name" | "alternative" | "variant" | "keyword" | "category" | "override";
+  | "code"
+  | "name"
+  | "alternative"
+  | "variant"
+  | "keyword"
+  | "category"
+  | "override";
 export type MatchedCourse = {
   key: string;
+  /** 8 位课号；教学网在修课和旧缓存的成绩没有。 */
+  code: string | null;
   name: string;
   credits: number | null;
   status: CourseStatus;
@@ -262,6 +315,7 @@ const PUBLIC_KEYWORDS: [RegExp, RegExp][] = [
 ];
 
 type SectionIndex = {
+  byCode: Map<string, { sectionId: string; credits: number | null }>;
   byName: Map<
     string,
     { sectionId: string; credits: number | null; via: MatchVia }
@@ -632,6 +686,10 @@ function buildSections(
     return flat.has(parts[0]) ? parts[0] : null;
   };
 
+  const byCode = new Map<
+    string,
+    { sectionId: string; credits: number | null }
+  >();
   const byName = new Map<
     string,
     { sectionId: string; credits: number | null; via: MatchVia }
@@ -642,6 +700,9 @@ function buildSections(
       if (!sectionId || !c.name) continue;
       const key = normalizeCourseName(c.name);
       if (skip.has(key)) continue;
+      const code = courseCode(c.code);
+      if (code && !byCode.has(code))
+        byCode.set(code, { sectionId, credits: c.credits });
       if (!byName.has(key))
         byName.set(key, { sectionId, credits: c.credits, via: "name" });
     }
@@ -653,19 +714,23 @@ function buildSections(
         ? byName.get(normalizeCourseName(a.replaces))
         : undefined;
       const sectionId = replaced?.sectionId ?? sectionForGroup(g, a);
-      if (sectionId)
-        byName.set(key, { sectionId, credits: a.credits, via: "alternative" });
+      if (!sectionId) continue;
+      byName.set(key, { sectionId, credits: a.credits, via: "alternative" });
+      const code = courseCode(a.code);
+      if (code && !byCode.has(code))
+        byCode.set(code, { sectionId, credits: a.credits });
     }
   }
   return {
     sections,
-    index: { byName, categoryTargets: targets, publicChildren, flat },
+    index: { byCode, byName, categoryTargets: targets, publicChildren, flat },
     usesRequirements,
   };
 }
 
 /**
- * 六级瀑布：手动归类 → 精确名 → 变体基名 → 反向变体 → 公共课关键词 → 课程类别。
+ * 瀑布：手动归类（课号键优先，旧的课名键兜底）→ 课号 → 精确名 → 变体基名 → 反向变体
+ * → 公共课关键词 → 课程类别。
  * 手动归类到此为止，不再从方案回填学分；在修课程也只认用户填的学分，
  * 因为方案数据里那些行大多没有解析出学分。
  */
@@ -677,8 +742,9 @@ function assign(
 ): MatchedCourse {
   const creditsOf = (fallback: number | null | undefined) =>
     backfill ? (course.credits ?? fallback ?? null) : course.credits;
-  const key = normalizeCourseName(course.name);
-  const override = overrides[key];
+  const override =
+    (course.code ? overrides[course.code] : undefined) ??
+    overrides[normalizeCourseName(course.name)];
   if (override) return { ...course, sectionId: override, via: "override" };
   const assigned = assignByPlan(course, index, creditsOf);
   return assigned;
@@ -689,6 +755,14 @@ function assignByPlan(
   index: SectionIndex,
   creditsOf: (fallback: number | null | undefined) => number | null,
 ): MatchedCourse {
+  const byCode = course.code ? index.byCode.get(course.code) : undefined;
+  if (byCode)
+    return {
+      ...course,
+      sectionId: byCode.sectionId,
+      via: "code",
+      credits: creditsOf(byCode.credits),
+    };
   const key = normalizeCourseName(course.name);
   const exact = index.byName.get(key);
   if (exact)
@@ -844,6 +918,7 @@ export function computeProgress(
       assign(
         {
           key: `score:${i}`,
+          code: courseCode(row.kch),
           name: row.kcmc,
           credits: decimal(row.xf),
           status,
@@ -872,6 +947,7 @@ export function computeProgress(
       assign(
         {
           key: `course:${c.id}`,
+          code: null,
           name: c.name,
           credits: null,
           status: "inProgress",

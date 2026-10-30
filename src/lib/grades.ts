@@ -5,6 +5,10 @@ export type GradeCourse = {
   kclbmc: string;
   xnd: string;
   xq: string;
+  /** 8 位课程号，保留前导 0；旧缓存里没有。 */
+  kch?: string;
+  jxbh?: string;
+  kctx?: string;
 };
 
 export type Scores = {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { GraduationCap } from "lucide-react";
 import { action, useResource, type Course } from "../lib/api";
@@ -10,7 +10,9 @@ import {
   IGNORE,
   inferProfile,
   loadPlan,
+  migrateOverrideKeys,
   normalizeCourseName,
+  overrideKeyOf,
   planIndex,
   planIndexMeta,
   sectionChoices,
@@ -32,6 +34,7 @@ import CurriculumSource from "../components/CurriculumSource";
 import { Button, Empty, type Login } from "../components/ui";
 
 const viaLabel: Record<NonNullable<MatchedCourse["via"]>, string> = {
+  code: "课号匹配",
   name: "课程名匹配",
   alternative: "可替代课程",
   variant: "同名实验班/变体",
@@ -93,7 +96,7 @@ type Editor = {
   choices: { id: string; label: string }[];
   pinned: Record<string, string>;
   onCredit: (name: string, credits: number | null) => void;
-  onOverride: (key: string, sectionId: string | null) => void;
+  onOverride: (course: MatchedCourse, sectionId: string | null) => void;
 };
 function gapText(s: ProgressSection) {
   const g = gap(s);
@@ -111,6 +114,23 @@ function withManualCredit(
   if (credits === null) delete manualCredits[key];
   else manualCredits[key] = credits;
   return { ...saved, manualCredits };
+}
+/**
+ * 手动归类写在课号键上（没有课号才用课名）；同一门课旧的课名键一并删掉，
+ * 免得清除归类后又被旧键兜底钉住。双学位的键带「<方案 id>:」前缀。
+ */
+function withOverride(
+  saved: Profile,
+  prefix: string,
+  course: MatchedCourse,
+  sectionId: string | null,
+): Profile {
+  const overrides = { ...saved.overrides };
+  delete overrides[prefix + normalizeCourseName(course.name)];
+  const key = prefix + overrideKeyOf(course);
+  if (sectionId) overrides[key] = sectionId;
+  else delete overrides[key];
+  return { ...saved, overrides };
 }
 /** 方向选择按「<方案 id>|<系列 id>」存，主修与双学位各写各的键。 */
 function withDirection(
@@ -178,6 +198,19 @@ export default function Curriculum({
       inferred: Boolean(top),
     });
   }, [loaded, saved, draft, inference, scores.isPending, courses.isPending]);
+
+  // 旧版手动归类按课名存：成绩读到课号后搬到课号键上，只搬一次，已做的归类不丢。
+  // 同一份资料只尝试一次，保存失败也不反复重试。
+  const migratedFor = useRef<string | null>(null);
+  const scoresLoaded = Boolean(scores.data?.data);
+  useEffect(() => {
+    if (!saved || !scoresLoaded || saving) return;
+    if (migratedFor.current === saved.updatedAt) return;
+    migratedFor.current = saved.updatedAt;
+    const migrated = migrateOverrideKeys(saved.overrides, scoreRows);
+    if (migrated !== saved.overrides)
+      void persist({ ...saved, overrides: migrated });
+  }, [saved?.updatedAt, scoresLoaded, scoreRows, saving]);
 
   async function persist(next: Profile) {
     setSaving(true);
@@ -313,12 +346,9 @@ export default function Curriculum({
             scoreRows={scoreRows}
             courseRows={courseRows}
             courseNote={courseNote}
-            onOverride={(key, sectionId) => {
-              const overrides = { ...saved.overrides };
-              if (sectionId) overrides[key] = sectionId;
-              else delete overrides[key];
-              void persist({ ...saved, overrides });
-            }}
+            onOverride={(course, sectionId) =>
+              void persist(withOverride(saved, "", course, sectionId))
+            }
             onDirection={(sectionId, groupId) =>
               void persist(
                 withDirection(saved, saved.planId!, sectionId, groupId),
@@ -336,13 +366,16 @@ export default function Curriculum({
               courseRows={courseRows}
               courseNote={courseNote}
               secondary
-              onOverride={(key, sectionId) => {
-                const overrides = { ...saved.overrides };
-                if (sectionId)
-                  overrides[`${saved.secondaryPlanId}:${key}`] = sectionId;
-                else delete overrides[`${saved.secondaryPlanId}:${key}`];
-                void persist({ ...saved, overrides });
-              }}
+              onOverride={(course, sectionId) =>
+                void persist(
+                  withOverride(
+                    saved,
+                    `${saved.secondaryPlanId}:`,
+                    course,
+                    sectionId,
+                  ),
+                )
+              }
               onDirection={(sectionId, groupId) =>
                 void persist(
                   withDirection(
@@ -397,7 +430,7 @@ function PlanProgress({
   courseRows: Course[];
   courseNote: string;
   secondary?: boolean;
-  onOverride: (key: string, sectionId: string | null) => void;
+  onOverride: (course: MatchedCourse, sectionId: string | null) => void;
   onDirection: (sectionId: string, groupId: string | null) => void;
   onCredit: (name: string, credits: number | null) => void;
 }) {
@@ -480,7 +513,7 @@ function ProgressView({
   pinned: Record<string, string>;
   onDirection: (sectionId: string, groupId: string | null) => void;
   onCredit: (name: string, credits: number | null) => void;
-  onOverride: (key: string, sectionId: string | null) => void;
+  onOverride: (course: MatchedCourse, sectionId: string | null) => void;
 }) {
   const { plan, sections, pending, ignored, totals } = progress;
   const splits = directionSplits(plan);
@@ -651,8 +684,7 @@ function ProgressView({
                   aria-label={`归类 ${c.name}`}
                   value=""
                   onChange={(e) =>
-                    e.target.value &&
-                    onOverride(normalizeCourseName(c.name), e.target.value)
+                    e.target.value && onOverride(c, e.target.value)
                   }
                 >
                   <option value="">归入…</option>
@@ -709,9 +741,7 @@ function ProgressView({
                 {c.via === "override" && (
                   <button
                     className="text-button"
-                    onClick={() =>
-                      onOverride(normalizeCourseName(c.name), null)
-                    }
+                    onClick={() => onOverride(c, null)}
                   >
                     恢复
                   </button>
@@ -908,8 +938,9 @@ function CourseList({
   const done = courses.filter((c) => c.status !== "inProgress");
   const missing = doing.filter((c) => c.credits === null).length;
   const row = (c: MatchedCourse) => {
-    const key = normalizeCourseName(c.name);
-    const pinned = editor.pinned[key];
+    const pinned =
+      (c.code ? editor.pinned[c.code] : undefined) ??
+      editor.pinned[normalizeCourseName(c.name)];
     return (
       <li key={c.key}>
         <span className="course-name">{c.name}</span>
@@ -942,7 +973,7 @@ function CourseList({
           value={pinned ?? AUTO}
           onChange={(e) =>
             editor.onOverride(
-              key,
+              c,
               e.target.value === AUTO ? null : e.target.value,
             )
           }

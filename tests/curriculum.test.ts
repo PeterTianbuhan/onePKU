@@ -3,6 +3,7 @@ import {
   computeProgress,
   defaultVersion,
   inferProfile,
+  migrateOverrideKeys,
   normalizeCourseName,
   scoreStatus,
   sectionChoices,
@@ -1063,5 +1064,87 @@ describe("inferProfile", () => {
       expect(result.narrowedBySchool).toBeNull();
       expect(result.candidates[0].id).toBe("2025-w-数学");
     });
+  });
+});
+
+describe("course code matching", () => {
+  const coded = (kcmc: string, kch: string, xqcj = "90", kclbmc = "任选") => ({
+    ...score(kcmc, "3", xqcj, kclbmc),
+    kch,
+  });
+  it("matches by course code before the name", () => {
+    // 成绩里的课名和方案写法对不上，课号对得上就直接归类。
+    const progress = computeProgress(
+      plan,
+      [coded("离散数学基础（新）", "04835310")],
+      [],
+    );
+    const hit = progress.sections
+      .flatMap((s) => [s, ...s.children])
+      .flatMap((s) => s.courses)[0];
+    expect(hit).toMatchObject({ via: "code", code: "04835310" });
+    expect(progress.pending).toEqual([]);
+  });
+  it("falls back to the name when the code is missing or unknown", () => {
+    const progress = computeProgress(
+      plan,
+      [coded("人工智能引论", "99999999"), score("计算概论 A", "3", "90", "")],
+      [],
+    );
+    const vias = progress.sections
+      .flatMap((s) => [s, ...s.children])
+      .flatMap((s) => s.courses)
+      .map((c) => c.via);
+    expect(vias.sort()).toEqual(["name", "name"]);
+  });
+  it("prefers an override keyed by code, then a legacy name key", () => {
+    const row = coded("人工智能引论", "04834040");
+    const byCode = computeProgress(plan, [row], [], { "04834040": "3-2" });
+    expect(
+      byCode.sections.flatMap((s) => s.children).find((s) => s.id === "3-2")!
+        .courses[0].via,
+    ).toBe("override");
+    const legacy = computeProgress(plan, [row], [], {
+      [normalizeCourseName("人工智能引论")]: "ignore",
+    });
+    expect(legacy.ignored.map((c) => c.name)).toEqual(["人工智能引论"]);
+  });
+});
+
+describe("migrateOverrideKeys", () => {
+  const rows: GradeCourse[] = [
+    { ...score("数学分析（Ⅱ）", "5", "90", "专业必修"), kch: "00132302" },
+    { ...score("古代汉语（上）", "2", "90", "任选"), kch: "02030021" },
+  ];
+  it("moves name keys to code keys and keeps the rest", () => {
+    const secondary = plan.id;
+    const migrated = migrateOverrideKeys(
+      {
+        [normalizeCourseName("数学分析（Ⅱ）")]: "2-1",
+        [`${secondary}:${normalizeCourseName("古代汉语（上）")}`]: "3-2",
+        [normalizeCourseName("只在教学网的课")]: "ignore",
+      },
+      rows,
+    );
+    expect(migrated).toEqual({
+      "00132302": "2-1",
+      [`${secondary}:02030021`]: "3-2",
+      [normalizeCourseName("只在教学网的课")]: "ignore",
+    });
+  });
+  it("keeps an existing code key and returns the same object when nothing moves", () => {
+    const current = { "00132302": "3-2" };
+    expect(migrateOverrideKeys(current, rows)).toBe(current);
+    expect(
+      migrateOverrideKeys(
+        { "00132302": "3-2", [normalizeCourseName("数学分析（Ⅱ）")]: "2-1" },
+        rows,
+      ),
+    ).toEqual({ "00132302": "3-2" });
+    // 旧缓存的成绩没有课号：什么都不搬。
+    const legacy = { [normalizeCourseName("数学分析（Ⅱ）")]: "2-1" };
+    expect(
+      migrateOverrideKeys(legacy, [score("数学分析（Ⅱ）", "5", "90", "")]),
+    ).toBe(legacy);
   });
 });
