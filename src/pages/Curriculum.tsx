@@ -40,6 +40,7 @@ const viaLabel: Record<NonNullable<MatchedCourse["via"]>, string> = {
   variant: "同名实验班/变体",
   keyword: "按公共课关键词",
   category: "按成绩类别",
+  outside: "方案外课程，计入自主选修",
   override: "手动归类",
 };
 const statusLabel: Record<MatchedCourse["status"], string> = {

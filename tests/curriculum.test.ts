@@ -1111,6 +1111,28 @@ describe("course code matching", () => {
   });
 });
 
+describe("courses outside the plan", () => {
+  it("counts a coded major course that the plan does not list as a free elective", () => {
+    const outside = {
+      ...score("软件设计实践", "3", "80", "专业必修"),
+      kch: "04835240",
+    };
+    const progress = computeProgress(plan, [outside], []);
+    expect(progress.pending).toEqual([]);
+    const hit = progress.sections
+      .flatMap((s) => s.children)
+      .flatMap((s) => s.courses)[0];
+    expect(hit).toMatchObject({ via: "outside", sectionId: "3-2" });
+    // 没有课号时分不清，照旧待确认。
+    const legacy = computeProgress(
+      plan,
+      [score("软件设计实践", "3", "80", "专业必修")],
+      [],
+    );
+    expect(legacy.pending.map((c) => c.name)).toEqual(["软件设计实践"]);
+  });
+});
+
 describe("migrateOverrideKeys", () => {
   const rows: GradeCourse[] = [
     { ...score("数学分析（Ⅱ）", "5", "90", "专业必修"), kch: "00132302" },

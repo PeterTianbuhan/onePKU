@@ -236,6 +236,7 @@ export type MatchVia =
   | "variant"
   | "keyword"
   | "category"
+  | "outside"
   | "override";
 export type MatchedCourse = {
   key: string;
@@ -730,7 +731,7 @@ function buildSections(
 
 /**
  * 瀑布：手动归类（课号键优先，旧的课名键兜底）→ 课号 → 精确名 → 变体基名 → 反向变体
- * → 公共课关键词 → 课程类别。
+ * → 公共课关键词 → 课程类别 → 方案外课程（有课号）计入自主选修。
  * 手动归类到此为止，不再从方案回填学分；在修课程也只认用户填的学分，
  * 因为方案数据里那些行大多没有解析出学分。
  */
@@ -807,6 +808,10 @@ function assignByPlan(
     return { ...course, sectionId: t.elective, via: "category" };
   if (/任选|自主/.test(cat) && t.free)
     return { ...course, sectionId: t.free, via: "category" };
+  // 有课号、课号和课名都不在方案里：别的专业或方向的课，按自主选修「全校课程均可」计入。
+  // 没有课号时分不清是方案外的课还是方案里改了名的课，仍进待确认。
+  if (course.code && t.free)
+    return { ...course, sectionId: t.free, via: "outside" };
   return { ...course, sectionId: null, via: null };
 }
 
