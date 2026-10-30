@@ -48,13 +48,14 @@ fn main() {
                     }
                 }
             } else if req.method() == &tiny_http::Method::Get {
-                let path = req.url().split('?').next().unwrap_or("/");
-                let relative = if path == "/" {
-                    "index.html"
-                } else {
-                    path.trim_start_matches('/')
+                // 方案文件名是中文，浏览器会百分号编码；先解码再做越界检查。
+                let path = decode_path(req.url().split('?').next().unwrap_or("/"));
+                let relative = match path.as_deref() {
+                    Some("/") => "index.html",
+                    Some(p) => p.trim_start_matches('/'),
+                    None => "..",
                 };
-                if relative.contains("..") || relative.contains('%') || relative.contains('\\') {
+                if relative.contains("..") || relative.contains('\\') || relative.contains('\0') {
                     tiny_http::Response::from_string("Forbidden").with_status_code(403)
                 } else {
                     match std::fs::read(std::path::Path::new(&root).join(relative)) {
@@ -83,4 +84,12 @@ fn main() {
             let _ = req.respond(response);
         });
     }
+}
+
+/// 解码 URL 路径里的 %XX；不是 UTF-8 时返回 None。
+fn decode_path(path: &str) -> Option<String> {
+    percent_encoding::percent_decode_str(path)
+        .decode_utf8()
+        .ok()
+        .map(|p| p.into_owned())
 }
