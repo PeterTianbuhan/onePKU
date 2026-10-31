@@ -392,7 +392,7 @@ export default function Settings({
           />
         </div>
         <p className="footnote">
-          登录都在学校页面完成，应用只保存学校交回的会话；课堂实录走学校统一身份认证，不经手密码。
+          登录都在学校页面完成，应用只保存学校交回的会话。系统浏览器里的登录和应用内的会话互不相通，需要分别登录。课堂实录走学校统一身份认证，不经手密码。
         </p>
         <SettingRow
           label="本院通知"
@@ -842,7 +842,7 @@ export default function Settings({
         <h2>关于</h2>
         <SettingRow
           label="外观"
-          description="深色与浅色用的是同一套语义色；「跟随系统」会跟着系统的浅色/深色设置即时变化。"
+          description="可选浅色、深色，或跟随系统。跟随系统时，随系统的浅色或深色一起切换。"
           control={
             <div className="theme-choice" role="group" aria-label="外观模式">
               {(

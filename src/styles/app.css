@@ -145,7 +145,7 @@ a {
 }
 .sidebar nav button:hover,
 .nav-settings:hover {
-  background: var(--border);
+  background: color-mix(in srgb, var(--text) 7%, transparent);
 }
 .sidebar nav .active,
 .nav-settings.active {
@@ -786,12 +786,9 @@ select {
   gap: 32px;
 }
 .badge {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--primary);
-  background: var(--primary-soft);
-  border-radius: 999px;
-  padding: 1px 8px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
   margin-left: 8px;
   vertical-align: middle;
 }
@@ -837,6 +834,11 @@ select {
 }
 .course-tile > svg {
   color: var(--muted);
+  opacity: 0;
+}
+.course-tile:hover > svg,
+.course-tile:focus-visible > svg {
+  opacity: 1;
 }
 .semester-group > summary {
   cursor: pointer;
@@ -1654,7 +1656,6 @@ tbody tr:last-child td {
 .nav-group-label {
   color: var(--muted);
   font-size: 11px;
-  letter-spacing: 0.08em;
   padding: 0 14px 6px;
 }
 .sidebar nav button {
@@ -1694,8 +1695,14 @@ tbody tr:last-child td {
   color: var(--muted);
   margin: 5px 0 0;
 }
-.refreshed-today {
-  margin-top: 34px;
+.resource-head .text-button {
+  color: var(--muted);
+}
+.resource:hover .resource-head .text-button,
+.resource:focus-within .resource-head .text-button,
+.resource-head .text-button:hover,
+.resource-head .text-button:focus-visible {
+  color: var(--primary);
 }
 .today-news .news-row {
   padding: 16px 0;
@@ -3744,7 +3751,7 @@ input[type="checkbox"] {
   gap: 6px;
   padding: 5px 10px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--background);
   color: var(--text);
   font-size: 13px;
