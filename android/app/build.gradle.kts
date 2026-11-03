@@ -25,6 +25,14 @@ tasks.configureEach {
     }
 }
 
+// 固定的签名钥匙：同一把钥匙签出来的 APK 才能直接覆盖安装。之前 CI 每次用 runner 临时生成的
+// 调试钥匙，每个包签名都不同，更新只能先卸载，本机的登录、手填学分和院系选择跟着丢。
+// 钥匙不进仓库：CI 从 Secrets 解出来，本机放在 ~/.config/onepku/。都没有时退回默认调试钥匙。
+val signingStore: File? = System.getenv("ONEPKU_KEYSTORE")?.let(::File)?.takeIf { it.isFile }
+    ?: File(System.getProperty("user.home"), ".config/onepku/android-signing.jks").takeIf { it.isFile }
+val signingPassword: String? = System.getenv("ONEPKU_KEYSTORE_PASSWORD")
+    ?: File(System.getProperty("user.home"), ".config/onepku/android-signing.pass").takeIf { it.isFile }?.readText()?.trim()
+
 android {
     namespace = "me.petertian.onepku"
     compileSdk = 35
@@ -35,8 +43,19 @@ android {
         applicationId = "me.petertian.onepku"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.3.2"
+        versionCode = 5
+        versionName = "0.4.0"
+    }
+
+    signingConfigs {
+        if (signingStore != null && signingPassword != null) {
+            create("onepku") {
+                storeFile = signingStore
+                storePassword = signingPassword
+                keyAlias = "onepku"
+                keyPassword = signingPassword
+            }
+        }
     }
 
     buildTypes {
@@ -47,6 +66,7 @@ android {
         }
         debug {
             applicationIdSuffix = ".debug"
+            signingConfig = signingConfigs.findByName("onepku") ?: signingConfigs.getByName("debug")
         }
     }
 
@@ -91,6 +111,9 @@ dependencies {
     implementation(libs.jsoup)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.exoplayer.hls)
+    implementation(libs.androidx.media3.ui)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")

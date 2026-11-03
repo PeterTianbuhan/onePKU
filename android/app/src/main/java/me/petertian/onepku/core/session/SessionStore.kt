@@ -14,6 +14,7 @@ enum class Service(val key: String, val displayName: String) {
     TREEHOLE("treehole", "树洞"),
     CARD("campuscard", "校园卡"),
     PORTAL("portal", "校内门户"),
+    HAOXUE("haoxue", "课堂实录"),
 }
 
 @Serializable

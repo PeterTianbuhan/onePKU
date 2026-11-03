@@ -15,6 +15,7 @@ import androidx.compose.material.icons.automirrored.outlined.Assignment
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.CreditCard
 import androidx.compose.material.icons.outlined.Grade
+import androidx.compose.material.icons.outlined.OndemandVideo
 import androidx.compose.material.icons.outlined.MeetingRoom
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Settings
@@ -71,6 +72,7 @@ fun MineScreen(nav: NavHostController, vm: MineViewModel = hiltViewModel()) {
 
     val entries = listOf(
         Entry(Routes.ASSIGNMENTS, "作业", "跨课程作业与提交记录", Icons.AutoMirrored.Outlined.Assignment),
+        Entry(Routes.REPLAYS, "课程回放", "课堂实录在线看，可下载离线看", Icons.Outlined.OndemandVideo),
         Entry(Routes.GRADES, "成绩", "正式成绩与 GPA", Icons.Outlined.Grade),
         Entry(Routes.CURRICULUM, "培养方案", "毕业要求与各大类完成度", Icons.Outlined.MenuBook),
         Entry(Routes.CARD, "校园卡", "余额,收支与流水", Icons.Outlined.CreditCard),

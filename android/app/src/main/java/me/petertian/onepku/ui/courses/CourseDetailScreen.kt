@@ -68,6 +68,7 @@ import me.petertian.onepku.ui.components.openFile
 import me.petertian.onepku.ui.components.UiData
 import me.petertian.onepku.ui.navigation.Routes
 import me.petertian.onepku.ui.navigation.back
+import me.petertian.onepku.ui.replay.ReplayLessonsTab
 import me.petertian.onepku.ui.today.deadlineLabel
 import java.io.File
 import javax.inject.Inject
@@ -175,7 +176,7 @@ class CourseDetailViewModel @Inject constructor(
 @Composable
 fun CourseDetailScreen(nav: NavHostController, vm: CourseDetailViewModel = hiltViewModel()) {
     val ui by vm.ui.collectAsState()
-    val tabs = listOf("通知", "作业", "资料", "成绩")
+    val tabs = listOf("通知", "作业", "资料", "成绩", "回放")
 
     Scaffold(
         topBar = {
@@ -204,6 +205,7 @@ fun CourseDetailScreen(nav: NavHostController, vm: CourseDetailViewModel = hiltV
                 1 -> AssignmentsTab(ui, vm, nav)
                 2 -> MaterialsTab(ui, vm)
                 3 -> GradesTab(ui.grades, vm::loadGrades)
+                4 -> ReplayLessonsTab(nav)
             }
         }
     }

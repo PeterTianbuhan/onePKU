@@ -1,6 +1,6 @@
 # OnePKU Android
 
-北大校园服务的 Android 客户端，与桌面版同仓库、同数据的独立实现（不是桌面版打包）。Kotlin + Jetpack Compose（Material 3）、MVVM（ViewModel + StateFlow）、Hilt 依赖注入，最低 Android 8.0（API 26）。版本号独立于桌面版计数：当前 Android v0.3.2，桌面版是 v0.12.0，两者互不对应；逐版改动见仓库根 [CHANGELOG.md](../CHANGELOG.md) 的「Android 版」一节。
+北大校园服务的 Android 客户端，与桌面版同仓库、同数据的独立实现（不是桌面版打包）。Kotlin + Jetpack Compose（Material 3）、MVVM（ViewModel + StateFlow）、Hilt 依赖注入，最低 Android 8.0（API 26）。版本号独立于桌面版计数：当前 Android v0.4.0，桌面版是 v0.12.0，两者互不对应；逐版改动见仓库根 [CHANGELOG.md](../CHANGELOG.md) 的「Android 版」一节。
 
 ## 功能
 
@@ -20,10 +20,11 @@
 - 本院通知：登录校内门户后读取「单位」识别所在院系，已适配的学院（物理、计算机、信科）直接抓官网通知页，其余回退到门户部门通知按院系过滤；识别不准可在设置里手动选院系
 - 空闲教室：按教学楼与今天/明天/后天查询 12 节占用情况
 - 校历：官方 PDF 应用内翻阅（2025–2026、2026–2027 学年）
+- 课程回放：好学课堂实录的录像，按课程列出最近半年能播的课，课程详情里也有「回放」标签。边看边把分片存进本机，拖到哪下到哪；点下载在后台补齐整节课，断网也能看；记住播放位置，可全屏、倍速。没点下载的缓存一周不打开就清掉
 - 校园卡：余额（电子账户口径）、本月消费类支出累计、逐笔流水
 - 设置：各服务单独重连/断开、退出登录
 
-不做：视频回放、树洞发帖、校园卡充值等写操作——这些请使用学校原有页面。唯一的写入口是作业提交，且必须经过明确确认与回执核对。
+不做：字幕、树洞发帖、校园卡充值等写操作——这些请使用学校原有页面。唯一的写入口是作业提交，且必须经过明确确认与回执核对。
 
 ## 构建
 
@@ -34,11 +35,11 @@ cd android
 ./gradlew assembleDebug
 ```
 
-产物在 `app/build/outputs/apk/debug/`。Release 构建需自行配置签名。
+产物在 `app/build/outputs/apk/debug/`。调试包用固定钥匙签名，才能覆盖安装：本机放在 `~/.config/onepku/android-signing.jks`（密码在同目录 `android-signing.pass`），CI 从仓库 Secrets `ANDROID_SIGNING_KEYSTORE`、`ANDROID_SIGNING_PASSWORD` 读取；都没有时退回默认调试钥匙。Release 构建需自行配置签名。
 
 培养方案数据不在本目录，构建时由 Gradle 从仓库根的 `data/curriculum/` 同步进 assets，因此必须连着整个仓库一起构建，不能只拷 `android/` 出去。
 
-单元测试：`./gradlew testDebugUnitTest`，覆盖培养方案完成度引擎与作业页的 HTML 解析。
+单元测试：`./gradlew testDebugUnitTest`，覆盖培养方案完成度引擎、作业页的 HTML 解析，以及回放的签名、登录令牌提取与播放列表解析。
 
 ## 从 GitHub 下载 APK
 

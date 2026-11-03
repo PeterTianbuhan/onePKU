@@ -39,6 +39,10 @@ import me.petertian.onepku.ui.login.LoginScreen
 import me.petertian.onepku.ui.mine.MineScreen
 import me.petertian.onepku.ui.news.NewsDetailScreen
 import me.petertian.onepku.ui.news.NewsScreen
+import me.petertian.onepku.data.replay.Haoxue
+import me.petertian.onepku.ui.replay.ReplayCourseScreen
+import me.petertian.onepku.ui.replay.ReplayHomeScreen
+import me.petertian.onepku.ui.replay.ReplayPlayerScreen
 import me.petertian.onepku.ui.settings.SettingsScreen
 import me.petertian.onepku.ui.today.TodayScreen
 
@@ -59,11 +63,19 @@ object Routes {
     const val CLASSROOM = "classroom"
     const val CALENDAR = "calendar"
     const val SETTINGS = "settings"
+    const val REPLAYS = "replays"
+    const val REPLAY_COURSE = "replayCourse?name={name}"
+    const val REPLAY_PLAYER = "replay/{courseId}/{episodeId}?title={title}&course={course}&time={time}&room={room}"
     const val NEWS_DETAIL = "newsDetail/{kind}?id={id}&url={url}&title={title}&source={source}"
 
     fun courseDetail(id: String, name: String) = "course/$id?name=${Uri.encode(name)}"
     fun assignmentDetail(courseId: String, contentId: String, title: String) =
         "assignment/$courseId/$contentId?title=${Uri.encode(title)}"
+
+    fun replayCourse(name: String) = "replayCourse?name=${Uri.encode(name)}"
+    fun replayPlayer(l: Haoxue.Lesson) =
+        "replay/${Uri.encode(l.courseId)}/${Uri.encode(l.episodeId)}?title=${Uri.encode(l.title)}" +
+            "&course=${Uri.encode(l.courseName)}&time=${Uri.encode(l.time)}&room=${Uri.encode(l.room)}"
 
     /** kind: portal(学校/部门,用 id 取正文)| web(教务部/信科/图书馆,按 url 抓取) */
     fun newsDetail(kind: String, id: String, url: String, title: String, source: String) =
@@ -145,6 +157,17 @@ fun AppNavHost() {
             composable(Routes.CLASSROOM) { ClassroomScreen(nav) }
             composable(Routes.CALENDAR) { CalendarScreen(nav) }
             composable(Routes.SETTINGS) { SettingsScreen(nav) }
+            composable(Routes.REPLAYS) { ReplayHomeScreen(nav) }
+            composable(
+                Routes.REPLAY_COURSE,
+                arguments = listOf(navArgument("name") { type = NavType.StringType; defaultValue = "" }),
+            ) { ReplayCourseScreen(nav) }
+            composable(
+                Routes.REPLAY_PLAYER,
+                arguments = listOf("courseId", "episodeId", "title", "course", "time", "room").map { name ->
+                    navArgument(name) { type = NavType.StringType; defaultValue = "" }
+                },
+            ) { ReplayPlayerScreen(nav) }
 
             composable(
                 Routes.NEWS_DETAIL,

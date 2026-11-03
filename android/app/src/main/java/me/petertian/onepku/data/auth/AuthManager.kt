@@ -14,6 +14,7 @@ import me.petertian.onepku.core.session.StoredSession
 import me.petertian.onepku.data.iaaa.IaaaApi
 import me.petertian.onepku.data.iaaa.IaaaException
 import me.petertian.onepku.data.portal.PortalApi
+import me.petertian.onepku.data.replay.Haoxue
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import java.util.UUID
@@ -54,6 +55,7 @@ class AuthManager @Inject constructor(
                 Service.TREEHOLE -> loginTreehole(username, password, otpCode)
                 Service.CARD -> loginCard(username, password, otpCode)
                 Service.PORTAL -> loginPortal(username, password, otpCode)
+                Service.HAOXUE -> loginHaoxue(username, password, otpCode)
             }
         } catch (e: Exception) {
             sessionStore.clear(service)
@@ -266,6 +268,63 @@ class AuthManager @Inject constructor(
                 throw e
             }
         }
+
+    // ---- 好学课堂实录 ----
+
+    /**
+     * 统一认证换课堂实录票据，再以好学安卓 WebView 的身份打开 app-login 中转页，
+     * 页面源码里交给原生桥的那段载荷就是令牌。与桌面端 haoxue::login_password 同一条路。
+     */
+    private suspend fun loginHaoxue(username: String, password: String, otpCode: String?) =
+        withContext(Dispatchers.IO) {
+            val jar = cookieStores.jar(Service.HAOXUE.key)
+            jar.clear()
+            val client = httpFactory.client(cookieJar = jar, followRedirects = false, ua = Haoxue.ANDROID_UA)
+            val passport = "https://passport.pku.edu.cn"
+            passportGet(client, "$passport/auth/login?redirect=${java.net.URLEncoder.encode("$passport/auth/app-login", "UTF-8")}")
+            val token = iaaa.login(
+                appId = "resource",
+                redirectUrl = passport,
+                username = username,
+                password = password,
+                otpCode = otpCode,
+            )
+            // 回调地址带票据，失败时不把地址放进错误信息。
+            runCatching { passportGet(client, "$passport/?token=$token") }
+                .onFailure { throw IaaaException("课堂实录换票失败") }
+            val html = passportGet(client, "$passport/auth/app-login")
+            val payload = Haoxue.extractPayload(html)?.let(Haoxue::parsePayload)
+                ?: throw IaaaException("课堂实录没有交出登录授权")
+            if (payload.account.trim() != username.trim()) throw IaaaException("课堂实录返回的身份与当前账号不一致")
+            sessionStore.saveSession(
+                Service.HAOXUE,
+                StoredSession(
+                    token = payload.token,
+                    uid = payload.account,
+                    extra = mapOf("cookieToken" to payload.cookieToken, "realname" to payload.name),
+                ),
+            )
+        }
+
+    /** 只在 passport / iaaa 之间跟随跳转，最多 6 次；返回最后一页的正文。 */
+    private fun passportGet(client: okhttp3.OkHttpClient, start: String): String {
+        var url = start.toHttpUrl()
+        repeat(7) {
+            client.newCall(Request.Builder().url(url).header("Accept", "text/html").build()).execute().use { resp ->
+                if (resp.isRedirect) {
+                    val next = resp.header("location")?.let { url.resolve(it) }
+                    if (next == null || !next.isHttps || next.host !in setOf("passport.pku.edu.cn", "iaaa.pku.edu.cn")) {
+                        return ""
+                    }
+                    url = next
+                    return@repeat
+                }
+                if (!resp.isSuccessful) throw IaaaException("课堂实录登录失败: HTTP ${resp.code}")
+                return resp.requireBody().string()
+            }
+        }
+        throw IaaaException("课堂实录登录跳转过多")
+    }
 
     private fun nowSec() = System.currentTimeMillis() / 1000
 
