@@ -203,6 +203,7 @@ fun ReplayPlayerScreen(nav: NavHostController, vm: ReplayPlayerViewModel = hiltV
 private fun Details(vm: ReplayPlayerViewModel) {
     val states by vm.store.states.collectAsState()
     val local = states[vm.lesson.key]
+    val speed by vm.store.speed.collectAsState(0L)
     val ask = rememberNotificationAsk()
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(vm.lesson.title, style = MaterialTheme.typography.titleMedium)
@@ -218,6 +219,13 @@ private fun Details(vm: ReplayPlayerViewModel) {
             )
         }
         localLabel(local)?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        if (speed > 0) {
+            Text(
+                "从学校取视频 ${formatSpeed(speed)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
             when {
                 local?.downloading == true -> OutlinedButton(onClick = { vm.store.delete(vm.lesson.key) }) { Text("取消下载") }

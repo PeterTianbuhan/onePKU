@@ -13,7 +13,7 @@ import java.io.InputStream
 
 /**
  * 播放器的数据来源：`onepku-replay://<课次>/index.m3u8` 是本机生成的播放列表，
- * `onepku-replay://<课次>/<n>.ts` 交给 [ReplayStore.part]，本机有就读文件，没有就现取现存。
+ * `onepku-replay://<课次>/<n>.ts` 交给 [ReplayStore.play]，本机有就读文件，没有就现取现存，并预取后面几段。
  */
 @UnstableApi
 class ReplayDataSource(private val store: ReplayStore) : BaseDataSource(true) {
@@ -36,7 +36,7 @@ class ReplayDataSource(private val store: ReplayStore) : BaseDataSource(true) {
             stream = ByteArrayInputStream(bytes)
         } else {
             val index = name.removeSuffix(".ts").toIntOrNull() ?: throw IOException("分片地址无效")
-            val file = store.part(key, index)
+            val file = store.play(key, index)
             total = file.length()
             stream = file.inputStream()
         }

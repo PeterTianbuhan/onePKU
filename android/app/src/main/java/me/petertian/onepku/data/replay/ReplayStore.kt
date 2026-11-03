@@ -11,9 +11,12 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -28,6 +31,7 @@ import me.petertian.onepku.data.repo.withReauth
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -80,6 +84,13 @@ class ReplayStore @Inject constructor(
     private val locks = ConcurrentHashMap<String, Any>()
     private val jobs = ConcurrentHashMap<String, Job>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** 从学校收到的总字节数，算网速用。 */
+    private val received = AtomicLong()
+    /** 每节课播放器最近要的是第几段；预取只取它后面那一截。 */
+    private val reading = ConcurrentHashMap<String, Int>()
+    private val prefetching: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val prefetchGate = Semaphore(PREFETCH_PARALLEL)
 
     private val _states = MutableStateFlow<Map<String, Local>>(emptyMap())
     val states: StateFlow<Map<String, Local>> = _states.asStateFlow()
@@ -182,6 +193,66 @@ class ReplayStore @Inject constructor(
         return Hls.localPlaylist(key, meta.durations, meta.discontinuities.toSet()).toByteArray()
     }
 
+    /** 当前从学校取视频的速度（字节/秒，最近几秒的平均），没在取时是 0。 */
+    val speed: Flow<Long> = flow {
+        val samples = ArrayDeque<Long>()
+        var last = received.get()
+        while (true) {
+            delay(1000)
+            val now = received.get()
+            samples.addLast(now - last)
+            last = now
+            if (samples.size > 3) samples.removeFirst()
+            emit(samples.sum() / samples.size)
+        }
+    }
+
+    fun received(): Long = received.get()
+
+    /**
+     * 播放器要第 `index` 段。播放器自己一次只取一段，网慢时一段段排队等；
+     * 这里顺手把后面两分多钟的分片几条连接一起取，播放器往后要的时候多半已经在本机了。
+     */
+    fun play(key: String, index: Int): File {
+        reading[key] = index
+        prefetchAfter(key, index)
+        return part(key, index)
+    }
+
+    private fun prefetchAfter(key: String, index: Int) {
+        val meta = readMeta(key) ?: return
+        val window = window(meta, index)
+        for (next in window) {
+            if (partFile(key, next).isFile) continue
+            val id = "$key/$next"
+            if (!prefetching.add(id)) continue
+            scope.launch {
+                try {
+                    prefetchGate.withPermit {
+                        // 排队期间用户可能已经拖走了：不在新位置后面的就不取了。
+                        val at = reading[key] ?: return@withPermit
+                        if (next in window(meta, at)) part(key, next)
+                    }
+                } catch (_: Exception) {
+                    // 预取失败不要紧，播放器轮到这段时会自己再取、再报错。
+                } finally {
+                    prefetching.remove(id)
+                }
+            }
+        }
+    }
+
+    /** `index` 之后约 [PREFETCH_SECONDS] 秒内的分片序号，至少 [PREFETCH_MIN] 段。 */
+    private fun window(meta: Meta, index: Int): IntRange {
+        var end = index
+        var seconds = 0.0
+        while (end + 1 < meta.durations.size && (seconds < PREFETCH_SECONDS || end - index < PREFETCH_MIN)) {
+            end += 1
+            seconds += meta.durations[end]
+        }
+        return index + 1..end
+    }
+
     /** 第 `index` 段的本机文件；没有就现取，取到校验过再落盘。阻塞调用，给加载线程用。 */
     fun part(key: String, index: Int): File {
         val file = partFile(key, index)
@@ -217,7 +288,7 @@ class ReplayStore @Inject constructor(
             try {
                 val remote = remoteFor(key, meta, fresh)
                 val segment = remote.playlist.segments[index]
-                var bytes = api.media(segment.url, 32 * 1024 * 1024)
+                var bytes = api.media(segment.url, 32 * 1024 * 1024) { received.addAndGet(it.toLong()) }
                 if (segment.keyUrl != null) {
                     val aes = remote.keys.getOrPut(segment.keyUrl) {
                         api.media(segment.keyUrl, 16).also { if (it.size != 16) throw IOException("视频密钥长度无效") }
@@ -255,7 +326,7 @@ class ReplayStore @Inject constructor(
                 val meta = prepare(lesson).copy(keep = true)
                 writeMeta(key, meta)
                 val missing = meta.durations.indices.filterNot { partFile(key, it).isFile }
-                val gate = Semaphore(3)
+                val gate = Semaphore(DOWNLOAD_PARALLEL)
                 coroutineScope {
                     missing.map { index -> async { gate.withPermit { part(key, index) } } }.awaitAll()
                 }
@@ -276,6 +347,7 @@ class ReplayStore @Inject constructor(
     /** 删掉这节课的本机文件；正在下载就先停。 */
     fun delete(key: String) {
         jobs.remove(key)?.cancel()
+        reading.remove(key)
         remotes.remove(key)
         metas.remove(key)
         scope.launch {
@@ -286,5 +358,11 @@ class ReplayStore @Inject constructor(
 
     companion object {
         const val SCHEME = "onepku-replay"
+
+        /** 点了下载时同时开几条连接。和浏览器对同一个站点的默认并发差不多。 */
+        private const val DOWNLOAD_PARALLEL = 5
+        private const val PREFETCH_PARALLEL = 4
+        private const val PREFETCH_SECONDS = 150.0
+        private const val PREFETCH_MIN = 3
     }
 }

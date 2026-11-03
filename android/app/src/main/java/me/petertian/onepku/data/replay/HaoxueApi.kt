@@ -26,9 +26,16 @@ class HaoxueApi @Inject constructor(
 ) {
     private val apiClient: OkHttpClient by lazy { httpFactory.client(readTimeoutSec = 15) }
 
-    /** 分片与密钥要带 `_token` Cookie；只发给 https 的 pku.edu.cn，跳转到别处时不带。 */
+    /**
+     * 分片与密钥要带 `_token` Cookie；只发给 https 的 pku.edu.cn，跳转到别处时不带。
+     *
+     * 只用 HTTP/1.1：学校视频服务支持 HTTP/2，OkHttp 会把所有并行请求挤进同一条 TCP 连接，
+     * 手机网络一丢包整条连接就慢下来，并行等于没并。分开的连接各走各的，合起来快得多。
+     * 读超时放短：连接卡住时早点换一条重来，比干等强。
+     */
     val mediaClient: OkHttpClient by lazy {
-        httpFactory.client(readTimeoutSec = 45).newBuilder()
+        httpFactory.client(readTimeoutSec = 15, http1Only = true).newBuilder()
+            .connectionPool(okhttp3.ConnectionPool(8, 2, TimeUnit.MINUTES))
             .addNetworkInterceptor(Interceptor { chain ->
                 val request = chain.request()
                 val cookie = sessions.session(Service.HAOXUE)?.extra?.get("cookieToken").orEmpty()
@@ -81,7 +88,7 @@ class HaoxueApi @Inject constructor(
     }
 
     /** 学校媒体资源，带大小上限；401/403 说明令牌或签名地址过期。 */
-    fun media(url: String, limit: Int): ByteArray {
+    fun media(url: String, limit: Int, onBytes: (Int) -> Unit = {}): ByteArray {
         if (!Haoxue.isSchoolMedia(url)) throw IOException("视频地址不在学校域名下")
         mediaClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
             if (!Haoxue.isSchoolMedia(response.request.url.toString())) throw IOException("视频地址跳到了学校以外")
@@ -96,6 +103,7 @@ class HaoxueApi @Inject constructor(
                     val read = stream.read(buffer)
                     if (read < 0) break
                     out.write(buffer, 0, read)
+                    onBytes(read)
                     if (out.size() > limit) throw IOException("视频片段超出大小限制")
                 }
                 out.toByteArray()

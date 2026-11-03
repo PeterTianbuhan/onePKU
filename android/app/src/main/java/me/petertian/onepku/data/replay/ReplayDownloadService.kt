@@ -19,6 +19,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.petertian.onepku.MainActivity
+import me.petertian.onepku.ui.replay.formatSpeed
 import javax.inject.Inject
 
 /** 下载回放时撑住进程的前台服务；下载本身在 [ReplayStore] 里跑，这里只管通知和收尾。 */
@@ -46,13 +47,17 @@ class ReplayDownloadService : Service() {
             loop = scope.launch {
                 // 等下载协程起来，再按它们的进度刷新通知，全部结束就退出。
                 delay(500)
+                var last = store.received()
                 while (store.active()) {
+                    val now = store.received()
+                    val speed = now - last
+                    last = now
                     val running = store.states.value.values.filter { it.downloading }
                     val done = running.sumOf { it.done }
                     val total = running.sumOf { it.total }
                     val title = running.singleOrNull()?.lesson?.let { "${it.courseName} · ${it.title}" }
                         ?: "正在下载 ${running.size} 节回放"
-                    manager.notify(ID, notification(title, done, total))
+                    manager.notify(ID, notification(title, done, total, speed))
                     delay(1000)
                 }
                 val failed = store.states.value.values.count { it.keep && it.error != null && !it.complete }
@@ -69,11 +74,14 @@ class ReplayDownloadService : Service() {
         PendingIntent.FLAG_IMMUTABLE,
     )
 
-    private fun notification(title: String, done: Int, total: Int) =
+    private fun notification(title: String, done: Int, total: Int, speed: Long = 0) =
         NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(title)
-            .setContentText(if (total > 0) "$done / $total 段" else "正在取播放列表")
+            .setContentText(
+                if (total == 0) "正在取播放列表"
+                else "$done / $total 段" + if (speed > 0) " · ${formatSpeed(speed)}" else "",
+            )
             .setProgress(total, done, total == 0)
             .setOngoing(true)
             .setOnlyAlertOnce(true)

@@ -293,6 +293,11 @@ fun replayError(e: Throwable, fallback: String): String = when (e) {
     else -> e.message?.takeIf { it.isNotBlank() } ?: fallback
 }
 
+fun formatSpeed(perSecond: Long): String = when {
+    perSecond >= 1L shl 20 -> "%.1f MB/s".format(perSecond / (1L shl 20).toDouble())
+    else -> "${perSecond / 1024} KB/s"
+}
+
 fun formatBytes(bytes: Long): String = when {
     bytes >= 1L shl 30 -> "%.1f GB".format(bytes / (1L shl 30).toDouble())
     bytes >= 1L shl 20 -> "%.0f MB".format(bytes / (1L shl 20).toDouble())
