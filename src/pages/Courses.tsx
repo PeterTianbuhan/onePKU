@@ -66,7 +66,9 @@ export default function Courses({ login }: { login: Login }) {
     <>
       <header className="page-heading">
         <h1>课程</h1>
-        <Button onClick={() => void openOfficial("course")}>打开教学网</Button>
+        <Button variant="quiet" onClick={() => void openOfficial("course")}>
+          打开教学网
+        </Button>
       </header>
       <div className="toolbar">
         <Search value={search} onChange={setSearch} placeholder="搜索课程" />
@@ -136,7 +138,7 @@ export default function Courses({ login }: { login: Login }) {
             </div>
           ) : (
             <Empty icon={<BookOpen />}>
-              {search ? "没有匹配的课程" : "暂无课程"}
+              {search ? "没有匹配的课程" : "没有课程"}
             </Empty>
           );
         }}

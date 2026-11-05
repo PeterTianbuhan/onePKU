@@ -121,7 +121,7 @@ export default function Grades({ login }: { login: Login }) {
     <>
       <header className="page-heading">
         <h1>成绩</h1>
-        <Button onClick={() => void openOfficial("portal")}>
+        <Button variant="quiet" onClick={() => void openOfficial("portal")}>
           打开校内门户
         </Button>
       </header>

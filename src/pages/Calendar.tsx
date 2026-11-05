@@ -267,7 +267,7 @@ export default function Calendar() {
         <Empty>校历暂不可用，请刷新重试</Empty>
       )}
       <p className="calendar-caption">
-        保留官方原版排版。放大后可横向滚动阅读，假期及教学安排以学校最新公告为准。
+        官方原件。放大后可横向滚动。假期与教学安排以学校公告为准。
       </p>
       {openError && <p role="status">{openError}</p>}
     </>

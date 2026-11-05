@@ -26,12 +26,18 @@ import {
   call,
   fmtTime,
   openOfficial,
+  serviceNames,
   type Attachment,
   type Request,
   type Envelope,
   type Service,
 } from "../lib/api";
 const AttachmentPreview = lazy(() => import("./AttachmentPreview"));
+function siteName(target?: string) {
+  return target && target in serviceNames
+    ? serviceNames[target as Service]
+    : "官网";
+}
 export type Login = (
   service: Service,
   scope?: "treehole" | "timetable",
@@ -204,7 +210,7 @@ export function Resource<T>({
       ) : env?.data !== null && env?.data !== undefined ? (
         children(env.data)
       ) : !issue ? (
-        <Empty>等待更新</Empty>
+        <Empty>没有数据</Empty>
       ) : (
         <div className="error-actions">
           <Button onClick={() => void q.refetch()}>重试</Button>
@@ -212,7 +218,7 @@ export function Resource<T>({
             <Button
               onClick={() => void openOfficial(officialTarget ?? service)}
             >
-              打开{service === "course" ? "教学网" : "官网"}
+              打开{siteName(officialTarget ?? service)}
             </Button>
           )}
         </div>

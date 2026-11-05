@@ -175,9 +175,7 @@ export function AssignmentWorkspace({
               })}
             </div>
           ) : (
-            <Empty>
-              {data.length ? "没有符合筛选条件的作业" : "本次查询未列出作业"}
-            </Empty>
+            <Empty>{data.length ? "没有符合筛选条件的作业" : "没有作业"}</Empty>
           )
         }
       </Resource>
@@ -195,7 +193,7 @@ export default function Assignments({ login }: { login: Login }) {
         <>
           <header className="page-heading">
             <h1>作业</h1>
-            <Button onClick={() => void openOfficial("course")}>
+            <Button variant="quiet" onClick={() => void openOfficial("course")}>
               打开教学网
             </Button>
           </header>

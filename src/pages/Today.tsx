@@ -50,7 +50,7 @@ export default function Today({
           <h1>今日</h1>
         </div>
       </header>
-      <div className="today-grid refreshed-today">
+      <div className="today-grid">
         <div className="column">
           <Resource
             title="作业"
@@ -167,7 +167,7 @@ export default function Today({
                 <i />
               </div>
             ) : (
-              <Empty>暂无已加载通知</Empty>
+              <Empty>没有通知</Empty>
             )}
             {news.issues.length > 0 && (
               <button className="partial-link" onClick={() => navigate("通知")}>
@@ -196,7 +196,7 @@ export default function Today({
               data.length ? (
                 data.map((c, i) => <CampusCard key={i} card={c} />)
               ) : (
-                <Empty>暂无校园卡</Empty>
+                <Empty>没有校园卡</Empty>
               )
             }
           </Resource>
@@ -205,13 +205,13 @@ export default function Today({
             <button onClick={() => navigate("校历")}>
               <BookOpenText size={17} />
               <span>
-                <strong>学校校历</strong>
+                <strong>校历</strong>
               </span>
             </button>
             <button onClick={() => navigate("空闲教室")}>
               <MapPin size={17} />
               <span>
-                <strong>找间自习教室</strong>
+                <strong>空闲教室</strong>
               </span>
             </button>
           </section>

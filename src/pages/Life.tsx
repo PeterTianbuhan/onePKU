@@ -50,7 +50,7 @@ export function CardPage({ login }: { login: Login }) {
               data.length ? (
                 data.map((c, i) => <CampusCard key={i} card={c} />)
               ) : (
-                <Empty>暂无校园卡</Empty>
+                <Empty>没有校园卡</Empty>
               )
             }
           </Resource>
@@ -119,7 +119,7 @@ export function CardPage({ login }: { login: Login }) {
                   )}
                 </>
               ) : (
-                <Empty>暂无收支明细</Empty>
+                <Empty>没有收支记录</Empty>
               )
             }
           </Resource>
@@ -232,7 +232,7 @@ export function Rooms({ login }: { login: Login }) {
             </div>
           ) : (
             <Empty icon={<MapPin />}>
-              {slot ? "该节次没有空闲教室" : "暂无教室信息"}
+              {slot ? "该节次没有空闲教室" : "没有教室信息"}
             </Empty>
           );
         }}
