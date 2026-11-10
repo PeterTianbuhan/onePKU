@@ -6,10 +6,11 @@ import java.text.Normalizer
  * 培养方案完成度计算。匹配规则逐条对齐桌面端 src/lib/curriculum.ts,
  * 两边改了同一套规则时应当一起改。匹配不上的课程进入"待确认",不做猜测。
  *
- * 三处与桌面端不同:有些方案(如 2025 物理学院-物理学)不写大类总额、也不给
+ * 与桌面端仍有两处差别:有些方案(如 2025 物理学院-物理学)不写大类总额、也不给
  * 按方向分列的那一类的学分要求,这里回退到课程组的 min/max,并允许选定细分方向;
  * 在修课程的学分不从方案回填(教学网课程列表没有学分字段,方案里那些行大多也没
  * 解析出来),由用户在待确认页手工填,填了才按桌面端的方式算淡色弧与缺口。
+ * 归类瀑布与桌面端相同:课号优先于课名,有课号但不在方案里的计入自主选修。
  */
 object CurriculumEngine {
 
@@ -17,7 +18,7 @@ object CurriculumEngine {
 
     enum class CourseStatus { PASSED, FAILED, IN_PROGRESS, WITHDRAWN, OTHER }
 
-    enum class MatchVia { NAME, ALTERNATIVE, VARIANT, KEYWORD, CATEGORY, OVERRIDE }
+    enum class MatchVia { CODE, NAME, ALTERNATIVE, VARIANT, KEYWORD, CATEGORY, OUTSIDE, OVERRIDE }
 
     data class MatchedCourse(
         val key: String,
@@ -29,6 +30,10 @@ object CurriculumEngine {
         val score: String,
         val via: MatchVia?,
         val sectionId: String?,
+        /** 8 位课号;成绩缺字段或旧数据时为 null。 */
+        val code: String? = null,
+        /** 课名能在目录里对上、但课号都不在本方案:确定是方案外的课。 */
+        val outsidePlan: Boolean = false,
     )
 
     class Section(
@@ -70,6 +75,8 @@ object CurriculumEngine {
         val category: String,
         val term: String,
         val year: String,
+        /** 学校成绩里的 8 位课号,保留前导 0;没有时为空。 */
+        val code: String = "",
     )
 
     /** 教学网课程;在读课程单独列出,不参与统计。 */
@@ -135,6 +142,13 @@ object CurriculumEngine {
         .replace(TRAILING_VARIANT, "")
 
     private val DECIMAL = Regex("^\\d+(\\.\\d+)?$")
+    private val COURSE_CODE = Regex("^\\d{8}$")
+
+    /** 只认 8 位数字课号;缺字段、带字母或旧缓存时为 null。 */
+    fun courseCode(raw: String?): String? {
+        val t = raw?.trim().orEmpty()
+        return if (COURSE_CODE.matches(t)) t else null
+    }
 
     /** 习题课不算独立的一门课:教学网把它和正课并排列进在修,算进来就是重复计数。 */
     private val EXERCISE = Regex("习题")
@@ -175,6 +189,7 @@ object CurriculumEngine {
 
     private class Index(
         val byName: LinkedHashMap<String, Hit>,
+        val byCode: LinkedHashMap<String, Hit>,
         val general: String?,
         val publicRoot: String?,
         val elective: String?,
@@ -413,12 +428,18 @@ object CurriculumEngine {
         }
 
         val byName = LinkedHashMap<String, Hit>()
+        val byCode = LinkedHashMap<String, Hit>()
+        fun rememberCode(raw: String, sectionId: String, credits: Double?) {
+            val code = courseCode(raw) ?: return
+            if (!byCode.containsKey(code)) byCode[code] = Hit(sectionId, credits, MatchVia.CODE)
+        }
         for (g in plan.groups) {
             for (c in g.courses) {
                 val sectionId = sectionForGroup(g, c.name) ?: continue
                 if (c.name.isEmpty()) continue
                 val key = normalizeCourseName(c.name)
                 if (skip.contains(key)) continue
+                rememberCode(c.code, sectionId, c.credits)
                 if (!byName.containsKey(key)) byName[key] = Hit(sectionId, c.credits, MatchVia.NAME)
             }
             for (a in g.alternatives) {
@@ -428,12 +449,17 @@ object CurriculumEngine {
                 val replaced = a.replaces?.let { byName[normalizeCourseName(it)] }
                 val sectionId = replaced?.sectionId ?: sectionForGroup(g, a.name) ?: continue
                 byName[key] = Hit(sectionId, a.credits, MatchVia.ALTERNATIVE)
+                rememberCode(a.code, sectionId, a.credits)
             }
         }
-        return Triple(sections, Index(byName, general, publicRoot, elective, free, publicChildren, flat), usesRequirements)
+        return Triple(
+            sections,
+            Index(byName, byCode, general, publicRoot, elective, free, publicChildren, flat),
+            usesRequirements,
+        )
     }
 
-    /** 六级瀑布:手动归类 → 精确名 → 变体基名 → 反向变体 → 公共课关键词 → 课程类别。 */
+    /** 手动归类(课号键优先) → 课号 → 精确名 → 变体 → 关键词 → 类别 → 方案外有课号的计入自主选修。 */
     private fun assign(
         course: MatchedCourse,
         index: Index,
@@ -444,11 +470,15 @@ object CurriculumEngine {
         fun creditsOf(fallback: Double?): Double? = if (backfill) course.credits ?: fallback else course.credits
 
         val key = normalizeCourseName(course.name)
-        overrides[key]?.let { override ->
+        val override = course.code?.let { overrides[it] } ?: overrides[key]
+        if (override != null) {
             return course.copy(
                 sectionId = if (override == IGNORE) IGNORE else override,
                 via = MatchVia.OVERRIDE,
             )
+        }
+        course.code?.let { index.byCode[it] }?.let {
+            return course.copy(sectionId = it.sectionId, via = MatchVia.CODE, credits = creditsOf(it.credits))
         }
         index.byName[key]?.let {
             return course.copy(sectionId = it.sectionId, via = it.via, credits = creditsOf(it.credits))
@@ -475,6 +505,11 @@ object CurriculumEngine {
         if (Regex("全校必修|公共必修").containsMatchIn(cat) && index.publicRoot != null) return hit(index.publicRoot)
         if (Regex("专业选修|限选").containsMatchIn(cat) && index.elective != null) return hit(index.elective)
         if (Regex("任选|自主").containsMatchIn(cat) && index.free != null) return hit(index.free)
+        // 有课号、课号和课名都不在方案里:别的专业或方向的课,按自主选修计入。
+        // 没有课号时分不清是方案外的课还是方案里改了名的课,仍进待确认。
+        if ((course.code != null || course.outsidePlan) && index.free != null) {
+            return course.copy(sectionId = index.free, via = MatchVia.OUTSIDE)
+        }
         return course.copy(sectionId = null, via = null)
     }
 
@@ -548,19 +583,24 @@ object CurriculumEngine {
         val seen = HashSet<String>()
         val matched = mutableListOf<MatchedCourse>()
         scores.forEachIndexed { i, row ->
-            seen.add(normalizeCourseName(row.name))
+            val status = scoreStatus(row.score)
+            // 退课、免修和状态异常不计分,也不该挡住教学网里正在上的同名课。
+            if (status != CourseStatus.WITHDRAWN && status != CourseStatus.OTHER) {
+                seen.add(normalizeCourseName(row.name))
+            }
             matched.add(
                 assign(
                     MatchedCourse(
                         key = "score:$i",
                         name = row.name,
                         credits = decimal(row.credits),
-                        status = scoreStatus(row.score),
+                        status = status,
                         term = row.term,
                         category = row.category,
                         score = row.score,
                         via = null,
                         sectionId = null,
+                        code = courseCode(row.code),
                     ),
                     index,
                     overrides,

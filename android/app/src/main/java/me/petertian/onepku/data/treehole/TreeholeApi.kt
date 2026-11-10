@@ -29,6 +29,8 @@ data class ScoreEntry(
     val category: String,
     val year: String,
     val term: String,
+    /** 8 位课号,保留前导 0。旧响应没有这个字段时为空。 */
+    val code: String = "",
 ) {
     val termKey: String get() = "$year-$term"
 
@@ -173,6 +175,7 @@ class TreeholeApi @Inject constructor(
                 category = s("kclbmc"),
                 year = s("xnd"),
                 term = s("xq"),
+                code = s("kch"),
             )
         }
 

@@ -574,6 +574,112 @@ class CurriculumEngineTest {
         assertTrue(CurriculumEngine.directionSplits(grouped).isEmpty())
     }
 
+    @Test
+    fun `只认 8 位课号`() {
+        assertEquals("00431140", CurriculumEngine.courseCode("00431140"))
+        assertEquals("00431140", CurriculumEngine.courseCode(" 00431140 "))
+        assertNull(CurriculumEngine.courseCode("431140"))
+        assertNull(CurriculumEngine.courseCode("0043114A"))
+        assertNull(CurriculumEngine.courseCode(""))
+    }
+
+    @Test
+    fun `课号优先于对不上的课名`() {
+        val p = CurriculumEngine.computeProgress(
+            planWithCode(),
+            listOf(score("离散数学基础（新）", "3", "90", "任选").copy(code = "00431140")),
+            emptyList(),
+        )
+        val hit = section(p, "2-1").courses.single()
+        assertEquals(MatchVia.CODE, hit.via)
+        assertEquals("00431140", hit.code)
+        assertTrue(p.pending.isEmpty())
+    }
+
+    @Test
+    fun `课号对不上时退回课名`() {
+        val p = CurriculumEngine.computeProgress(
+            planWithCode(),
+            listOf(score("力学", "3", "90", "专业必修").copy(code = "99999999")),
+            emptyList(),
+        )
+        assertEquals(MatchVia.NAME, section(p, "2-1").courses.single().via)
+    }
+
+    @Test
+    fun `课号键的手动归类优先于课名`() {
+        val p = CurriculumEngine.computeProgress(
+            planWithCode(),
+            listOf(score("力学", "3", "90", "专业必修").copy(code = "00431140")),
+            emptyList(),
+            overrides = mapOf(
+                "00431140" to "3-2",
+                CurriculumEngine.normalizeCourseName("力学") to "2-1",
+            ),
+        )
+        assertEquals(MatchVia.OVERRIDE, section(p, "3-2").courses.single().via)
+    }
+
+    @Test
+    fun `有课号但不在方案里的课计入自主选修`() {
+        val outside = CurriculumEngine.computeProgress(
+            planWithCode(),
+            listOf(score("软件设计实践", "3", "80", "专业必修").copy(code = "04835240")),
+            emptyList(),
+        )
+        assertTrue(outside.pending.isEmpty())
+        val hit = section(outside, "3-2").courses.single()
+        assertEquals(MatchVia.OUTSIDE, hit.via)
+        assertEquals(3.0, section(outside, "3-2").earned, 0.001)
+
+        val unnamed = CurriculumEngine.computeProgress(
+            planWithCode(),
+            listOf(score("软件设计实践", "3", "80", "专业必修")),
+            emptyList(),
+        )
+        assertEquals(listOf("软件设计实践"), unnamed.pending.map { it.name })
+    }
+
+    @Test
+    fun `退课和免修不挡住正在上的同名课`() {
+        val ideology = "习近平新时代中国特色社会主义思想概论"
+        val p = CurriculumEngine.computeProgress(
+            plan(),
+            listOf(
+                score(ideology, "3", "免修", "思想政治理论课"),
+                score("力学", "3", "W", "专业必修"),
+            ),
+            listOf(
+                CurrentCourse("c1", ideology, "25-26 学年第 1 学期", true),
+                CurrentCourse("c2", "力学", "25-26 学年第 1 学期", true),
+            ),
+        )
+        val doing = p.sections.flatMap { listOf(it) + it.children }
+            .flatMap { it.inProgressCourses }
+            .map { it.name } + p.pending.map { it.name }
+        assertTrue(doing.contains(ideology))
+        assertTrue(doing.contains("力学"))
+        assertEquals("力学", section(p, "2-1").inProgressCourses.single().name)
+        assertTrue(p.ignored.any { it.name == "力学" && it.status == CourseStatus.WITHDRAWN })
+        assertTrue(p.ignored.any { it.name == ideology && it.status == CourseStatus.OTHER })
+    }
+
+    /** 在共用的测试方案上给力学一个课号,并补上自主选修,方便核对方案外的课。 */
+    private fun planWithCode(): Plan {
+        val base = plan()
+        return base.copy(
+            requirements = base.requirements + PlanRequirement(
+                "3-2", "3", "自主选修课", "18 学分", 18.0, 18.0, "学分",
+            ),
+            groups = base.groups.map { group ->
+                if (group.id != "2.1") group
+                else group.copy(courses = group.courses.map { course ->
+                    if (course.name == "力学") course.copy(code = "00431140") else course
+                })
+            },
+        )
+    }
+
     private fun index(): List<PlanIndexEntry> = listOf(
         PlanIndexEntry(
             id = "甲-窄口径", cohort = 2025, school = "院系甲", major = "窄口径", title = "窄口径专业",
