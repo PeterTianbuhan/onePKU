@@ -45,21 +45,91 @@ pub fn render_qr_image(path: &Path, mode: QrDisplayMode) -> Result<()> {
 
 /// 用系统默认图片查看器打开文件
 fn open_with_system_viewer(path: &Path) -> Result<()> {
-    let opener = if cfg!(target_os = "macos") {
-        "open"
-    } else if cfg!(target_os = "windows") {
-        "start"
-    } else {
-        "xdg-open"
-    };
+    #[cfg(target_os = "windows")]
+    open_windows_viewer(path)?;
 
-    std::process::Command::new(opener)
-        .arg(path)
-        .spawn()
-        .map_err(|e| anyhow!("打开图片查看器失败: {e}"))?;
+    // `start` is a cmd builtin, not an executable, so Windows uses ShellExecuteW.
+    #[cfg(not(target_os = "windows"))]
+    {
+        let opener = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
+
+        std::process::Command::new(opener)
+            .arg(path)
+            .spawn()
+            .map_err(|e| anyhow!("打开图片查看器失败: {e}"))?;
+    }
 
     println!("已用系统查看器打开二维码: {}", path.display());
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_path(path: &Path) -> Result<Vec<u16>> {
+    use std::os::windows::ffi::OsStrExt;
+    let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    if wide.contains(&0) {
+        return Err(anyhow!("二维码图片路径含无效字符"));
+    }
+    wide.push(0);
+    Ok(wide)
+}
+
+#[cfg(target_os = "windows")]
+fn open_windows_viewer(path: &Path) -> Result<()> {
+    use std::ffi::c_void;
+    #[link(name = "shell32")]
+    extern "system" {
+        fn ShellExecuteW(
+            window: *mut c_void,
+            operation: *const u16,
+            file: *const u16,
+            parameters: *const u16,
+            directory: *const u16,
+            show: i32,
+        ) -> isize;
+    }
+    let wide = windows_path(path)?;
+    let open: Vec<u16> = "open\0".encode_utf16().collect();
+    // Pass the Unicode path directly. This does not go through a command shell.
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            open.as_ptr(),
+            wide.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            1,
+        )
+    };
+    if result <= 32 {
+        return Err(anyhow!("打开图片查看器失败: Windows 错误码 {result}"));
+    }
+    Ok(())
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn viewer_path_preserves_unicode_and_shell_characters() {
+        let path = Path::new(r"C:\扫码 测试\图像&$(test).png");
+        let wide = windows_path(path).unwrap();
+        assert_eq!(wide.last(), Some(&0));
+        assert_eq!(
+            String::from_utf16(&wide[..wide.len() - 1]).unwrap(),
+            path.to_str().unwrap()
+        );
+    }
+
+    #[test]
+    fn viewer_path_rejects_embedded_nul() {
+        assert!(windows_path(Path::new("qr\0hidden.png")).is_err());
+    }
 }
 
 /// 将字符串内容在终端渲染为二维码（用于自己生成的二维码）

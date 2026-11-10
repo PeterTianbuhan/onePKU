@@ -58,10 +58,19 @@ pub struct Store {
 }
 
 impl Store {
-    /// 创建存储实例。配置路径统一为 `~/.config/info/<sub_name>/`
+    /// 创建存储实例。
+    ///
+    /// 未设置环境变量时，目录仍是系统配置目录下的 `info/<sub_name>/`
+    /// （Linux `~/.config/info/<sub_name>/`，Windows `%APPDATA%\info\<sub_name>\`）。
+    /// `PKUINFO_SESSION_DIR_<SERVICE>` 为绝对路径时，只改该服务的目录，
+    /// 例如 `PKUINFO_SESSION_DIR_COURSE`。否则 `PKUINFO_SESSION_ROOT` 为绝对路径时，
+    /// 使用 `$PKUINFO_SESSION_ROOT/<sub_name>/`。
     pub fn new(sub_name: &str) -> Result<Self> {
-        let dirs = ProjectDirs::from("", "", "info").context("无法定位用户配置目录")?;
-        let root = dirs.config_dir().join(sub_name);
+        let root = resolve_config_root(
+            sub_name,
+            std::env::var_os(session_dir_env(sub_name)),
+            std::env::var_os("PKUINFO_SESSION_ROOT"),
+        )?;
         fs::create_dir_all(&root)
             .with_context(|| format!("创建配置目录失败: {}", root.display()))?;
         Ok(Self { root })
@@ -158,29 +167,121 @@ impl Store {
     }
 }
 
+fn session_dir_env(sub_name: &str) -> String {
+    format!(
+        "PKUINFO_SESSION_DIR_{}",
+        sub_name.replace('-', "_").to_ascii_uppercase()
+    )
+}
+
+fn valid_service_name(sub_name: &str) -> bool {
+    !sub_name.is_empty()
+        && sub_name
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'-')
+}
+
+fn resolve_config_root(
+    sub_name: &str,
+    service_override: Option<std::ffi::OsString>,
+    shared_root: Option<std::ffi::OsString>,
+) -> Result<PathBuf> {
+    if let Some(value) = service_override {
+        let root = PathBuf::from(value);
+        anyhow::ensure!(
+            root.is_absolute(),
+            "{} 必须是绝对路径",
+            session_dir_env(sub_name)
+        );
+        return Ok(root);
+    }
+    if let Some(value) = shared_root {
+        let base = PathBuf::from(value);
+        anyhow::ensure!(base.is_absolute(), "PKUINFO_SESSION_ROOT 必须是绝对路径");
+        anyhow::ensure!(valid_service_name(sub_name), "会话服务名无效");
+        return Ok(base.join(sub_name));
+    }
+    let dirs = ProjectDirs::from("", "", "info").context("无法定位用户配置目录")?;
+    Ok(dirs.config_dir().join(sub_name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
+    fn explicit_directory_overrides_one_service_and_keeps_the_default() {
+        let directory = tempfile::tempdir().unwrap();
+        let shared = directory.path().join("school");
+        let course = directory.path().join("course-only");
+        assert_eq!(
+            resolve_config_root(
+                "course",
+                Some(course.as_os_str().to_owned()),
+                Some(shared.as_os_str().to_owned())
+            )
+            .unwrap(),
+            course
+        );
+        assert_eq!(
+            resolve_config_root("treehole", None, Some(shared.as_os_str().to_owned())).unwrap(),
+            shared.join("treehole")
+        );
+        let dirs = ProjectDirs::from("", "", "info").unwrap();
+        assert_eq!(
+            resolve_config_root("course", None, None).unwrap(),
+            dirs.config_dir().join("course")
+        );
+        assert!(
+            resolve_config_root("course", Some(std::ffi::OsString::from("relative")), None)
+                .is_err()
+        );
+        assert!(
+            resolve_config_root("course", None, Some(std::ffi::OsString::from("relative")))
+                .is_err()
+        );
+        assert!(
+            resolve_config_root("../course", None, Some(shared.as_os_str().to_owned())).is_err()
+        );
+    }
+
+    #[test]
     fn session_updates_replace_the_file_and_leave_no_temporary_files() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store { root: dir.path().to_path_buf() };
-        store.save_session(&Session::new("synthetic-first-token".into())).unwrap();
-        store.save_session(&Session::new("synthetic-second-token".into())).unwrap();
-        assert_eq!(store.load_session().unwrap().unwrap().token, "synthetic-second-token");
+        let store = Store {
+            root: dir.path().to_path_buf(),
+        };
+        store
+            .save_session(&Session::new("synthetic-first-token".into()))
+            .unwrap();
+        store
+            .save_session(&Session::new("synthetic-second-token".into()))
+            .unwrap();
+        assert_eq!(
+            store.load_session().unwrap().unwrap().token,
+            "synthetic-second-token"
+        );
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(fs::metadata(store.session_path()).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(
+                fs::metadata(store.session_path())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
         }
     }
 
     #[test]
     fn cookie_updates_can_replace_an_existing_file() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store { root: dir.path().to_path_buf() };
+        let store = Store {
+            root: dir.path().to_path_buf(),
+        };
         let cookies = Arc::new(CookieStoreMutex::new(CookieStore::default()));
         store.save_cookie_store(&cookies).unwrap();
         store.save_cookie_store(&cookies).unwrap();

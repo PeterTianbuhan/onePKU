@@ -163,7 +163,7 @@ pub async fn complete_treehole_login(
     println!();
     println!("{} 登录成功！", "[done]".green().bold());
     println!("  uid       = {}", uid.bold());
-    println!("  token     = {}...", &jwt_token[..40.min(jwt_token.len())]);
+    println!("  会话已保存到本机（不显示凭证）");
     println!("  expires   = {}", format_timestamp(expires_in));
     println!("  配置目录   = {}", store.config_dir().display());
     Ok(())
@@ -320,7 +320,7 @@ pub fn status() -> Result<()> {
             if let Some(uid) = &s.uid {
                 println!("  uid        = {uid}");
             }
-            println!("  token      = {}...", &s.token[..40.min(s.token.len())]);
+            println!("  会话已保存到本机（不显示凭证）");
             if let Some(exp) = s.expires_at {
                 println!("  expires_at = {}", format_timestamp(exp));
             }

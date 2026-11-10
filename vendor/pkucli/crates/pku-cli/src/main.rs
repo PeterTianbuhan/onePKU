@@ -133,8 +133,9 @@ fn handle_clap_error(result: anyhow::Result<()>) -> anyhow::Result<()> {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
+    let treehole = matches!(&cli.command, Tools::Treehole { .. });
     let result = match cli.command {
         Tools::Treehole { args } => pku_treehole::run_from(prepend_name("treehole", &args)).await,
         Tools::Course { args } => pku_course::run_from(prepend_name("course", &args)).await,
@@ -158,7 +159,40 @@ async fn main() -> anyhow::Result<()> {
         }
         Tools::Update { check, no_locked } => run_update(check, no_locked).await,
     };
-    handle_clap_error(result)
+    match handle_clap_error(result) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("Error: {}", public_error(&error, treehole));
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn public_error(error: &anyhow::Error, treehole: bool) -> String {
+    if treehole {
+        "树洞操作失败。请在本机重试；链接和凭证已隐藏。".into()
+    } else {
+        pku_course::safe_error_message(error)
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::public_error;
+
+    #[test]
+    fn unified_course_errors_keep_cause_without_login_url() {
+        let error = anyhow::anyhow!("TLS failure at https://example.test/?token=private");
+        let message = public_error(&error, false);
+        assert!(message.contains("TLS failure"));
+        assert!(!message.contains("private"));
+    }
+
+    #[test]
+    fn unified_treehole_errors_hide_the_chain() {
+        let error = anyhow::anyhow!("token=private");
+        assert!(!public_error(&error, true).contains("token=private"));
+    }
 }
 
 fn print_versions() {

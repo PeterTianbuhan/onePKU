@@ -1,9 +1,13 @@
 pub mod api;
+mod assignment_parse;
 pub mod client;
 pub mod commands;
 mod display;
 pub mod login;
 mod multipart;
+mod safe_errors;
+
+pub use safe_errors::safe_error_message;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
