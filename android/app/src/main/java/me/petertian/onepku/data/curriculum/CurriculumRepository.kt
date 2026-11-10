@@ -128,6 +128,7 @@ class CurriculumRepository @Inject constructor(
             category = it.category,
             term = "${it.year}·${it.term}",
             year = it.year,
+            code = it.code,
         )
     }
 

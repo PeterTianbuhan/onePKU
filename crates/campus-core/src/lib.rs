@@ -527,17 +527,6 @@ fn problem(e: anyhow::Error) -> Problem {
             "haoxueAuth",
             "课堂实录需要补充授权；已有教学网连接仍然可用",
         )
-    } else if s.contains("未登录")
-        || s.contains("过期")
-        || s.contains("401")
-        || s.contains("40001")
-        || s.contains("登录失效")
-        || s.contains("登录已失效")
-        || s.contains("会话已失效")
-    {
-        ("auth", "登录已失效，请重新登录")
-    } else if s.contains("timed out") || s.contains("超时") || s.contains("elapsed") {
-        ("timeout", "响应超时，可以稍后重试")
     } else if [
         "请选择不超过",
         "文件超出",
@@ -547,6 +536,9 @@ fn problem(e: anyhow::Error) -> Problem {
         "已有提交记录",
         "此作业有待处理",
         "准备已过期",
+        "下载记录已过期",
+        "账号已过期",
+        "二维码已过期",
         "暂存文件已变化",
         "提交仍在进行",
         "操作记录已满",
@@ -556,7 +548,22 @@ fn problem(e: anyhow::Error) -> Problem {
     .iter()
     .any(|prefix| s.starts_with(prefix))
     {
+        // 这些句子已经是给用户看的。「过期」在这里是下载记录、暂存或二维码，
+        // 不是登录失效，不能改写成「请重新登录」。
         ("validation", s.as_str())
+    } else if s.contains("未登录")
+        || (s.contains("会话") && s.contains("过期"))
+        || s.contains("登录已过期")
+        || s.contains("登录过期")
+        || s.contains("401")
+        || s.contains("40001")
+        || s.contains("登录失效")
+        || s.contains("登录已失效")
+        || s.contains("会话已失效")
+    {
+        ("auth", "登录已失效，请重新登录")
+    } else if s.contains("timed out") || s.contains("超时") || s.contains("elapsed") {
+        ("timeout", "响应超时，可以稍后重试")
     } else if s.contains("同名课程") {
         ("haoxueAmbiguous", s.as_str())
     } else if s.starts_with("课堂实录") || s.starts_with("好学") {
@@ -1344,10 +1351,16 @@ mod tests {
             ("40002", "sms"),
             ("40077", "courseSms"),
             ("会话已过期", "auth"),
+            ("会话过期", "auth"),
             (
                 "登录已失效（token invalid）。请重新运行 `campuscard login`",
                 "auth",
             ),
+            ("下载记录已过期，请从课程重新下载", "validation"),
+            ("账号已过期，请刷新课程", "validation"),
+            ("准备已过期，未发送，请重新选择文件", "validation"),
+            ("二维码已过期", "validation"),
+            ("已有未过期的验证码", "unavailable"),
             // 课堂实录的失效要单独成码：报成 auth 会把用户推去重新登录教学网，
             // 播放器里的「重试连接」只会再撞一次 401。
             ("好学登录已失效，请重新登录", "haoxueAuth"),
@@ -1356,8 +1369,11 @@ mod tests {
             ("TIMETABLE_SOURCE_UNAVAILABLE", "noTimetable"),
             ("课表数据缺少 course", "unavailable"),
         ] {
-            assert_eq!(problem(anyhow!(s)).code, c)
+            assert_eq!(problem(anyhow!(s)).code, c, "{s}")
         }
+        let expired = problem(anyhow!("下载记录已过期，请从课程重新下载"));
+        assert_eq!(expired.code, "validation");
+        assert_eq!(expired.message, "下载记录已过期，请从课程重新下载");
     }
     #[test]
     fn errors_do_not_leak_urls_or_tokens() {

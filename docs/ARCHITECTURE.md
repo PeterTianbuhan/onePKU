@@ -42,14 +42,14 @@ React 页面  ──useResource({kind:"scores"})──▶  src/lib/api.ts  call(
 
 ### 核心 `crates/campus-core/`
 
-`lib.rs` 里的 `Request` 枚举是前端能调用的全部命令，`serde(tag="kind")` 与前端 `kind` 字段一一对应。`owner()` 决定一个请求属于哪个服务账号（course / treehole / campuscard / bdkj / public），`fingerprint()` 用该服务的会话文件做账号指纹，缓存键和下载目录都带这个指纹，换账号即失效。
+`lib.rs` 里的 `Request` 枚举是前端能调用的全部命令，`serde(tag="kind")` 与前端 `kind` 字段一一对应。`owner()` 决定一个请求属于哪个服务（course / treehole / campuscard / bdkj / portal / haoxue / public）。`fingerprint()` 用该服务的会话文件做指纹，用来发现请求进行中会话被换掉，也用来把回放、下载和字幕绑到已经验证过的教学网身份。资源快照不按账号分桶：缓存键是 `single:` 加上请求本身，同一台电脑只留一份。退出或会话过期后仍能读到上次的数据；换了另一个北大账号，要等这次读取成功才会盖掉上一份成绩或校园卡。见 `docs/PRODUCT.md`。
 
 | 模块                          | 职责                                                                       |
 | ----------------------------- | -------------------------------------------------------------------------- |
 | `lib.rs`                      | 请求枚举、`execute()` 的超时（75 秒）、缓存读写与旧数据回退、错误分类      |
 | `auth.rs`                     | 扫码登录状态机、短信二次验证，凭证写入 PKU CLI 的会话目录                  |
 | `maintenance.rs`              | 保持登录：15 分钟一次的空闲会话检查、失败退避、偏好持久化                  |
-| `storage.rs`                  | `resources-v1.json` 持久缓存，30 天上限，按账号隔离，启动时恢复            |
+| `storage.rs`                  | `resources-v1.json` 持久缓存，30 天上限，单用户一份，启动时恢复。旧的按会话分桶的快照合并到同一键，留较新的一份 |
 | `study.rs`                    | 课程、回放列表、教学网成绩、课程通知，以及给原文窗口的 Cookie 提取         |
 | `downloads.rs`                | 下载队列（3 并发、200 任务上限）、去重、版本号、SHA-256 元数据、HLS 转 MP4 |
 | `materials.rs`                | 本机资料导入、打开、移到废纸篓                                             |
