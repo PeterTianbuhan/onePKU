@@ -51,6 +51,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import me.petertian.onepku.data.replay.Haoxue
+import me.petertian.onepku.data.replay.ProgressSync
 import me.petertian.onepku.data.replay.ReplayCourse
 import me.petertian.onepku.data.replay.ReplayRepository
 import me.petertian.onepku.data.replay.ReplayStore
@@ -69,12 +70,16 @@ private const val FIRST_SWEEP = "第一次打开要把最近半年的课堂记�
 class ReplayHomeViewModel @Inject constructor(
     private val repo: ReplayRepository,
     val store: ReplayStore,
+    val sync: ProgressSync,
 ) : ViewModel() {
     private val _courses = MutableStateFlow<UiData<List<ReplayCourse>>>(UiData.Loading)
     val courses: StateFlow<UiData<List<ReplayCourse>>> = _courses.asStateFlow()
     val loadingMessage = if (repo.firstSweep()) FIRST_SWEEP else "加载中…"
 
-    init { load(false) }
+    init {
+        load(false)
+        sync.refresh()
+    }
 
     fun load(force: Boolean) = viewModelScope.launch {
         _courses.value = UiData.Loading
@@ -91,6 +96,7 @@ class ReplayHomeViewModel @Inject constructor(
 fun ReplayHomeScreen(nav: NavHostController, vm: ReplayHomeViewModel = hiltViewModel()) {
     val courses by vm.courses.collectAsState()
     val states by vm.store.states.collectAsState()
+    val done by vm.sync.completed.collectAsState()
     val saved = states.values.filter { it.keep && it.lesson != null }.sortedByDescending { it.lesson!!.time }
 
     Scaffold(
@@ -107,7 +113,7 @@ fun ReplayHomeScreen(nav: NavHostController, vm: ReplayHomeViewModel = hiltViewM
                 if (saved.isNotEmpty()) {
                     item { SectionTitle("已下载 · ${formatBytes(saved.sumOf { it.bytes })}") }
                     items(saved, key = { "saved-" + it.lesson!!.key }) { local ->
-                        LessonRow(local.lesson!!, local, showCourse = true, onOpen = { nav.navigate(Routes.replayPlayer(local.lesson)) }, store = vm.store)
+                        LessonRow(local.lesson!!, local, showCourse = true, watched = watched(done, local.lesson!!, vm.store), onOpen = { nav.navigate(Routes.replayPlayer(local.lesson)) }, store = vm.store)
                     }
                     item { SectionTitle("全部课程") }
                 }
@@ -147,13 +153,17 @@ class ReplayLessonsViewModel @Inject constructor(
     savedState: SavedStateHandle,
     private val repo: ReplayRepository,
     val store: ReplayStore,
+    val sync: ProgressSync,
 ) : ViewModel() {
     val name: String = savedState.get<String>("name").orEmpty()
     private val _lessons = MutableStateFlow<UiData<List<Haoxue.Lesson>>>(UiData.Loading)
     val lessons: StateFlow<UiData<List<Haoxue.Lesson>>> = _lessons.asStateFlow()
     val loadingMessage = if (repo.firstSweep()) FIRST_SWEEP else "加载中…"
 
-    init { load(false) }
+    init {
+        load(false)
+        sync.refresh()
+    }
 
     fun load(force: Boolean) = viewModelScope.launch {
         _lessons.value = UiData.Loading
@@ -169,6 +179,7 @@ class ReplayLessonsViewModel @Inject constructor(
 fun ReplayLessonsTab(nav: NavHostController, vm: ReplayLessonsViewModel = hiltViewModel()) {
     val lessons by vm.lessons.collectAsState()
     val states by vm.store.states.collectAsState()
+    val done by vm.sync.completed.collectAsState()
     when (val data = lessons) {
         is UiData.Loading -> LoadingBox(message = vm.loadingMessage)
         is UiData.Failure -> ErrorBox(data.message) { vm.load(true) }
@@ -179,7 +190,7 @@ fun ReplayLessonsTab(nav: NavHostController, vm: ReplayLessonsViewModel = hiltVi
             }
             LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(data.value, key = { it.key }) { lesson ->
-                    LessonRow(lesson, states[lesson.key], showCourse = false, onOpen = { nav.navigate(Routes.replayPlayer(lesson)) }, store = vm.store)
+                    LessonRow(lesson, states[lesson.key], showCourse = false, watched = watched(done, lesson, vm.store), onOpen = { nav.navigate(Routes.replayPlayer(lesson)) }, store = vm.store)
                 }
             }
         }
@@ -244,11 +255,15 @@ fun rememberNotificationAsk(): (() -> Unit) -> Unit {
     }
 }
 
+private fun watched(done: Set<String>, lesson: Haoxue.Lesson, store: ReplayStore): Boolean =
+    done.contains(ProgressSync.key(lesson.courseId, lesson.episodeId)) || store.meta(lesson.key)?.watched == true
+
 @Composable
 private fun LessonRow(
     lesson: Haoxue.Lesson,
     local: ReplayStore.Local?,
     showCourse: Boolean,
+    watched: Boolean,
     onOpen: () -> Unit,
     store: ReplayStore,
 ) {
@@ -270,6 +285,9 @@ private fun LessonRow(
                         color = if (local?.error != null && local.keep && !local.complete) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                         maxLines = 2,
                     )
+                }
+                if (watched) {
+                    Text("已看完", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                 }
             }
             when {

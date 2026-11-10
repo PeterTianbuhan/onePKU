@@ -33,6 +33,23 @@ val signingStore: File? = System.getenv("ONEPKU_KEYSTORE")?.let(::File)?.takeIf 
 val signingPassword: String? = System.getenv("ONEPKU_KEYSTORE_PASSWORD")
     ?: File(System.getProperty("user.home"), ".config/onepku/android-signing.pass").takeIf { it.isFile }?.readText()?.trim()
 
+// 观看进度同步。真实令牌只放在已忽略的 local.properties，公开构建和 CI 留空，同步关闭。
+fun progressConfigField(key: String): String {
+    val file = rootProject.file("local.properties")
+    val raw = if (!file.isFile) {
+        ""
+    } else {
+        file.readLines()
+            .map { line -> line.trim() }
+            .firstOrNull { line -> line.startsWith("$key=") }
+            ?.substringAfter("=")
+            ?.trim()
+            .orEmpty()
+    }
+    val safe = raw.isNotEmpty() && raw.all { ch -> ch in ' '..'~' && ch != '"' && ch != '\\' && ch != '$' }
+    return "\"${if (safe) raw else ""}\""
+}
+
 android {
     namespace = "me.petertian.onepku"
     compileSdk = 35
@@ -43,8 +60,10 @@ android {
         applicationId = "me.petertian.onepku"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.4.0"
+        versionCode = 6
+        versionName = "0.4.1"
+        buildConfigField("String", "PROGRESS_SYNC_URL", progressConfigField("onepku.progress.url"))
+        buildConfigField("String", "PROGRESS_SYNC_TOKEN", progressConfigField("onepku.progress.token"))
     }
 
     signingConfigs {

@@ -1,0 +1,20 @@
+[Unit]
+Description=OnePKU playback progress sync
+After=network.target
+
+[Service]
+Type=simple
+# 换成实际跑服务的用户。数据目录也归这个用户。
+User=onepku
+Group=onepku
+EnvironmentFile=/etc/onepku-progress.env
+ExecStart=/usr/bin/python3 /opt/onepku/progress-sync/progress_sync.py
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/onepku-progress
+
+[Install]
+WantedBy=multi-user.target

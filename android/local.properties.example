@@ -1,0 +1,4 @@
+# 复制需要的行到 local.properties（该文件已忽略，里面通常还有 sdk.dir）。
+# 留空或短于 24 位则同步关闭。令牌用 openssl rand -hex 32，不要提交。
+onepku.progress.url=https://vm-0-7-ubuntu.taild19091.ts.net/onepku-progress
+onepku.progress.token=

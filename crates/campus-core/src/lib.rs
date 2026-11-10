@@ -20,6 +20,7 @@ mod notebook;
 mod news;
 mod playback;
 mod platform;
+mod progress_sync;
 mod reminders;
 mod storage;
 mod study;
@@ -103,6 +104,18 @@ pub enum Request {
         episode: String,
         play_time: u64,
         seconds: u64,
+    },
+    /// 本机边车是否配了观看进度同步。不联网，也不回令牌。
+    ProgressStatus,
+    /// 拉取全部课次的播放位置。没配置或失败时 ok 为 false，不挡住播放。
+    ProgressPull,
+    /// 推一节课的播放位置。设备号由本机补上，令牌只放在请求头里。
+    ProgressPush {
+        course_id: String,
+        episode_id: String,
+        position_seconds: f64,
+        completed: bool,
+        updated_at: String,
     },
     /// 只能恢复默认；更改到某个目录必须经过桌面容器的系统选择框，前端不能传路径。
     ResetDownloadRoot,
@@ -432,6 +445,7 @@ fn owner(req: &Request) -> &'static str {
         | Request::Hole { .. } => "treehole",
         Request::CardStats { .. } | Request::Card | Request::Transactions { .. } => "campuscard",
         Request::PortalDetect => "portal",
+        Request::ProgressStatus | Request::ProgressPull | Request::ProgressPush { .. } => "public",
         _ => "public",
     }
 }
@@ -799,6 +813,25 @@ impl Core {
                 play_time,
                 seconds,
             } => haoxue::record(course, episode, *play_time, *seconds).await?,
+            Request::ProgressStatus => progress_sync::status(),
+            Request::ProgressPull => progress_sync::pull().await,
+            Request::ProgressPush {
+                course_id,
+                episode_id,
+                position_seconds,
+                completed,
+                updated_at,
+            } => {
+                progress_sync::push(progress_sync::Record {
+                    course_id: course_id.clone(),
+                    episode_id: episode_id.clone(),
+                    position_seconds: *position_seconds,
+                    completed: *completed,
+                    updated_at: updated_at.clone(),
+                    device_id: String::new(),
+                })
+                .await
+            }
             Request::ResetDownloadRoot => downloads::set_download_root(None)?,
             Request::OpenDownloadRoot => {
                 let dir = downloads::download_root()?;
@@ -1188,6 +1221,23 @@ mod tests {
         assert!(!storage::cacheable(&write));
         assert!(serde_json::from_value::<Request>(json!({"kind": "haoxueRecord", "course": "1"}))
             .is_err());
+        // 边车同步不是学校请求：不进缓存，失败也不走自动重登。
+        let pull = serde_json::from_value::<Request>(json!({"kind": "progressPull"})).unwrap();
+        assert!(matches!(pull, Request::ProgressPull));
+        assert_eq!(owner(&pull), "public");
+        assert!(!storage::cacheable(&pull));
+        assert!(!may_relogin(&pull, "public"));
+        let push = serde_json::from_value::<Request>(json!({
+            "kind": "progressPush",
+            "courseId": "c",
+            "episodeId": "e",
+            "positionSeconds": 1.5,
+            "completed": false,
+            "updatedAt": "2026-11-10T00:00:00Z"
+        }))
+        .unwrap();
+        assert!(matches!(push, Request::ProgressPush { .. }));
+        assert!(!storage::cacheable(&push));
     }
     #[test]
     fn password_login_is_named_and_never_cached() {

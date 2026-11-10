@@ -58,6 +58,10 @@ class ReplayStore @Inject constructor(
         /** 用户点了下载：长期保留。没点的只是看过时顺手存下的，一周没打开就清掉。 */
         val keep: Boolean = false,
         val positionMs: Long = 0,
+        /** 播放器进了最后约 10 秒，或已经播完。和「分片下完」不是一回事。 */
+        val watched: Boolean = false,
+        /** 上次记下播放位置的时间，毫秒。用来和另一台设备比先后。 */
+        val progressAt: Long = 0,
         val opened: Long = 0,
     )
 
@@ -70,6 +74,7 @@ class ReplayStore @Inject constructor(
         val downloading: Boolean = false,
         val error: String? = null,
     ) {
+        /** 分片已经下完。这不是「看完了」，看完看 [Meta.watched]。 */
         val complete: Boolean get() = total > 0 && done >= total
     }
 
@@ -180,6 +185,8 @@ class ReplayStore @Inject constructor(
             discontinuities = playlist.segments.withIndex().filter { it.value.discontinuity }.map { it.index },
             keep = existing?.keep == true,
             positionMs = existing?.positionMs ?: 0,
+            watched = existing?.watched == true,
+            progressAt = existing?.progressAt ?: 0,
             opened = now,
         )
         writeMeta(key, meta)
@@ -309,9 +316,28 @@ class ReplayStore @Inject constructor(
         throw lastError as? IOException ?: IOException(lastError?.message ?: "视频片段下载失败")
     }
 
-    fun savePosition(key: String, positionMs: Long) {
+    /** 还没记过 progressAt 的旧缓存：用 meta.json 的修改时间当先后，调用要赶在 [prepare] 改写文件之前。 */
+    fun progressStamp(key: String): Long {
+        val meta = readMeta(key) ?: return 0
+        if (meta.progressAt > 0) return meta.progressAt
+        val file = File(dir(key), "meta.json")
+        return if (meta.positionMs > 0 && file.isFile) file.lastModified() else 0
+    }
+
+    fun writeProgress(key: String, positionMs: Long, watched: Boolean, progressAt: Long) {
         val meta = readMeta(key) ?: return
-        writeMeta(key, meta.copy(positionMs = positionMs))
+        writeMeta(
+            key,
+            meta.copy(
+                positionMs = positionMs.coerceAtLeast(0),
+                watched = meta.watched || watched,
+                progressAt = progressAt,
+            ),
+        )
+    }
+
+    fun savePosition(key: String, positionMs: Long, watched: Boolean = false) {
+        writeProgress(key, positionMs, watched, System.currentTimeMillis())
     }
 
     // ---- 下载 ----

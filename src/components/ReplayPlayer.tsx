@@ -21,6 +21,7 @@ import {
   useReplaySubtitles,
   useSubtitleTrack,
 } from "./ReplaySubtitles";
+import { initialResume, useProgressSync } from "../lib/progressSync";
 
 export type Replay = {
   title: string;
@@ -55,14 +56,6 @@ export function playbackTime(seconds: number) {
   const s = String(value % 60).padStart(2, "0");
   return h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
 }
-function savedPosition(key: string) {
-  try {
-    const n = Number(localStorage.getItem(key));
-    return Number.isFinite(n) && n >= 0 ? n : 0;
-  } catch {
-    return 0;
-  }
-}
 export default function ReplayPlayer({
   course,
   video,
@@ -81,11 +74,42 @@ export default function ReplayPlayer({
   // 好学的课程标识才是回放的真实身份：缓存、续播位置与进度回写都按它对齐。
   const lesson = video.courseId ?? course;
   const storageKey = `onepku.playback.${generation}.${lesson}.${video.hash_id}`;
-  const position = useRef(savedPosition(storageKey));
+  const position = useRef(
+    initialResume(
+      storageKey,
+      video.courseId
+        ? `onepku.playback.sync.${video.courseId}.${video.hash_id}`
+        : "",
+    ),
+  );
   const mediaReady = useRef(false);
   const lastSaved = useRef(0);
   const reportedAt = useRef(Math.floor(Date.now() / 1000));
   const [playback, setPlayback] = useState<Playback>();
+  const noteProgress = useProgressSync({
+    courseId: video.courseId,
+    episodeId: video.hash_id,
+    position,
+    element,
+    mediaReady,
+    duration: playback?.duration,
+    legacyKey: storageKey,
+    onRemote: (seconds) => {
+      const anchor = position.current;
+      position.current = seconds;
+      const length = playback?.duration || element.current?.duration || 0;
+      const target = length > 0 && seconds >= length - 5 ? 0 : seconds;
+      try {
+        if (target > 0) localStorage.setItem(storageKey, String(seconds));
+        else localStorage.removeItem(storageKey);
+      } catch {
+        /* 同步来的位置记不住也不影响接着播。 */
+      }
+      const el = element.current;
+      if (!el || !mediaReady.current) return;
+      if (Math.abs(el.currentTime - anchor) < 3) el.currentTime = target;
+    },
+  });
   const subtitles = useReplaySubtitles(playback?.id);
   const subtitleKey = `${storageKey}.subtitles`;
   const [subtitlesEnabled, setSubtitlesEnabled] = useState(() => {
@@ -274,14 +298,16 @@ export default function ReplayPlayer({
     let live = true;
     let destroy: (() => void) | undefined;
     mediaReady.current = false;
-    const startPosition =
-      position.current > 0 && position.current < playback.duration - 5
-        ? position.current
-        : 0;
+    const resumeAt = () => {
+      const wanted = position.current;
+      return wanted > 0 && wanted < playback.duration - 5 ? wanted : 0;
+    };
     setNeedsPlay(false);
     const start = () => {
       if (!live) return;
+      const startPosition = resumeAt();
       if (startPosition > 0) el.currentTime = startPosition;
+      else if (position.current > 0) el.currentTime = 0;
       mediaReady.current = true;
       el.playbackRate = rate;
       if (autoPlay)
@@ -306,7 +332,7 @@ export default function ReplayPlayer({
             return;
           }
           const hls = new Hls({
-            startPosition,
+            startPosition: resumeAt(),
             maxBufferLength: 60,
             backBufferLength: 30,
             enableWorker: true,
@@ -329,8 +355,10 @@ export default function ReplayPlayer({
     }
     return () => {
       live = false;
-      if (Number.isFinite(el.currentTime) && el.currentTime > 0)
+      if (Number.isFinite(el.currentTime) && el.currentTime > 0) {
         position.current = el.currentTime;
+        noteProgress.current(el.currentTime, { flush: true });
+      }
       mediaReady.current = false;
       el.removeEventListener("loadedmetadata", start);
       el.pause();
@@ -351,6 +379,7 @@ export default function ReplayPlayer({
       } catch {
         /* Playback is unaffected. */
       }
+      noteProgress.current(el.currentTime, { flush: el.paused });
     }
   }
   async function changeCache(downloading: boolean) {
@@ -445,6 +474,9 @@ export default function ReplayPlayer({
             }}
             onEnded={() => {
               setPaused(true);
+              const seconds =
+                element.current?.currentTime || playback?.duration || 0;
+              noteProgress.current(seconds, { completed: true, flush: true });
               position.current = 0;
               try {
                 localStorage.removeItem(storageKey);
