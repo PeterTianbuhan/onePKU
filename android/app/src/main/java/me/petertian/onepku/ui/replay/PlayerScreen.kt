@@ -65,13 +65,20 @@ import androidx.media3.ui.PlayerView
 import androidx.navigation.NavHostController
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import me.petertian.onepku.data.replay.Haoxue
+import me.petertian.onepku.data.replay.ProgressRecord
+import me.petertian.onepku.data.replay.ProgressSync
 import me.petertian.onepku.data.replay.ReplayStore
+import me.petertian.onepku.data.replay.mergeProgress
+import me.petertian.onepku.data.replay.progressInstant
+import java.time.Instant
 import me.petertian.onepku.ui.components.ErrorBox
 import me.petertian.onepku.ui.components.LoadingBox
 import me.petertian.onepku.ui.components.UiData
@@ -82,6 +89,7 @@ import javax.inject.Inject
 class ReplayPlayerViewModel @Inject constructor(
     savedState: SavedStateHandle,
     val store: ReplayStore,
+    val sync: ProgressSync,
     @ApplicationContext context: Context,
 ) : ViewModel() {
     val lesson = Haoxue.Lesson(
@@ -97,6 +105,9 @@ class ReplayPlayerViewModel @Inject constructor(
     val meta: StateFlow<UiData<ReplayStore.Meta>> = _meta.asStateFlow()
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
+    private var savesAllowed = false
+    private var remoteApplied = false
+    private val pull = viewModelScope.async { sync.pullOne(lesson.courseId, lesson.episodeId) }
 
     /** 播放器放在 ViewModel 里，切全屏、转屏都不会重建，进度不丢。 */
     val player: ExoPlayer = ExoPlayer.Builder(context)
@@ -113,11 +124,12 @@ class ReplayPlayerViewModel @Inject constructor(
             }
         })
         open()
-        // 记住看到哪里，下次从这里接着放。
+        // 记住看到哪里，下次从这里接着放。先等同步结果落地，避免一上来就把旧位置写成「刚刚」。
         viewModelScope.launch {
+            while (!savesAllowed) delay(100)
             while (true) {
                 delay(10_000)
-                if (player.isPlaying) store.savePosition(key, player.currentPosition)
+                if (player.isPlaying) checkpoint(false)
             }
         }
     }
@@ -125,7 +137,19 @@ class ReplayPlayerViewModel @Inject constructor(
     fun open() = viewModelScope.launch {
         _meta.value = UiData.Loading
         _meta.value = try {
-            val meta = store.prepare(lesson)
+            val priorStamp = store.progressStamp(key)
+            var meta = store.prepare(lesson)
+            // prepare 会改写 meta.json。旧缓存没有 progressAt，先把打开前的文件时间写回去，
+            // 慢返回的同步结果才能跟本机位置比先后。
+            if (meta.progressAt == 0L && priorStamp > 0) {
+                store.writeProgress(key, meta.positionMs, meta.watched, priorStamp)
+                meta = store.meta(key) ?: meta.copy(progressAt = priorStamp)
+            }
+            val quick = withTimeoutOrNull(1_500) { Pulled(pull.await()) }
+            if (quick != null) {
+                quick.record?.let { meta = applyRecord(meta, it) }
+                remoteApplied = true
+            }
             if (!started) {
                 started = true
                 player.setMediaSource(
@@ -139,10 +163,75 @@ class ReplayPlayerViewModel @Inject constructor(
                 player.prepare()
                 player.playWhenReady = true
             }
+            if (remoteApplied) savesAllowed = true else {
+                val anchor = meta.positionMs
+                viewModelScope.launch {
+                    applyLate(anchor)
+                    savesAllowed = true
+                }
+            }
             UiData.Ready(meta)
         } catch (e: Exception) {
+            savesAllowed = true
             UiData.Failure(replayError(e, "回放打开失败"))
         }
+    }
+
+    private suspend fun applyLate(anchorMs: Long) {
+        val remote = pull.await() ?: return
+        if (remoteApplied) return
+        remoteApplied = true
+        val meta = store.meta(key) ?: return
+        val updated = applyRecord(meta, remote)
+        val drifted = kotlin.math.abs(player.currentPosition - anchorMs) > 3_000 && player.currentPosition > 1_000
+        if (!drifted) {
+            val length = player.duration.takeIf { it > 0 } ?: (updated.durations.sum() * 1000).toLong()
+            if (updated.positionMs in 1 until length - 10_000) player.seekTo(updated.positionMs)
+        }
+        _meta.value = UiData.Ready(store.meta(key) ?: updated)
+    }
+
+    private fun applyRecord(meta: ReplayStore.Meta, remote: ProgressRecord): ReplayStore.Meta {
+        val local = ProgressRecord(
+            courseId = lesson.courseId,
+            episodeId = lesson.episodeId,
+            positionSeconds = meta.positionMs / 1000.0,
+            completed = meta.watched,
+            updatedAt = Instant.ofEpochMilli(meta.progressAt.coerceAtLeast(0)).toString(),
+        )
+        val merged = mergeProgress(local, remote) ?: return meta
+        store.writeProgress(
+            key,
+            (merged.positionSeconds * 1000).toLong(),
+            merged.completed,
+            progressInstant(merged.updatedAt).toEpochMilli(),
+        )
+        return store.meta(key) ?: meta.copy(
+            positionMs = (merged.positionSeconds * 1000).toLong(),
+            watched = meta.watched || merged.completed,
+        )
+    }
+
+    private fun checkpoint(flush: Boolean) {
+        if (!savesAllowed) return
+        if (lesson.courseId.isBlank() || lesson.episodeId.isBlank()) return
+        val pos = player.currentPosition
+        val ended = player.playbackState == Player.STATE_ENDED
+        if (pos <= 0 && !ended) return
+        val duration = player.duration
+        val watched = ended || (duration > 10_000 && pos >= duration - 10_000)
+        store.savePosition(key, pos, watched)
+        val saved = store.meta(key) ?: return
+        sync.note(
+            ProgressRecord(
+                courseId = lesson.courseId,
+                episodeId = lesson.episodeId,
+                positionSeconds = saved.positionMs / 1000.0,
+                completed = saved.watched,
+                updatedAt = Instant.ofEpochMilli(saved.progressAt).toString(),
+            ),
+            flush,
+        )
     }
 
     fun retry() {
@@ -153,13 +242,15 @@ class ReplayPlayerViewModel @Inject constructor(
 
     fun pause() {
         player.pause()
-        store.savePosition(key, player.currentPosition)
+        checkpoint(true)
     }
 
     override fun onCleared() {
-        store.savePosition(key, player.currentPosition)
+        checkpoint(true)
         player.release()
     }
+
+    private data class Pulled(val record: ProgressRecord?)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -219,6 +310,11 @@ private fun Details(vm: ReplayPlayerViewModel) {
             )
         }
         localLabel(local)?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        val ready by vm.meta.collectAsState()
+        val done by vm.sync.completed.collectAsState()
+        val watched = (ready as? UiData.Ready)?.value?.watched == true ||
+            done.contains(ProgressSync.key(vm.lesson.courseId, vm.lesson.episodeId))
+        if (watched) Text("已看完", style = MaterialTheme.typography.bodySmall)
         if (speed > 0) {
             Text(
                 "从学校取视频 ${formatSpeed(speed)}",

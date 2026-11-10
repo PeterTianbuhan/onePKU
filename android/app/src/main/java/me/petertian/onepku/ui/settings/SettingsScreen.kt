@@ -20,6 +20,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -32,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -47,6 +49,7 @@ import me.petertian.onepku.BuildConfig
 import me.petertian.onepku.core.session.Service
 import me.petertian.onepku.data.auth.AuthManager
 import me.petertian.onepku.data.news.SchoolNoticeApi
+import me.petertian.onepku.data.replay.ProgressSync
 import me.petertian.onepku.data.repo.DepartmentStore
 import me.petertian.onepku.ui.navigation.back
 import me.petertian.onepku.ui.navigation.toLogin
@@ -60,12 +63,14 @@ data class SettingsUiState(
     val pickingSchool: Boolean = false,
     val busy: Boolean = false,
     val message: String? = null,
+    val progress: ProgressSync.Editor = ProgressSync.Editor("", false, false, false),
 )
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val auth: AuthManager,
     private val departments: DepartmentStore,
+    private val progress: ProgressSync,
     schoolNotices: SchoolNoticeApi,
 ) : ViewModel() {
 
@@ -80,8 +85,19 @@ class SettingsViewModel @Inject constructor(
                 username = auth.storedUsername(),
                 services = Service.entries.associateWith { s -> auth.isLoggedIn(s) },
                 department = departments.current(),
+                progress = progress.editor(),
             )
         }
+    }
+
+    fun saveProgress(url: String, token: String?) {
+        progress.saveOverride(url, token)
+        reload()
+    }
+
+    fun clearProgress() {
+        progress.clearOverride()
+        reload()
     }
 
     fun setPickingSchool(picking: Boolean) = _ui.update { it.copy(pickingSchool = picking) }
@@ -113,6 +129,52 @@ class SettingsViewModel @Inject constructor(
     fun logoutAll(onDone: () -> Unit) {
         auth.logoutAll()
         onDone()
+    }
+}
+
+@Composable
+private fun ProgressSyncCard(
+    editor: ProgressSync.Editor,
+    onSave: (String, String?) -> Unit,
+    onClear: () -> Unit,
+) {
+    var url by remember(editor.url) { mutableStateOf(editor.url) }
+    var token by remember { mutableStateOf("") }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("观看进度", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                when {
+                    editor.enabled -> "已开启。打开回放时与电脑上的进度对齐。"
+                    editor.tokenSet -> "令牌已有，地址还不能用，同步关闭。"
+                    else -> "未设置令牌，同步关闭。公开安装包默认就是这样。"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = url,
+                onValueChange = { url = it },
+                label = { Text("同步地址") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = token,
+                onValueChange = { token = it },
+                label = { Text("令牌") },
+                placeholder = { Text(if (editor.tokenSet) "已保存，留空则不修改" else "至少 24 位") },
+                visualTransformation = PasswordVisualTransformation(),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row {
+                TextButton(onClick = { onSave(url, token.ifBlank { null }); token = "" }) { Text("保存") }
+                if (editor.overrideSet) {
+                    TextButton(onClick = onClear) { Text("清除覆盖") }
+                }
+            }
+        }
     }
 }
 
@@ -220,6 +282,8 @@ fun SettingsScreen(nav: NavHostController, vm: SettingsViewModel = hiltViewModel
                     }
                 }
             }
+
+            item(key = "progress") { ProgressSyncCard(ui.progress, vm::saveProgress, vm::clearProgress) }
 
             item(key = "department") {
                 Card(Modifier.fillMaxWidth()) {

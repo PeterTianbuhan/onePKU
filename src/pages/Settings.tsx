@@ -132,6 +132,35 @@ function ServiceCard({
   );
 }
 
+function ProgressSyncSetting() {
+  const [status, setStatus] = useState("正在读取…");
+  useEffect(() => {
+    let live = true;
+    void action<{ enabled?: boolean; url?: string }>({ kind: "progressStatus" })
+      .then((data) => {
+        if (!live) return;
+        setStatus(
+          data?.enabled
+            ? `已开启，同步到 ${data.url || "已配置的地址"}`
+            : "未配置。播放位置只留在这台电脑上。",
+        );
+      })
+      .catch(() => {
+        if (live) setStatus("未能读取同步配置");
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+  return (
+    <SettingRow
+      label="观看进度"
+      description="与手机共用播放到哪、是否看完。地址和令牌写在 ~/.config/onepku/progress-sync.json，文件不存在就不同步。"
+      status={status}
+    />
+  );
+}
+
 export default function Settings({
   sessions,
   login,
@@ -834,6 +863,7 @@ export default function Settings({
           status={cacheMessage || undefined}
           error={cacheError || undefined}
         />
+        <ProgressSyncSetting />
         <SubtitleSettings />
         <WriteOperations />
       </section>
