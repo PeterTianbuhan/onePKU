@@ -69,3 +69,13 @@ Core error classification now recognizes the campus-card library's exact `登录
 播放与 MP4 下载现在共用恢复目录及播放列表指纹，通过进程内的异步分片锁合并并发请求；原子落盘后供两者读取，取消等待不会锁死后续请求。旧播放缓存只在账号、课程、视频及指纹匹配时导入，校验完整 TS 后优先硬链接；播放状态同步读取下载缓存。新增并发仅请求一次、取消恢复、旧缓存复用及下载分片无网络播放回归测试。
 
 完整 vendored 增量整理在 `contributions/pkucli-replay-cache.patch`，基线为 OnePKU `31beb7c`；其中已包含学期分组修复，不能再叠加独立学期补丁。双平台 CI 显式执行 `pku-course` 单元测试，覆盖共享下载与恢复逻辑；主工作区测试本身不会运行依赖包的单元测试。
+
+### 会话目录、扫码、作业解析与错误脱敏
+
+这些改动来自另一份以 OnePKU `d1b14c55` 为底的 pkucli 副本，只收回对所有调用方都成立的部分。默认会话目录不变。
+
+- `common/src/session.rs`：`PKUINFO_SESSION_DIR_<SERVICE>`（绝对路径，只作用于该服务）优先于 `PKUINFO_SESSION_ROOT`（绝对路径，其下按服务名分子目录）。都没设置时仍用系统配置目录里的 `info/<sub_name>/`。
+- `common/src/qr.rs`：Windows 用 `ShellExecuteW` 打开二维码图片，直接传 Unicode 路径，不再调用并不存在的 `start` 可执行文件。macOS / Linux 仍用 `open` / `xdg-open`。
+- `course`：截止时间允许省略星期、容忍空白，并读可选的秒；按北京时间解释，和原来一样。作业详情改读「到期日期 / 截止日期 / Due Date」，说明里的日期不再当成截止时间。附件丢掉空链接、`#` 和 `javascript:`，同一 URL 只留一次。旧的 `.itemdates` 页面仍能解析。
+- 教学网登录失败时从 reqwest 错误里去掉 URL，避免 SSO token 进入错误链。`course` 与 `pku-cli` 的命令行把剩余 URL 换成 `[URL已隐藏]`，原因文本保留。树洞命令行不再打印 token 前缀，失败时只输出固定的一句中文，不打印错误链。
+- 桌面端已有的 `complete_bb_login_for_user`（新 cookie、核对账号后再保存会话）保持原样。没有移植连接重试、登录重定向白名单，也没有移植另一份副本里只给那个程序用的入口。

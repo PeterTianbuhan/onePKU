@@ -252,9 +252,10 @@ pub fn compute_hash_id(parts: &[&str]) -> String {
 /// 解析 Blackboard 中文格式的截止时间
 /// 格式: "2025年3月15日 星期六 下午11:59"
 pub fn parse_deadline(raw: &str) -> Option<chrono::DateTime<chrono::Local>> {
-    let re =
-        regex::Regex::new(r"(\d{4})年(\d{1,2})月(\d{1,2})日 星期. (上午|下午)(\d{1,2}):(\d{1,2})")
-            .ok()?;
+    let re = regex::Regex::new(
+        r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日(?:\s*星期[一二三四五六日天])?\s*(上午|下午)\s*(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?",
+    )
+    .ok()?;
 
     let caps = re.captures(raw)?;
     let year: i32 = caps[1].parse().ok()?;
@@ -262,6 +263,9 @@ pub fn parse_deadline(raw: &str) -> Option<chrono::DateTime<chrono::Local>> {
     let day: u32 = caps[3].parse().ok()?;
     let mut hour: u32 = caps[5].parse().ok()?;
     let minute: u32 = caps[6].parse().ok()?;
+    let second: u32 = caps
+        .get(7)
+        .map_or(Some(0), |value| value.as_str().parse().ok())?;
 
     if &caps[4] == "下午" && hour < 12 {
         hour += 12;
@@ -272,7 +276,7 @@ pub fn parse_deadline(raw: &str) -> Option<chrono::DateTime<chrono::Local>> {
 
     let naive_dt = chrono::NaiveDateTime::new(
         chrono::NaiveDate::from_ymd_opt(year, month, day)?,
-        chrono::NaiveTime::from_hms_opt(hour, minute, 0)?,
+        chrono::NaiveTime::from_hms_opt(hour, minute, second)?,
     );
 
     chrono::FixedOffset::east_opt(8 * 3600)?
@@ -389,21 +393,7 @@ fn parse_content_items(dom: &Html) -> Result<Vec<ContentItem>> {
 
         let mut attachments: Vec<Attachment> = li
             .select(&attach_sel)
-            .filter_map(|a| {
-                let name = a.text().collect::<String>().trim().to_string();
-                // 去掉 nbsp 前缀
-                let name = name.strip_prefix('\u{a0}').unwrap_or(&name).to_string();
-                let href = a.value().attr("href")?;
-                let full_url = if href.starts_with("http") {
-                    href.to_string()
-                } else {
-                    format!("{COURSE_BASE}{href}")
-                };
-                Some(Attachment {
-                    name,
-                    url: full_url,
-                })
-            })
+            .filter_map(crate::assignment_parse::attachment)
             .collect();
 
         // 判断内容类型（参考 pku3b 的 img alt 属性判断）
@@ -887,72 +877,7 @@ impl CourseApi {
         if body.contains("name=\"loginForm\"") || body.contains("id=\"loginBox\"") {
             return Err(anyhow!("会话已过期，请重新登录"));
         }
-        let dom = Html::parse_document(&body);
-
-        let title = dom
-            .select(&Selector::parse("span.title").expect("static selector"))
-            .next()
-            .or_else(|| {
-                dom.select(&Selector::parse("#pageTitleText").expect("static selector"))
-                    .next()
-            })
-            .map(|el| el.text().collect::<String>())
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-
-        // 截止时间
-        let deadline = dom
-            .select(&Selector::parse(".itemdates").expect("static selector"))
-            .next()
-            .map(|el| el.text().collect::<String>().trim().to_string());
-
-        // 说明
-        let instructions = dom
-            .select(&Selector::parse("div.vtbegenerated").expect("static selector"))
-            .next()
-            .map(|el| el.text().collect::<String>().trim().to_string())
-            .unwrap_or_default();
-
-        // 附件
-        let attach_sel = Selector::parse("ul.attachments li a").expect("static selector");
-        let attachments: Vec<Attachment> = dom
-            .select(&attach_sel)
-            .filter_map(|a| {
-                let name = a.text().collect::<String>().trim().to_string();
-                if name.is_empty() {
-                    return None;
-                }
-                let href = a.value().attr("href")?;
-                if href.starts_with("javascript:") || href == "#" {
-                    return None;
-                }
-                let full_url = if href.starts_with("http") {
-                    href.to_string()
-                } else {
-                    format!("{COURSE_BASE}{href}")
-                };
-                Some(Attachment {
-                    name,
-                    url: full_url,
-                })
-            })
-            .collect();
-
-        // 提交状态
-        let status = dom
-            .select(&Selector::parse(".status").expect("static selector"))
-            .next()
-            .map(|el| el.text().collect::<String>().trim().to_string())
-            .unwrap_or_else(|| "未知".to_string());
-
-        Ok(AssignmentDetail {
-            title,
-            deadline,
-            instructions,
-            attachments,
-            status,
-        })
+        crate::assignment_parse::parse(&body)
     }
 
     /// 下载文件

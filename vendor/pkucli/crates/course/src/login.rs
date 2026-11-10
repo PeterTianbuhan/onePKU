@@ -93,13 +93,14 @@ pub async fn complete_bb_login_for_user(
         .get(&sso_url)
         .send()
         .await
+        .map_err(|e| e.without_url())
         .context("SSO 回调请求失败")?;
 
     if !resp.status().is_success() && !resp.status().is_redirection() {
         return Err(anyhow!("SSO 登录失败: HTTP {}", resp.status()));
     }
-    // 消费 body，确保 cookies 被存储
-    let _ = resp.bytes().await?;
+    // 消费 body，确保 cookies 被存储。去掉 URL，避免错误链带上 token。
+    let _ = resp.bytes().await.map_err(|e| e.without_url())?;
 
     // A login page can also return HTTP 200. Require the actual account identity.
     let identity_response = client
@@ -109,12 +110,22 @@ pub async fn complete_bb_login_for_user(
         ))
         .send()
         .await
-        .context("验证教学网账号失败")?
-        .error_for_status()?;
+        .map_err(|e| e.without_url())
+        .context("验证教学网账号失败")?;
+    if !identity_response.status().is_success() {
+        return Err(anyhow!(
+            "教学网登录验证失败: HTTP {}",
+            identity_response.status()
+        ));
+    }
     if identity_response.url().host_str() != Some("course.pku.edu.cn") {
         return Err(anyhow!("教学网登录验证失败"));
     }
-    let identity: serde_json::Value = identity_response.json().await?;
+    let identity: serde_json::Value = identity_response
+        .json()
+        .await
+        .map_err(|e| e.without_url())
+        .context("教学网未返回账户 JSON")?;
     verify_identity(&identity, username)?;
 
     // 保存会话（cookie-based session，默认 24 小时过期）

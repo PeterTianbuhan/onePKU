@@ -1,0 +1,900 @@
+diff --git a/vendor/pkucli/crates/common/src/qr.rs b/vendor/pkucli/crates/common/src/qr.rs
+index 655dcaa..0324423 100644
+--- a/vendor/pkucli/crates/common/src/qr.rs
++++ b/vendor/pkucli/crates/common/src/qr.rs
+@@ -45,23 +45,93 @@ pub fn render_qr_image(path: &Path, mode: QrDisplayMode) -> Result<()> {
+ 
+ /// 用系统默认图片查看器打开文件
+ fn open_with_system_viewer(path: &Path) -> Result<()> {
+-    let opener = if cfg!(target_os = "macos") {
+-        "open"
+-    } else if cfg!(target_os = "windows") {
+-        "start"
+-    } else {
+-        "xdg-open"
+-    };
+-
+-    std::process::Command::new(opener)
+-        .arg(path)
+-        .spawn()
+-        .map_err(|e| anyhow!("打开图片查看器失败: {e}"))?;
++    #[cfg(target_os = "windows")]
++    open_windows_viewer(path)?;
++
++    // `start` is a cmd builtin, not an executable, so Windows uses ShellExecuteW.
++    #[cfg(not(target_os = "windows"))]
++    {
++        let opener = if cfg!(target_os = "macos") {
++            "open"
++        } else {
++            "xdg-open"
++        };
++
++        std::process::Command::new(opener)
++            .arg(path)
++            .spawn()
++            .map_err(|e| anyhow!("打开图片查看器失败: {e}"))?;
++    }
+ 
+     println!("已用系统查看器打开二维码: {}", path.display());
+     Ok(())
+ }
+ 
++#[cfg(target_os = "windows")]
++fn windows_path(path: &Path) -> Result<Vec<u16>> {
++    use std::os::windows::ffi::OsStrExt;
++    let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
++    if wide.contains(&0) {
++        return Err(anyhow!("二维码图片路径含无效字符"));
++    }
++    wide.push(0);
++    Ok(wide)
++}
++
++#[cfg(target_os = "windows")]
++fn open_windows_viewer(path: &Path) -> Result<()> {
++    use std::ffi::c_void;
++    #[link(name = "shell32")]
++    extern "system" {
++        fn ShellExecuteW(
++            window: *mut c_void,
++            operation: *const u16,
++            file: *const u16,
++            parameters: *const u16,
++            directory: *const u16,
++            show: i32,
++        ) -> isize;
++    }
++    let wide = windows_path(path)?;
++    let open: Vec<u16> = "open\0".encode_utf16().collect();
++    // Pass the Unicode path directly. This does not go through a command shell.
++    let result = unsafe {
++        ShellExecuteW(
++            std::ptr::null_mut(),
++            open.as_ptr(),
++            wide.as_ptr(),
++            std::ptr::null(),
++            std::ptr::null(),
++            1,
++        )
++    };
++    if result <= 32 {
++        return Err(anyhow!("打开图片查看器失败: Windows 错误码 {result}"));
++    }
++    Ok(())
++}
++
++#[cfg(all(test, target_os = "windows"))]
++mod windows_tests {
++    use super::*;
++
++    #[test]
++    fn viewer_path_preserves_unicode_and_shell_characters() {
++        let path = Path::new(r"C:\扫码 测试\图像&$(test).png");
++        let wide = windows_path(path).unwrap();
++        assert_eq!(wide.last(), Some(&0));
++        assert_eq!(
++            String::from_utf16(&wide[..wide.len() - 1]).unwrap(),
++            path.to_str().unwrap()
++        );
++    }
++
++    #[test]
++    fn viewer_path_rejects_embedded_nul() {
++        assert!(windows_path(Path::new("qr\0hidden.png")).is_err());
++    }
++}
++
+ /// 将字符串内容在终端渲染为二维码（用于自己生成的二维码）
+ pub fn render_qr_string(content: &str) -> Result<()> {
+     use qrcode::render::unicode::Dense1x2;
+diff --git a/vendor/pkucli/crates/common/src/session.rs b/vendor/pkucli/crates/common/src/session.rs
+index 6251f46..3d110bc 100644
+--- a/vendor/pkucli/crates/common/src/session.rs
++++ b/vendor/pkucli/crates/common/src/session.rs
+@@ -58,10 +58,19 @@ pub struct Store {
+ }
+ 
+ impl Store {
+-    /// 创建存储实例。配置路径统一为 `~/.config/info/<sub_name>/`
++    /// 创建存储实例。
++    ///
++    /// 未设置环境变量时，目录仍是系统配置目录下的 `info/<sub_name>/`
++    /// （Linux `~/.config/info/<sub_name>/`，Windows `%APPDATA%\info\<sub_name>\`）。
++    /// `PKUINFO_SESSION_DIR_<SERVICE>` 为绝对路径时，只改该服务的目录，
++    /// 例如 `PKUINFO_SESSION_DIR_COURSE`。否则 `PKUINFO_SESSION_ROOT` 为绝对路径时，
++    /// 使用 `$PKUINFO_SESSION_ROOT/<sub_name>/`。
+     pub fn new(sub_name: &str) -> Result<Self> {
+-        let dirs = ProjectDirs::from("", "", "info").context("无法定位用户配置目录")?;
+-        let root = dirs.config_dir().join(sub_name);
++        let root = resolve_config_root(
++            sub_name,
++            std::env::var_os(session_dir_env(sub_name)),
++            std::env::var_os("PKUINFO_SESSION_ROOT"),
++        )?;
+         fs::create_dir_all(&root)
+             .with_context(|| format!("创建配置目录失败: {}", root.display()))?;
+         Ok(Self { root })
+@@ -158,29 +167,121 @@ impl Store {
+     }
+ }
+ 
++fn session_dir_env(sub_name: &str) -> String {
++    format!(
++        "PKUINFO_SESSION_DIR_{}",
++        sub_name.replace('-', "_").to_ascii_uppercase()
++    )
++}
++
++fn valid_service_name(sub_name: &str) -> bool {
++    !sub_name.is_empty()
++        && sub_name
++            .bytes()
++            .all(|c| c.is_ascii_alphanumeric() || c == b'-')
++}
++
++fn resolve_config_root(
++    sub_name: &str,
++    service_override: Option<std::ffi::OsString>,
++    shared_root: Option<std::ffi::OsString>,
++) -> Result<PathBuf> {
++    if let Some(value) = service_override {
++        let root = PathBuf::from(value);
++        anyhow::ensure!(
++            root.is_absolute(),
++            "{} 必须是绝对路径",
++            session_dir_env(sub_name)
++        );
++        return Ok(root);
++    }
++    if let Some(value) = shared_root {
++        let base = PathBuf::from(value);
++        anyhow::ensure!(base.is_absolute(), "PKUINFO_SESSION_ROOT 必须是绝对路径");
++        anyhow::ensure!(valid_service_name(sub_name), "会话服务名无效");
++        return Ok(base.join(sub_name));
++    }
++    let dirs = ProjectDirs::from("", "", "info").context("无法定位用户配置目录")?;
++    Ok(dirs.config_dir().join(sub_name))
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn explicit_directory_overrides_one_service_and_keeps_the_default() {
++        let directory = tempfile::tempdir().unwrap();
++        let shared = directory.path().join("school");
++        let course = directory.path().join("course-only");
++        assert_eq!(
++            resolve_config_root(
++                "course",
++                Some(course.as_os_str().to_owned()),
++                Some(shared.as_os_str().to_owned())
++            )
++            .unwrap(),
++            course
++        );
++        assert_eq!(
++            resolve_config_root("treehole", None, Some(shared.as_os_str().to_owned())).unwrap(),
++            shared.join("treehole")
++        );
++        let dirs = ProjectDirs::from("", "", "info").unwrap();
++        assert_eq!(
++            resolve_config_root("course", None, None).unwrap(),
++            dirs.config_dir().join("course")
++        );
++        assert!(
++            resolve_config_root("course", Some(std::ffi::OsString::from("relative")), None)
++                .is_err()
++        );
++        assert!(
++            resolve_config_root("course", None, Some(std::ffi::OsString::from("relative")))
++                .is_err()
++        );
++        assert!(
++            resolve_config_root("../course", None, Some(shared.as_os_str().to_owned())).is_err()
++        );
++    }
++
+     #[test]
+     fn session_updates_replace_the_file_and_leave_no_temporary_files() {
+         let dir = tempfile::tempdir().unwrap();
+-        let store = Store { root: dir.path().to_path_buf() };
+-        store.save_session(&Session::new("synthetic-first-token".into())).unwrap();
+-        store.save_session(&Session::new("synthetic-second-token".into())).unwrap();
+-        assert_eq!(store.load_session().unwrap().unwrap().token, "synthetic-second-token");
++        let store = Store {
++            root: dir.path().to_path_buf(),
++        };
++        store
++            .save_session(&Session::new("synthetic-first-token".into()))
++            .unwrap();
++        store
++            .save_session(&Session::new("synthetic-second-token".into()))
++            .unwrap();
++        assert_eq!(
++            store.load_session().unwrap().unwrap().token,
++            "synthetic-second-token"
++        );
+         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+         #[cfg(unix)]
+         {
+             use std::os::unix::fs::PermissionsExt;
+-            assert_eq!(fs::metadata(store.session_path()).unwrap().permissions().mode() & 0o777, 0o600);
++            assert_eq!(
++                fs::metadata(store.session_path())
++                    .unwrap()
++                    .permissions()
++                    .mode()
++                    & 0o777,
++                0o600
++            );
+         }
+     }
+ 
+     #[test]
+     fn cookie_updates_can_replace_an_existing_file() {
+         let dir = tempfile::tempdir().unwrap();
+-        let store = Store { root: dir.path().to_path_buf() };
++        let store = Store {
++            root: dir.path().to_path_buf(),
++        };
+         let cookies = Arc::new(CookieStoreMutex::new(CookieStore::default()));
+         store.save_cookie_store(&cookies).unwrap();
+         store.save_cookie_store(&cookies).unwrap();
+diff --git a/vendor/pkucli/crates/course/src/api.rs b/vendor/pkucli/crates/course/src/api.rs
+index 2309137..387eb7c 100644
+--- a/vendor/pkucli/crates/course/src/api.rs
++++ b/vendor/pkucli/crates/course/src/api.rs
+@@ -252,9 +252,10 @@ pub fn compute_hash_id(parts: &[&str]) -> String {
+ /// 解析 Blackboard 中文格式的截止时间
+ /// 格式: "2025年3月15日 星期六 下午11:59"
+ pub fn parse_deadline(raw: &str) -> Option<chrono::DateTime<chrono::Local>> {
+-    let re =
+-        regex::Regex::new(r"(\d{4})年(\d{1,2})月(\d{1,2})日 星期. (上午|下午)(\d{1,2}):(\d{1,2})")
+-            .ok()?;
++    let re = regex::Regex::new(
++        r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日(?:\s*星期[一二三四五六日天])?\s*(上午|下午)\s*(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?",
++    )
++    .ok()?;
+ 
+     let caps = re.captures(raw)?;
+     let year: i32 = caps[1].parse().ok()?;
+@@ -262,6 +263,9 @@ pub fn parse_deadline(raw: &str) -> Option<chrono::DateTime<chrono::Local>> {
+     let day: u32 = caps[3].parse().ok()?;
+     let mut hour: u32 = caps[5].parse().ok()?;
+     let minute: u32 = caps[6].parse().ok()?;
++    let second: u32 = caps
++        .get(7)
++        .map_or(Some(0), |value| value.as_str().parse().ok())?;
+ 
+     if &caps[4] == "下午" && hour < 12 {
+         hour += 12;
+@@ -272,7 +276,7 @@ pub fn parse_deadline(raw: &str) -> Option<chrono::DateTime<chrono::Local>> {
+ 
+     let naive_dt = chrono::NaiveDateTime::new(
+         chrono::NaiveDate::from_ymd_opt(year, month, day)?,
+-        chrono::NaiveTime::from_hms_opt(hour, minute, 0)?,
++        chrono::NaiveTime::from_hms_opt(hour, minute, second)?,
+     );
+ 
+     chrono::FixedOffset::east_opt(8 * 3600)?
+@@ -389,21 +393,7 @@ fn parse_content_items(dom: &Html) -> Result<Vec<ContentItem>> {
+ 
+         let mut attachments: Vec<Attachment> = li
+             .select(&attach_sel)
+-            .filter_map(|a| {
+-                let name = a.text().collect::<String>().trim().to_string();
+-                // 去掉 nbsp 前缀
+-                let name = name.strip_prefix('\u{a0}').unwrap_or(&name).to_string();
+-                let href = a.value().attr("href")?;
+-                let full_url = if href.starts_with("http") {
+-                    href.to_string()
+-                } else {
+-                    format!("{COURSE_BASE}{href}")
+-                };
+-                Some(Attachment {
+-                    name,
+-                    url: full_url,
+-                })
+-            })
++            .filter_map(crate::assignment_parse::attachment)
+             .collect();
+ 
+         // 判断内容类型（参考 pku3b 的 img alt 属性判断）
+@@ -887,72 +877,7 @@ impl CourseApi {
+         if body.contains("name=\"loginForm\"") || body.contains("id=\"loginBox\"") {
+             return Err(anyhow!("会话已过期，请重新登录"));
+         }
+-        let dom = Html::parse_document(&body);
+-
+-        let title = dom
+-            .select(&Selector::parse("span.title").expect("static selector"))
+-            .next()
+-            .or_else(|| {
+-                dom.select(&Selector::parse("#pageTitleText").expect("static selector"))
+-                    .next()
+-            })
+-            .map(|el| el.text().collect::<String>())
+-            .unwrap_or_default()
+-            .trim()
+-            .to_string();
+-
+-        // 截止时间
+-        let deadline = dom
+-            .select(&Selector::parse(".itemdates").expect("static selector"))
+-            .next()
+-            .map(|el| el.text().collect::<String>().trim().to_string());
+-
+-        // 说明
+-        let instructions = dom
+-            .select(&Selector::parse("div.vtbegenerated").expect("static selector"))
+-            .next()
+-            .map(|el| el.text().collect::<String>().trim().to_string())
+-            .unwrap_or_default();
+-
+-        // 附件
+-        let attach_sel = Selector::parse("ul.attachments li a").expect("static selector");
+-        let attachments: Vec<Attachment> = dom
+-            .select(&attach_sel)
+-            .filter_map(|a| {
+-                let name = a.text().collect::<String>().trim().to_string();
+-                if name.is_empty() {
+-                    return None;
+-                }
+-                let href = a.value().attr("href")?;
+-                if href.starts_with("javascript:") || href == "#" {
+-                    return None;
+-                }
+-                let full_url = if href.starts_with("http") {
+-                    href.to_string()
+-                } else {
+-                    format!("{COURSE_BASE}{href}")
+-                };
+-                Some(Attachment {
+-                    name,
+-                    url: full_url,
+-                })
+-            })
+-            .collect();
+-
+-        // 提交状态
+-        let status = dom
+-            .select(&Selector::parse(".status").expect("static selector"))
+-            .next()
+-            .map(|el| el.text().collect::<String>().trim().to_string())
+-            .unwrap_or_else(|| "未知".to_string());
+-
+-        Ok(AssignmentDetail {
+-            title,
+-            deadline,
+-            instructions,
+-            attachments,
+-            status,
+-        })
++        crate::assignment_parse::parse(&body)
+     }
+ 
+     /// 下载文件
+diff --git a/vendor/pkucli/crates/course/src/assignment_parse.rs b/vendor/pkucli/crates/course/src/assignment_parse.rs
+new file mode 100644
+index 0000000..3e7dfe0
+--- /dev/null
++++ b/vendor/pkucli/crates/course/src/assignment_parse.rs
+@@ -0,0 +1,265 @@
++use crate::{
++    api::{AssignmentDetail, Attachment},
++    client::COURSE_BASE,
++};
++use anyhow::{ensure, Result};
++use scraper::{ElementRef, Html, Selector};
++use std::collections::HashSet;
++
++fn text(element: ElementRef<'_>) -> String {
++    element
++        .text()
++        .collect::<Vec<_>>()
++        .join(" ")
++        .split_whitespace()
++        .collect::<Vec<_>>()
++        .join(" ")
++}
++
++fn label_matches(label: &str, labels: &[&str]) -> bool {
++    let label = label.trim_end_matches([':', '：']).trim();
++    labels.iter().any(|value| label.eq_ignore_ascii_case(value))
++}
++
++fn metadata(dom: &Html, labels: &[&str]) -> Option<String> {
++    let label = Selector::parse(".metaLabel").unwrap();
++    let value = Selector::parse(".metaField").unwrap();
++    for section in dom.select(&Selector::parse("#metadata .metaSection").unwrap()) {
++        if section
++            .select(&label)
++            .next()
++            .is_some_and(|e| label_matches(&text(e), labels))
++        {
++            if let Some(value) = section
++                .select(&value)
++                .next()
++                .map(text)
++                .filter(|s| !s.is_empty())
++            {
++                return Some(value);
++            }
++        }
++    }
++    for heading in dom.select(&Selector::parse("#assignmentInfo h3").unwrap()) {
++        if label_matches(&text(heading), labels) {
++            if let Some(value) = heading
++                .next_siblings()
++                .filter_map(ElementRef::wrap)
++                .next()
++                .map(text)
++                .filter(|s| !s.is_empty())
++            {
++                return Some(value);
++            }
++        }
++    }
++    None
++}
++
++pub(crate) fn attachment(anchor: ElementRef<'_>) -> Option<Attachment> {
++    let name = anchor.text().collect::<String>().trim().to_owned();
++    let href = anchor.value().attr("href")?.trim();
++    if name.is_empty() || href.is_empty() || href.starts_with('#') {
++        return None;
++    }
++    let url = reqwest::Url::parse(COURSE_BASE).ok()?.join(href).ok()?;
++    if !matches!(url.scheme(), "https" | "http") {
++        return None;
++    }
++    Some(Attachment {
++        name,
++        url: url.to_string(),
++    })
++}
++
++pub(crate) fn parse(body: &str) -> Result<AssignmentDetail> {
++    let dom = Html::parse_document(body);
++    // `.itemdates` / `span.title` keep pages the previous parser accepted.
++    ensure!(
++        dom.select(
++            &Selector::parse(
++                "#uploadAssignmentFormId, #assignmentInfo, #currentAttempt, .itemdates, span.title, #pageTitleText"
++            )
++            .unwrap()
++        )
++        .next()
++        .is_some(),
++        "无法识别教学网作业页面"
++    );
++    let title = metadata(&dom, &["名称", "Name"]).unwrap_or_else(|| {
++        let title = dom
++            .select(&Selector::parse("span.title, #pageTitleText").unwrap())
++            .next()
++            .map(text)
++            .unwrap_or_default();
++        for prefix in [
++            "上载作业：",
++            "上载作业:",
++            "复查提交历史记录:",
++            "复查提交历史记录：",
++            "Upload Assignment:",
++            "Review Submission History:",
++        ] {
++            if let Some(value) = title.strip_prefix(prefix) {
++                return value.trim().to_owned();
++            }
++        }
++        title
++    });
++    ensure!(!title.is_empty(), "教学网作业页面缺少标题");
++    let deadline = metadata(&dom, &["到期日期", "截止日期", "Due Date"]).or_else(|| {
++        dom.select(&Selector::parse(".itemdates").unwrap())
++            .next()
++            .map(text)
++            .filter(|s| !s.is_empty())
++    });
++    let instructions = [
++        "#instructions div.vtbegenerated",
++        "#contentDetails div.vtbegenerated",
++        "div.vtbegenerated",
++    ]
++    .iter()
++    .find_map(|selector| dom.select(&Selector::parse(selector).unwrap()).next())
++    .map(|e| e.text().collect::<String>().trim().to_owned())
++    .unwrap_or_default();
++    let mut seen = HashSet::new();
++    let attachments = dom
++        .select(&Selector::parse("ul.attachments li a, #assignmentInfo a[href]").unwrap())
++        .filter_map(attachment)
++        .filter(|a| seen.insert(a.url.clone()))
++        .collect();
++    let explicit_status = dom
++        .select(&Selector::parse(".status").unwrap())
++        .next()
++        .map(text)
++        .filter(|s| !s.is_empty());
++    let attempt = dom
++        .select(&Selector::parse("#currentAttempt_label").unwrap())
++        .next()
++        .map(text)
++        .filter(|s| !s.is_empty());
++    let status = explicit_status.unwrap_or_else(|| {
++        if attempt.as_ref().is_some_and(|label| {
++            label.contains("草稿") || label.to_ascii_lowercase().contains("draft")
++        }) {
++            "草稿".into()
++        } else if attempt.is_some()
++            && dom
++                .select(&Selector::parse("#currentAttempt_submission").unwrap())
++                .next()
++                .is_some()
++        {
++            "已提交".into()
++        } else if attempt.is_none()
++            && dom
++                .select(&Selector::parse("#uploadAssignmentFormId").unwrap())
++                .next()
++                .is_some()
++        {
++            "未提交".into()
++        } else {
++            "未知".into()
++        }
++    });
++    Ok(AssignmentDetail {
++        title,
++        deadline,
++        instructions,
++        attachments,
++        status,
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::api::parse_deadline;
++
++    fn deadline_iso(raw: &str) -> String {
++        parse_deadline(raw)
++            .unwrap()
++            .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
++            .to_rfc3339()
++    }
++
++    #[test]
++    fn upload_metadata_uses_due_date_not_the_unrelated_score_or_instruction_date() {
++        let result = parse(r#"<span class="title">上载作业： 测试作业</span>
++            <form id="uploadAssignmentFormId"><li id="metadata">
++            <div class="metaSection"><div class="metaLabel">到期日期</div><div class="metaField">2026年10月8日 星期四 下午11:59</div></div>
++            <div class="metaSection"><div class="metaLabel">满分</div><div class="metaField">10</div></div></li>
++            <li id="instructions"><div class="vtbegenerated">说明中提及2025年1月1日</div></li></form>"#).unwrap();
++        assert_eq!(result.title, "测试作业");
++        assert_eq!(result.status, "未提交");
++        assert_eq!(
++            deadline_iso(result.deadline.as_deref().unwrap()),
++            "2026-10-08T23:59:00+08:00"
++        );
++    }
++
++    #[test]
++    fn submitted_history_keeps_due_date_and_teacher_files_separate_from_uploaded_files() {
++        let result = parse(r#"<div id="assignmentInfo"><div><h3>名称</h3><p>测试作业</p></div>
++            <div><h3>到期日期</h3><p>2026年9月23日 下午11:59</p></div>
++            <div><h3>作业文件</h3><p><a href="/bbcswebdav/homework.md">homework.md</a></p></div></div>
++            <div id="currentAttempt"><h3 id="currentAttempt_label">尝试 1</h3>
++            <div id="currentAttempt_submission"><ul id="currentAttempt_submissionList">
++            <a href="/bbcswebdav/student.zip">student.zip</a></ul></div></div>"#).unwrap();
++        assert_eq!(result.status, "已提交");
++        assert_eq!(result.attachments.len(), 1);
++        assert_eq!(result.attachments[0].name, "homework.md");
++        assert_eq!(
++            deadline_iso(result.deadline.as_deref().unwrap()),
++            "2026-09-23T23:59:00+08:00"
++        );
++    }
++
++    #[test]
++    fn dates_without_weekdays_and_midnight_are_supported() {
++        for (raw, expected) in [
++            (
++                "2026年10月20日 星期二 上午12:30",
++                "2026-10-20T00:30:00+08:00",
++            ),
++            (
++                "2026 年 10 月 8 日 下午 11:59:59",
++                "2026-10-08T23:59:59+08:00",
++            ),
++        ] {
++            assert_eq!(deadline_iso(raw), expected);
++        }
++    }
++
++    #[test]
++    fn legacy_itemdates_page_still_parses() {
++        let result = parse(
++            r#"<span class="title">旧版作业</span><div class="itemdates">2026年3月15日 星期日 下午11:59</div><div class="vtbegenerated">说明</div>"#,
++        )
++        .unwrap();
++        assert_eq!(result.title, "旧版作业");
++        assert_eq!(result.instructions, "说明");
++        assert_eq!(result.status, "未知");
++        assert_eq!(
++            deadline_iso(result.deadline.as_deref().unwrap()),
++            "2026-03-15T23:59:00+08:00"
++        );
++    }
++
++    #[test]
++    fn draft_is_not_submitted_and_absent_due_date_stays_absent() {
++        let result = parse(r#"<div id="assignmentInfo"><h3>名称</h3><p>草稿测试</p></div>
++            <h3 id="currentAttempt_label">Draft attempt</h3><div id="currentAttempt_submission"></div>"#).unwrap();
++        assert_eq!(result.status, "草稿");
++        assert!(result.deadline.is_none());
++        assert!(parse("<h1>登录失败</h1>").is_err());
++    }
++
++    #[test]
++    fn attachment_controls_and_duplicate_links_are_ignored() {
++        let result = parse(r##"<span class="title">测试</span><form id="uploadAssignmentFormId">
++            <ul class="attachments"><li><a href="/bbcswebdav/hw.pdf">hw.pdf</a>
++            <a href="#">菜单</a><a href="javascript:void(0)">控件</a>
++            <a href="/bbcswebdav/empty"></a><a href="/bbcswebdav/hw.pdf">hw.pdf</a></li></ul></form>"##).unwrap();
++        assert_eq!(result.attachments.len(), 1);
++    }
++}
+diff --git a/vendor/pkucli/crates/course/src/lib.rs b/vendor/pkucli/crates/course/src/lib.rs
+index 6ebf8ab..a461bd4 100644
+--- a/vendor/pkucli/crates/course/src/lib.rs
++++ b/vendor/pkucli/crates/course/src/lib.rs
+@@ -1,9 +1,13 @@
+ pub mod api;
++mod assignment_parse;
+ pub mod client;
+ pub mod commands;
+ mod display;
+ pub mod login;
+ mod multipart;
++mod safe_errors;
++
++pub use safe_errors::safe_error_message;
+ 
+ use anyhow::Result;
+ use clap::{Parser, Subcommand};
+diff --git a/vendor/pkucli/crates/course/src/login.rs b/vendor/pkucli/crates/course/src/login.rs
+index 6e71efe..16db4d0 100644
+--- a/vendor/pkucli/crates/course/src/login.rs
++++ b/vendor/pkucli/crates/course/src/login.rs
+@@ -93,13 +93,14 @@ pub async fn complete_bb_login_for_user(
+         .get(&sso_url)
+         .send()
+         .await
++        .map_err(|e| e.without_url())
+         .context("SSO 回调请求失败")?;
+ 
+     if !resp.status().is_success() && !resp.status().is_redirection() {
+         return Err(anyhow!("SSO 登录失败: HTTP {}", resp.status()));
+     }
+-    // 消费 body，确保 cookies 被存储
+-    let _ = resp.bytes().await?;
++    // 消费 body，确保 cookies 被存储。去掉 URL，避免错误链带上 token。
++    let _ = resp.bytes().await.map_err(|e| e.without_url())?;
+ 
+     // A login page can also return HTTP 200. Require the actual account identity.
+     let identity_response = client
+@@ -109,12 +110,22 @@ pub async fn complete_bb_login_for_user(
+         ))
+         .send()
+         .await
+-        .context("验证教学网账号失败")?
+-        .error_for_status()?;
++        .map_err(|e| e.without_url())
++        .context("验证教学网账号失败")?;
++    if !identity_response.status().is_success() {
++        return Err(anyhow!(
++            "教学网登录验证失败: HTTP {}",
++            identity_response.status()
++        ));
++    }
+     if identity_response.url().host_str() != Some("course.pku.edu.cn") {
+         return Err(anyhow!("教学网登录验证失败"));
+     }
+-    let identity: serde_json::Value = identity_response.json().await?;
++    let identity: serde_json::Value = identity_response
++        .json()
++        .await
++        .map_err(|e| e.without_url())
++        .context("教学网未返回账户 JSON")?;
+     verify_identity(&identity, username)?;
+ 
+     // 保存会话（cookie-based session，默认 24 小时过期）
+diff --git a/vendor/pkucli/crates/course/src/main.rs b/vendor/pkucli/crates/course/src/main.rs
+index 635f843..224926c 100644
+--- a/vendor/pkucli/crates/course/src/main.rs
++++ b/vendor/pkucli/crates/course/src/main.rs
+@@ -1,4 +1,10 @@
+ #[tokio::main]
+-async fn main() -> anyhow::Result<()> {
+-    pku_course::run().await
++async fn main() -> std::process::ExitCode {
++    match pku_course::run().await {
++        Ok(()) => std::process::ExitCode::SUCCESS,
++        Err(error) => {
++            eprintln!("Error: {}", pku_course::safe_error_message(&error));
++            std::process::ExitCode::FAILURE
++        }
++    }
+ }
+diff --git a/vendor/pkucli/crates/course/src/safe_errors.rs b/vendor/pkucli/crates/course/src/safe_errors.rs
+new file mode 100644
+index 0000000..b2ecb1a
+--- /dev/null
++++ b/vendor/pkucli/crates/course/src/safe_errors.rs
+@@ -0,0 +1,46 @@
++use std::sync::LazyLock;
++
++/// Error chains may contain OAuth tokens in request URLs. Keep the cause, never the URL.
++pub fn safe_error_message(error: &anyhow::Error) -> String {
++    static URL: LazyLock<regex::Regex> = LazyLock::new(|| {
++        regex::Regex::new(r#"(?i)https?://[^\s<>\"')\]]+"#).expect("static URL pattern")
++    });
++    URL.replace_all(&format!("{error:#}"), "[URL已隐藏]")
++        .into_owned()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn secrets_in_nested_urls_are_removed_but_tls_cause_is_kept() {
++        let error = anyhow::anyhow!(
++            "error sending request for url (https://user:pass@course.pku.edu.cn/campusLogin?token=example_secret#fragment_secret): unexpected EOF during handshake"
++        )
++        .context("SSO 回调请求失败");
++        let result = safe_error_message(&error);
++        assert!(result.contains("SSO 回调请求失败"));
++        assert!(result.contains("unexpected EOF during handshake"));
++        for secret in ["user:pass", "example_secret", "fragment_secret", "https://"] {
++            assert!(!result.contains(secret), "{result}");
++        }
++    }
++
++    #[test]
++    fn multiple_and_uppercase_urls_are_removed() {
++        let error = anyhow::anyhow!(
++            "HTTPS://example.test/?token=first_secret\nhttp://example.test/?code=second_secret"
++        );
++        assert_eq!(safe_error_message(&error), "[URL已隐藏]\n[URL已隐藏]");
++    }
++
++    #[test]
++    fn ordinary_errors_remain_readable() {
++        let error = anyhow::anyhow!("connection refused").context("访问教学网失败");
++        assert_eq!(
++            safe_error_message(&error),
++            "访问教学网失败: connection refused"
++        );
++    }
++}
+diff --git a/vendor/pkucli/crates/pku-cli/src/main.rs b/vendor/pkucli/crates/pku-cli/src/main.rs
+index 47dbfc1..1272b13 100644
+--- a/vendor/pkucli/crates/pku-cli/src/main.rs
++++ b/vendor/pkucli/crates/pku-cli/src/main.rs
+@@ -133,8 +133,9 @@ fn handle_clap_error(result: anyhow::Result<()>) -> anyhow::Result<()> {
+ }
+ 
+ #[tokio::main]
+-async fn main() -> anyhow::Result<()> {
++async fn main() -> std::process::ExitCode {
+     let cli = Cli::parse();
++    let treehole = matches!(&cli.command, Tools::Treehole { .. });
+     let result = match cli.command {
+         Tools::Treehole { args } => pku_treehole::run_from(prepend_name("treehole", &args)).await,
+         Tools::Course { args } => pku_course::run_from(prepend_name("course", &args)).await,
+@@ -158,7 +159,40 @@ async fn main() -> anyhow::Result<()> {
+         }
+         Tools::Update { check, no_locked } => run_update(check, no_locked).await,
+     };
+-    handle_clap_error(result)
++    match handle_clap_error(result) {
++        Ok(()) => std::process::ExitCode::SUCCESS,
++        Err(error) => {
++            eprintln!("Error: {}", public_error(&error, treehole));
++            std::process::ExitCode::FAILURE
++        }
++    }
++}
++
++fn public_error(error: &anyhow::Error, treehole: bool) -> String {
++    if treehole {
++        "树洞操作失败。请在本机重试；链接和凭证已隐藏。".into()
++    } else {
++        pku_course::safe_error_message(error)
++    }
++}
++
++#[cfg(test)]
++mod integration_tests {
++    use super::public_error;
++
++    #[test]
++    fn unified_course_errors_keep_cause_without_login_url() {
++        let error = anyhow::anyhow!("TLS failure at https://example.test/?token=private");
++        let message = public_error(&error, false);
++        assert!(message.contains("TLS failure"));
++        assert!(!message.contains("private"));
++    }
++
++    #[test]
++    fn unified_treehole_errors_hide_the_chain() {
++        let error = anyhow::anyhow!("token=private");
++        assert!(!public_error(&error, true).contains("token=private"));
++    }
+ }
+ 
+ fn print_versions() {
+diff --git a/vendor/pkucli/crates/treehole/src/login.rs b/vendor/pkucli/crates/treehole/src/login.rs
+index f235929..4e04eec 100644
+--- a/vendor/pkucli/crates/treehole/src/login.rs
++++ b/vendor/pkucli/crates/treehole/src/login.rs
+@@ -163,7 +163,7 @@ pub async fn complete_treehole_login(
+     println!();
+     println!("{} 登录成功！", "[done]".green().bold());
+     println!("  uid       = {}", uid.bold());
+-    println!("  token     = {}...", &jwt_token[..40.min(jwt_token.len())]);
++    println!("  会话已保存到本机（不显示凭证）");
+     println!("  expires   = {}", format_timestamp(expires_in));
+     println!("  配置目录   = {}", store.config_dir().display());
+     Ok(())
+@@ -320,7 +320,7 @@ pub fn status() -> Result<()> {
+             if let Some(uid) = &s.uid {
+                 println!("  uid        = {uid}");
+             }
+-            println!("  token      = {}...", &s.token[..40.min(s.token.len())]);
++            println!("  会话已保存到本机（不显示凭证）");
+             if let Some(exp) = s.expires_at {
+                 println!("  expires_at = {}", format_timestamp(exp));
+             }
+diff --git a/vendor/pkucli/crates/treehole/src/main.rs b/vendor/pkucli/crates/treehole/src/main.rs
+index 664ac8d..ffae769 100644
+--- a/vendor/pkucli/crates/treehole/src/main.rs
++++ b/vendor/pkucli/crates/treehole/src/main.rs
+@@ -1,4 +1,10 @@
+ #[tokio::main]
+-async fn main() -> anyhow::Result<()> {
+-    pku_treehole::run().await
++async fn main() -> std::process::ExitCode {
++    match pku_treehole::run().await {
++        Ok(()) => std::process::ExitCode::SUCCESS,
++        Err(_) => {
++            eprintln!("树洞操作失败。请在本机重试；链接和凭证已隐藏。");
++            std::process::ExitCode::FAILURE
++        }
++    }
+ }

@@ -19,3 +19,7 @@ Review the patch file directly. Apply the course patch to the stated base with `
 `pkucli-semester-labels.patch` 是基于 OnePKU `31beb7c` 的独立学期分组识别修复，包含合成标题回归测试。
 
 `pkucli-replay-cache.patch` 是同一基线上的完整 vendored 增量，包含上述学期修复、稳定账号信息读取、播放与下载共享分片、失败恢复、临时网络错误重试及相关测试。它也包含两个工作区所需的依赖锁文件变更；与学期补丁择一应用，不要顺序叠加。可在该基线的独立 checkout 根目录运行 `git apply --check`，应用后运行 `cargo test -p pku-course --lib --locked`。桌面缓存归属、界面与目录迁移由 OnePKU 核心处理，不包含在此候选补丁中；回馈上游前需适配当前上游接口。尚未向上游提交。
+
+## 会话目录、扫码与作业解析
+
+`pkucli-session-qr-assignment.patch` 基于 OnePKU `f881bbb` 的 vendor 快照，不是裸上游。它包含可选的会话目录、Windows 下用 ShellExecute 打开二维码、作业截止时间与附件解析，以及命令行错误里去掉 URL 和树洞 token。路径带 `vendor/pkucli/` 前缀，可在该基线的仓库根目录 `git apply --check`。桌面端已有的教学网账号核对登录没有改成功路径。回馈上游前需对照当前上游接口。尚未向上游提交。
