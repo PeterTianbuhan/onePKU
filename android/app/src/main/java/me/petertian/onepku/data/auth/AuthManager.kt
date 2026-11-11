@@ -48,7 +48,6 @@ class AuthManager @Inject constructor(
     fun storedUsername(): String? = sessionStore.credentials()?.username
 
     suspend fun login(service: Service, username: String, password: String, otpCode: String? = null) {
-        sessionStore.saveCredentials(Credentials(username, password))
         try {
             when (service) {
                 Service.COURSE -> loginCourse(username, password, otpCode)
@@ -58,9 +57,13 @@ class AuthManager @Inject constructor(
                 Service.HAOXUE -> loginHaoxue(username, password, otpCode)
             }
         } catch (e: Exception) {
+            // 这次没登上。只清这个服务的会话，已保存的账号密码不动。
             sessionStore.clear(service)
             throw e
         }
+        // 与桌面端一致：只有登录成功才写入密码。先写入的话，一次输错就会
+        // 覆盖原来能用的密码，之后的自动重登也跟着失败。
+        sessionStore.saveCredentials(Credentials(username, password))
     }
 
     /** 用已存凭证重登;无凭证抛 SessionExpiredException。 */
