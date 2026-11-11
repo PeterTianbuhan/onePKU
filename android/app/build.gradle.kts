@@ -60,8 +60,8 @@ android {
         applicationId = "me.petertian.onepku"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.4.1"
+        versionCode = 7
+        versionName = "0.4.2"
         buildConfigField("String", "PROGRESS_SYNC_URL", progressConfigField("onepku.progress.url"))
         buildConfigField("String", "PROGRESS_SYNC_TOKEN", progressConfigField("onepku.progress.token"))
     }

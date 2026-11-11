@@ -1,6 +1,9 @@
 package me.petertian.onepku.data.auth
 
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.petertian.onepku.core.network.CookieStores
 import me.petertian.onepku.core.network.HttpFactory
@@ -18,13 +21,14 @@ import me.petertian.onepku.data.replay.Haoxue
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.random.Random
 
 /**
  * 各服务登录编排:IAAA 密码登录 → 服务 SSO 回调 → 保存会话。
- * 会话过期后用加密存储的凭证自动重登一次。
+ * 会话过期后用加密存储的密码和当前手机令牌重登一次。
  */
 @Singleton
 class AuthManager @Inject constructor(
@@ -34,6 +38,9 @@ class AuthManager @Inject constructor(
     private val cookieStores: CookieStores,
     private val portal: PortalApi,
 ) {
+    private val sessionRefresh = SessionRefresh()
+    private val renewScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val renewStarted = AtomicBoolean(false)
 
     fun isLoggedIn(service: Service): Boolean = sessionStore.isLoggedIn(service)
 
@@ -45,29 +52,127 @@ class AuthManager @Inject constructor(
 
     fun sessionUid(service: Service): String = sessionStore.session(service)?.uid?.trim().orEmpty()
 
-    fun storedUsername(): String? = sessionStore.credentials()?.username
+    fun storedUsername(): String? = sessionStore.username()
+
+    fun otpSaved(): Boolean = sessionStore.otpSecret() != null
+
+    /** 用草稿或已保存的密钥算出当前 6 位口令，供设置页对照。算不出就返回 null。 */
+    fun previewCode(draft: String, nowMs: Long = System.currentTimeMillis()): String? {
+        val secret = if (draft.isNotBlank()) {
+            Totp.parseSecret(draft) ?: return null
+        } else {
+            sessionStore.otpSecret() ?: return null
+        }
+        return runCatching { Totp.current(secret, nowMs) }.getOrNull()
+    }
+
+    /**
+     * 保存自动登录用的密码和手机令牌。密钥留空表示不改已保存的；没有就保持不使用。
+     * 返回 null 表示已保存，否则是给人看的错误，不含密钥本身。
+     */
+    fun saveAutoLogin(username: String, password: String, secretDraft: String): String? {
+        val name = username.trim()
+        if (name.isEmpty()) return "请填写学号"
+        val parsed = if (secretDraft.isBlank()) {
+            null
+        } else {
+            Totp.parseSecret(secretDraft) ?: return "手机令牌无法识别，请粘贴 otpauth:// 链接或 Base32 密钥"
+        }
+        val existing = sessionStore.credentials()
+        val pass = if (password.isNotEmpty()) password else existing?.takeIf { it.username == name }?.password
+        if (pass.isNullOrEmpty()) return "请填写统一身份认证密码"
+        val previousName = sessionStore.username()
+        sessionStore.saveCredentials(Credentials(name, pass))
+        if (parsed != null) {
+            sessionStore.saveOtpSecret(parsed)
+        } else if (previousName != null && previousName != name) {
+            sessionStore.saveOtpSecret(null)
+        }
+        sessionRefresh.clearAll()
+        return null
+    }
+
+    fun clearAutoLogin() {
+        sessionStore.clearPasswordAndOtp()
+        sessionRefresh.clearAll()
+    }
+
+    /** 启动时把已过期或快过期、并且本机还有会话的服务各续一次。没会话的不主动连回去。 */
+    fun renewStaleSessions() {
+        if (!renewStarted.compareAndSet(false, true)) return
+        renewScope.launch {
+            if (!hasCredentials()) return@launch
+            val now = System.currentTimeMillis() / 1000
+            for (service in Service.entries) {
+                val session = sessionStore.session(service) ?: continue
+                if (!sessionNeedsRenew(session.expiresAt, now)) continue
+                runCatching {
+                    withRefresh(service) {
+                        val current = sessionStore.session(service)
+                        val t = System.currentTimeMillis() / 1000
+                        if (current == null || sessionNeedsRenew(current.expiresAt, t)) {
+                            throw SessionExpiredException()
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     suspend fun login(service: Service, username: String, password: String, otpCode: String? = null) {
+        openSession(service, username, password, otpCode, wipeOnFailure = true)
+    }
+
+    /**
+     * 用已存密码和当前口令重登。无密码时抛 SessionExpiredException。不把密钥写进异常。
+     * 失败时留下原来的会话：网络抖一下不该把还能用的登录清掉。
+     */
+    suspend fun relogin(service: Service) {
+        val cred = sessionStore.credentials()
+            ?: throw SessionExpiredException("请先登录")
+        openSession(service, cred.username, cred.password, null, wipeOnFailure = false)
+    }
+
+    private suspend fun openSession(
+        service: Service,
+        username: String,
+        password: String,
+        otpCode: String?,
+        wipeOnFailure: Boolean,
+    ) {
         sessionStore.saveCredentials(Credentials(username, password))
+        val code = otpCode?.trim()?.takeIf { it.isNotEmpty() } ?: currentOtp()
         try {
             when (service) {
-                Service.COURSE -> loginCourse(username, password, otpCode)
-                Service.TREEHOLE -> loginTreehole(username, password, otpCode)
-                Service.CARD -> loginCard(username, password, otpCode)
-                Service.PORTAL -> loginPortal(username, password, otpCode)
-                Service.HAOXUE -> loginHaoxue(username, password, otpCode)
+                Service.COURSE -> loginCourse(username, password, code)
+                Service.TREEHOLE -> loginTreehole(username, password, code)
+                Service.CARD -> loginCard(username, password, code)
+                Service.PORTAL -> loginPortal(username, password, code)
+                Service.HAOXUE -> loginHaoxue(username, password, code)
             }
+            sessionRefresh.clear(service.key)
         } catch (e: Exception) {
-            sessionStore.clear(service)
+            if (wipeOnFailure) sessionStore.clear(service)
             throw e
         }
     }
 
-    /** 用已存凭证重登;无凭证抛 SessionExpiredException。 */
-    suspend fun relogin(service: Service) {
-        val cred = sessionStore.credentials()
-            ?: throw SessionExpiredException("请先登录")
-        login(service, cred.username, cred.password)
+    /**
+     * 请求发现未登录时重登一次再试一次。没有保存密码就原样抛出。
+     * 重登失败或重试仍未登录之后会冷却，避免连着打 IAAA。
+     */
+    suspend fun <T> withRefresh(service: Service, block: suspend () -> T): T {
+        if (!hasCredentials()) return block()
+        return sessionRefresh.run(service.key, { relogin(service) }, block)
+    }
+
+    private fun currentOtp(): String? {
+        val secret = sessionStore.otpSecret() ?: return null
+        return try {
+            Totp.current(secret)
+        } catch (_: Exception) {
+            throw IaaaException("已保存的手机令牌无法生成口令")
+        }
     }
 
     fun logout(service: Service) {

@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import me.petertian.onepku.core.session.Service
 import me.petertian.onepku.data.auth.AuthManager
+import me.petertian.onepku.data.auth.Totp
 import javax.inject.Inject
 
 @HiltViewModel
@@ -31,12 +32,31 @@ class LoginViewModel @Inject constructor(
     fun login(onDone: () -> Unit) {
         val state = _ui.value
         if (state.loggingIn) return
-        _ui.update { it.copy(loggingIn = true, results = emptyList()) }
+        val typed = state.otp.trim()
+        val code = when {
+            typed.isEmpty() -> null
+            typed.length in 6..8 && typed.all { it.isDigit() } -> typed
+            Totp.parseSecret(typed) != null -> {
+                val error = auth.saveAutoLogin(state.username, state.password, typed)
+                if (error != null) {
+                    _ui.update { it.copy(results = listOf(ServiceLoginResult(Service.COURSE, false, error))) }
+                    return
+                }
+                null
+            }
+            else -> {
+                _ui.update {
+                    it.copy(results = listOf(ServiceLoginResult(Service.COURSE, false, "动态口令是 6 位数字，密钥请填在设置里")))
+                }
+                return
+            }
+        }
+        _ui.update { it.copy(loggingIn = true, results = emptyList(), otp = if (code == null) "" else it.otp) }
         viewModelScope.launch {
             val results = mutableListOf<ServiceLoginResult>()
             for (service in Service.entries) {
                 val result = try {
-                    auth.login(service, state.username, state.password, state.otp.ifBlank { null })
+                    auth.login(service, state.username, state.password, code)
                     ServiceLoginResult(service, true, null)
                 } catch (e: Exception) {
                     ServiceLoginResult(service, false, e.message ?: "登录失败")

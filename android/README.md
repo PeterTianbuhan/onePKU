@@ -1,10 +1,10 @@
 # OnePKU Android
 
-北大校园服务的 Android 客户端，与桌面版同仓库、同数据的独立实现（不是桌面版打包）。Kotlin + Jetpack Compose（Material 3）、MVVM（ViewModel + StateFlow）、Hilt 依赖注入，最低 Android 8.0（API 26）。版本号独立于桌面版计数：当前 Android v0.4.1，桌面版是 v0.12.3，两者互不对应；逐版改动见仓库根 [CHANGELOG.md](../CHANGELOG.md) 的「Android 版」一节。
+北大校园服务的 Android 客户端，与桌面版同仓库、同数据的独立实现（不是桌面版打包）。Kotlin + Jetpack Compose（Material 3）、MVVM（ViewModel + StateFlow）、Hilt 依赖注入，最低 Android 8.0（API 26）。版本号独立于桌面版计数：当前 Android v0.4.2，桌面版是 v0.12.3，两者互不对应；逐版改动见仓库根 [CHANGELOG.md](../CHANGELOG.md) 的「Android 版」一节。
 
 ## 功能
 
-- 账号密码登录（IAAA），会话失效后自动重登；密码经 Android Keystore 加密的 EncryptedSharedPreferences 保存，不出本机
+- 账号密码登录（IAAA）。设置里可以同时保存手机令牌密钥（`otpauth://` 或 Base32，没有令牌就留空）。会话失效或快到期时用密码和当前口令自动重登一次；密码和密钥经 Android Keystore 加密的 EncryptedSharedPreferences 保存，不进自动备份，不出本机
 - 今日聚合：待交作业、课程通知、校园卡余额一览
 - 教学网：课程列表（按学期分组）、课程通知、作业列表、课程资料（可下载打开）、教师成绩
 - 作业：全部课程汇总（待交/全部/已截止筛选）、作业详情与提交历史、评分与评语
@@ -23,7 +23,7 @@
 - 课程回放：好学课堂实录的录像，按课程列出最近半年能播的课，课程详情里也有「回放」标签。边看边把分片存进本机，拖到哪下到哪；点下载在后台补齐整节课，断网也能看；记住播放位置，可全屏、倍速。没点下载的缓存一周不打开就清掉。播放到最后约 10 秒或播完记为「已看完」，和「已下载」不是一回事
 - 观看进度同步（可选）：和桌面版共用播放位置与是否看完。地址和令牌写在 `local.properties` 的 `onepku.progress.url`、`onepku.progress.token`（见 `local.properties.example`，不要提交令牌），或装好后在设置里填写。公开构建和 CI 不带令牌，同步关闭。说明见 [server/progress-sync/README.md](../server/progress-sync/README.md)
 - 校园卡：余额（电子账户口径）、本月消费类支出累计、逐笔流水
-- 设置：各服务单独重连/断开、退出登录
+- 设置：自动登录（密码与手机令牌）、各服务单独重连/断开、退出登录
 
 不做：字幕、树洞发帖、校园卡充值等写操作——这些请使用学校原有页面。唯一的写入口是作业提交，且必须经过明确确认与回执核对。
 

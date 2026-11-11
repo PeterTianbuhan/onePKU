@@ -32,6 +32,7 @@ import javax.inject.Singleton
 /**
  * 把播放进度同步到本机配置的边车。没配地址或令牌就什么都不做。
  * 失败只放弃这一次，不抛给播放器。
+ * 发出去的只有课次和播放位置，没有统一认证密码、手机令牌或会话。
  */
 @Singleton
 class ProgressSync @Inject constructor(@ApplicationContext context: Context) {
