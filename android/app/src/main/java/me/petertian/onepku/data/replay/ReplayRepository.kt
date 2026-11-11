@@ -110,10 +110,12 @@ class ReplayRepository @Inject constructor(
     }
 
     private suspend fun refresh(force: Boolean): Index = lock.withLock {
-        // 还没登过课堂实录（老用户升级上来）时先用已存密码登一次，账号指纹才对。
+        // 还没登过课堂实录（老用户升级上来）时先用已存密码和当前口令登一次。
+        // 走和别的请求同一道门，避免启动续期和这里各登一遍。
         if (api.account().isEmpty()) {
-            if (!auth.hasCredentials()) throw SessionExpiredException("请先登录")
-            auth.relogin(Service.HAOXUE)
+            auth.withRefresh(Service.HAOXUE) {
+                if (api.account().isEmpty()) throw SessionExpiredException("请先登录")
+            }
         }
         val account = api.account()
         var current = index?.takeIf { it.account == account } ?: load(account)

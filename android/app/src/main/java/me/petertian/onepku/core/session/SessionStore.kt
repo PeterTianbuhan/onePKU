@@ -28,7 +28,9 @@ data class StoredSession(
         expiresAt != null && expiresAt <= nowSec
 }
 
-data class Credentials(val username: String, val password: String)
+data class Credentials(val username: String, val password: String) {
+    override fun toString(): String = "Credentials(username=$username)"
+}
 
 /**
  * 凭证与各服务会话的加密存储(Keystore 加密的 SharedPreferences)。
@@ -49,13 +51,28 @@ class SessionStore @Inject constructor(@ApplicationContext context: Context) {
     )
 
     fun saveCredentials(c: Credentials) {
-        prefs.edit().putString("cred_username", c.username).putString("cred_password", c.password).apply()
+        prefs.edit().putString(KEY_USERNAME, c.username).putString(KEY_PASSWORD, c.password).apply()
     }
 
+    fun username(): String? = prefs.getString(KEY_USERNAME, null)?.takeIf { it.isNotBlank() }
+
     fun credentials(): Credentials? {
-        val u = prefs.getString("cred_username", null) ?: return null
-        val p = prefs.getString("cred_password", null) ?: return null
+        val u = username() ?: return null
+        val p = prefs.getString(KEY_PASSWORD, null) ?: return null
         return Credentials(u, p)
+    }
+
+    /** 只存规范化后的 Base32 密钥，不存 otpauth 链接，也不进进度同步。 */
+    fun saveOtpSecret(secret: String?) {
+        val editor = prefs.edit()
+        if (secret.isNullOrBlank()) editor.remove(KEY_OTP) else editor.putString(KEY_OTP, secret)
+        editor.apply()
+    }
+
+    fun otpSecret(): String? = prefs.getString(KEY_OTP, null)?.takeIf { it.isNotBlank() }
+
+    fun clearPasswordAndOtp() {
+        prefs.edit().remove(KEY_PASSWORD).remove(KEY_OTP).apply()
     }
 
     /** 内存缓存用的账号代际。进程重启后缓存本身是空的，所以代际只放内存里。 */
@@ -91,5 +108,11 @@ class SessionStore @Inject constructor(@ApplicationContext context: Context) {
     fun clearAll() {
         Service.entries.forEach { revisions.merge(it, 1L, Long::plus) }
         prefs.edit().clear().apply()
+    }
+
+    private companion object {
+        const val KEY_USERNAME = "cred_username"
+        const val KEY_PASSWORD = "cred_password"
+        const val KEY_OTP = "cred_otp_secret"
     }
 }

@@ -1,5 +1,6 @@
 package me.petertian.onepku.data.replay
 
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -70,5 +71,14 @@ class ProgressMergeTest {
         assertNull(progressBase("https://vm-0-7-ubuntu.taild19091.ts.net/onepku-progress?token=$token", token))
         assertNull(progressBase("https://user:$token@example.test/onepku-progress", token))
         assertNull(progressBase("http://example.test/onepku-progress", token))
+    }
+
+    @Test
+    fun progressRecordCarriesNoCredentials() {
+        val json = Json.encodeToString(ProgressRecord.serializer(), record())
+        assertFalse(json.contains("password"))
+        assertFalse(json.contains("secret"))
+        assertFalse(json.contains("otp"))
+        assertFalse(json.contains("token"))
     }
 }
