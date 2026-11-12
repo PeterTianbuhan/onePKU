@@ -298,7 +298,7 @@ input[type="search"]::-webkit-search-cancel-button {
 }
 .resource-head:has(> h2) {
   padding-bottom: 6px;
-  border-bottom: 1px solid var(--rule);
+  border-bottom: 1px solid var(--border-strong);
 }
 .head-actions {
   display: flex;

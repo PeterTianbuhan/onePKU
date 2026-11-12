@@ -278,19 +278,6 @@ export default function App() {
       </a>
       {/* 只有 macOS 的融合标题栏会显示它：拖这一条就是拖窗口。 */}
       <div className="titlebar" data-tauri-drag-region />
-      {/* 印章的毛边：让印不是一块整齐的色块。 */}
-      <svg className="defs" aria-hidden="true">
-        <filter id="seal-rough" x="-10%" y="-10%" width="120%" height="120%">
-          <feTurbulence
-            type="fractalNoise"
-            baseFrequency="0.85"
-            numOctaves="2"
-            seed="7"
-            result="noise"
-          />
-          <feDisplacementMap in="SourceGraphic" in2="noise" scale="1.4" />
-        </filter>
-      </svg>
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark">未</span>

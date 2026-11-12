@@ -5,22 +5,6 @@
   height: 100%;
   overflow: hidden;
 }
-/* 纸纹：一层细颗粒铺在整个窗口上，字和画都像印在纸上。弹窗在它上面。 */
-.app::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 9;
-  background-image: var(--grain);
-  pointer-events: none;
-}
-
-.defs {
-  position: absolute;
-  width: 0;
-  height: 0;
-}
-
 /* macOS 上标题栏与内容融合：红绿灯浮在侧栏上，顶部一条用来拖动窗口。 */
 .titlebar {
   display: none;
@@ -50,19 +34,6 @@ html[data-chrome="overlay"] .sidebar {
   -webkit-user-select: none;
   user-select: none;
 }
-/* 书口：侧栏和正文像摊开的两页，靠近中缝的地方略暗。 */
-.sidebar::after {
-  content: "";
-  position: absolute;
-  inset: 0 0 0 auto;
-  width: 32px;
-  background: linear-gradient(
-    to right,
-    transparent,
-    rgb(var(--shadow-ink) / var(--gutter))
-  );
-  pointer-events: none;
-}
 .brand {
   display: flex;
   align-items: center;
@@ -84,7 +55,6 @@ html[data-chrome="overlay"] .sidebar {
   font-weight: 700;
   line-height: 1;
   box-shadow: inset 0 0 0 1.5px rgb(255 255 255 / 0.28);
-  filter: url(#seal-rough);
 }
 .brand strong {
   font-family: var(--font-serif);
@@ -140,17 +110,13 @@ html[data-chrome="overlay"] .sidebar {
   background: color-mix(in srgb, var(--text) 6%, transparent);
   color: var(--text);
 }
-/* 当前页：一条朱砂书签，不用白色胶囊。 */
+/* 当前页：一块淡底，左边一条朱砂。 */
 .sidebar nav .nav-group .active,
 .nav-settings.active {
   position: relative;
-  background: linear-gradient(
-    to right,
-    color-mix(in srgb, var(--primary) 10%, transparent),
-    transparent 92%
-  );
+  background: color-mix(in srgb, var(--text) 7%, transparent);
   color: var(--text);
-  font-weight: 650;
+  font-weight: 600;
 }
 .sidebar nav .nav-group .active::before,
 .nav-settings.active::before {
@@ -305,13 +271,7 @@ main {
   justify-content: space-between;
   gap: 20px;
   min-height: 44px;
-  margin-bottom: 26px;
-  padding-bottom: 18px;
-  /* 文武线：一粗一细，书页的页眉。 */
-  background:
-    linear-gradient(var(--rule), var(--rule)) 0 100% / 100% 1px no-repeat,
-    linear-gradient(var(--text), var(--text)) 0 calc(100% - 3px) / 100% 2px
-      no-repeat;
+  margin-bottom: 22px;
 }
 .eyebrow {
   margin-bottom: 4px;
