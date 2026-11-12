@@ -16,7 +16,6 @@ mod downloads;
 mod haoxue;
 mod maintenance;
 mod materials;
-mod notebook;
 mod news;
 mod playback;
 mod platform;
@@ -158,29 +157,6 @@ pub enum Request {
     TrashLocalMaterial {
         course: String,
         id: String,
-    },
-    CourseNotebook {
-        course: String,
-        #[serde(default)]
-        name: String,
-        #[serde(default)]
-        semester: String,
-    },
-    SaveCourseNotebook {
-        course: String,
-        #[serde(default)]
-        name: String,
-        #[serde(default)]
-        semester: String,
-        text: String,
-        base: String,
-    },
-    RevealCourseNotebook {
-        course: String,
-        #[serde(default)]
-        name: String,
-        #[serde(default)]
-        semester: String,
     },
     CourseVideos {
         course: String,
@@ -867,23 +843,6 @@ impl Core {
             Request::TrashLocalMaterial { course, id } => {
                 self.trash_local_material(course, id).await?
             }
-            Request::CourseNotebook {
-                course,
-                name,
-                semester,
-            } => self.course_notebook(course, name, semester)?,
-            Request::SaveCourseNotebook {
-                course,
-                name,
-                semester,
-                text,
-                base,
-            } => self.save_course_notebook(course, name, semester, text, base)?,
-            Request::RevealCourseNotebook {
-                course,
-                name,
-                semester,
-            } => self.reveal_course_notebook(course, name, semester)?,
             Request::AllCourses => self.all_courses().await?,
             Request::CourseVideos { course } => self.course_videos(course, &mut warnings).await?,
             Request::Videos { course } => self.videos(course, &mut warnings).await?,

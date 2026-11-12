@@ -354,13 +354,6 @@ function answer(r) {
         hash_id: `v${i}`,
         room: "理教 107",
       }));
-    case "courseNotebook":
-      return {
-        path: "/Users/demo/Downloads/OnePKU/笔记.md",
-        exists: true,
-        hash: "demo",
-        text: "# 算法设计与分析\n\n## 笔记\n\n期中范围：分治、贪心、动态规划。主定理三种情形要会证。\n\n## 任务\n\n- [ ] 整理第七次作业错题\n- [x] 补看第 8 讲回放\n\n## 课次\n\n- [x] 第 8 讲 贪心算法\n- [ ] 第 9 讲 动态规划（一）\n",
-      };
     case "calendarPdf":
       return { year: r.year, pdf: blankPdf, url: "https://www.pku.edu.cn/" };
     case "downloads":
