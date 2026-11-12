@@ -87,7 +87,6 @@ export default function CourseNotices({
       )}
       <Resource
         title="课程通知"
-        className="resource-plain"
         heading={
           <span className="subtle">{q.data?.data?.length ?? 0} 条通知</span>
         }

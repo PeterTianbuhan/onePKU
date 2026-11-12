@@ -1,225 +1,13 @@
-/* 各页面：今日、课程列表、作业列表、通知、成绩、校历、校园卡、空闲教室、设置。 */
+/* 各页面：作业列表、课程列表、通知、成绩、校历、校园卡、空闲教室、设置。 */
 
-/* ── 今日 ───────────────────────────────────────────── */
-/* 一幅画：左边是日子和题款，右边是未名湖，天上的日月按北京时刻走。
-   画是一张只有浓淡的墨稿，颜色由晨、昼、昏、夜四套墨色染上去。 */
-.today-hero {
-  --hero-ink: #3b4652;
-  --hero-orb: #c4402f;
-  --hero-glow: transparent;
-  position: relative;
-  isolation: isolate;
-  min-height: 336px;
-  margin: -40px calc(-1 * var(--page-pad)) 0;
-  padding: 58px var(--page-pad) 64px;
-  overflow: hidden;
-}
-.today-hero[data-sky="dawn"] {
-  --hero-ink: #9a4458;
-  --hero-orb: #cf4a31;
-  --hero-glow: #f6c3a8;
-}
-.today-hero[data-sky="dusk"] {
-  --hero-ink: #84402f;
-  --hero-orb: #cc4a22;
-  --hero-glow: #f3bd84;
-}
-.today-hero[data-sky="night"] {
-  --hero-ink: #35416f;
-  --hero-orb: #35416f;
-  --hero-glow: #c3cbee;
-}
-html[data-theme="dark"] .today-hero {
-  --hero-ink: #a3adb8;
-  --hero-orb: #d9604e;
-}
-html[data-theme="dark"] .today-hero[data-sky="dawn"] {
-  --hero-ink: #d58f9b;
-  --hero-glow: #6b2f33;
-}
-html[data-theme="dark"] .today-hero[data-sky="dusk"] {
-  --hero-ink: #d89c7f;
-  --hero-glow: #6a3f1f;
-}
-html[data-theme="dark"] .today-hero[data-sky="night"] {
-  --hero-ink: #8f9cd8;
-  --hero-orb: #c9d0f2;
-  --hero-glow: #2a3364;
-}
-.hero-scene {
-  position: absolute;
-  z-index: -1;
-  inset: 0 0 0 auto;
-  width: min(1040px, 90%);
-  container-type: inline-size;
-  pointer-events: none;
-  animation: ink-in 1.2s var(--ease) both;
-}
-.hero-ink {
-  position: absolute;
-  inset: auto 0 -5.5cqw 0;
-  aspect-ratio: 1392 / 592;
-  background: linear-gradient(
-    to top,
-    var(--hero-ink) 34%,
-    color-mix(in srgb, var(--hero-ink) 70%, transparent)
-  );
-  opacity: 0.82;
-  -webkit-mask-image:
-    var(--ink-image),
-    linear-gradient(to right, transparent 2%, #000 40%, #000 88%, transparent),
-    linear-gradient(to top, transparent 10%, #000 30%);
-  -webkit-mask-size: 100% 100%;
-  -webkit-mask-repeat: no-repeat;
-  -webkit-mask-composite: source-in;
-  mask-image:
-    var(--ink-image),
-    linear-gradient(to right, transparent 2%, #000 40%, #000 88%, transparent),
-    linear-gradient(to top, transparent 10%, #000 30%);
-  mask-size: 100% 100%;
-  mask-repeat: no-repeat;
-  mask-composite: intersect;
-}
-html[data-theme="dark"] .hero-ink {
-  opacity: 0.5;
-}
-/* 天光：日月周围的一片天微微染色，跟着日月走。 */
-.hero-wash {
-  position: absolute;
-  left: calc(22% + var(--sx) * 64%);
-  bottom: calc(9cqw + var(--sy) * 17cqw);
-  width: 64cqw;
-  height: 30cqw;
-  translate: -50% 50%;
-  background: radial-gradient(
-    closest-side,
-    color-mix(in srgb, var(--hero-glow) 66%, transparent),
-    transparent
-  );
-}
-.hero-orb {
-  position: absolute;
-  left: calc(22% + var(--sx) * 64%);
-  bottom: calc(9cqw + var(--sy) * 17cqw);
-  width: 5.6cqw;
-  aspect-ratio: 1;
-  translate: -50% 50%;
-  animation: orb-rise 1.6s 0.15s var(--ease) both;
-}
-.hero-orb.sun {
-  border-radius: 50%;
-  background: radial-gradient(
-    circle at 42% 36%,
-    color-mix(in srgb, var(--hero-orb) 86%, #fff),
-    var(--hero-orb) 68%
-  );
-  opacity: 0.9;
-}
-.hero-orb.moon {
-  width: 5.2cqw;
-  overflow: visible;
-}
-.moon-dark {
-  fill: color-mix(in srgb, var(--hero-orb) 12%, transparent);
-}
-.moon-lit {
-  fill: var(--surface);
-}
-html[data-theme="dark"] .moon-lit {
-  fill: #ece6d2;
-}
-.moon-rim {
-  fill: none;
-  stroke: var(--hero-orb);
-  stroke-width: 1;
-  opacity: 0.55;
-}
-.hero-lockup {
-  position: relative;
-  width: fit-content;
-}
-.hero-lockup > * {
-  animation: rise 0.5s var(--ease) both;
-}
-.hero-lockup > :nth-child(2) {
-  animation-delay: 0.06s;
-}
-.hero-lockup > :nth-child(3) {
-  animation-delay: 0.12s;
-}
-.hero-month {
-  display: flex;
-  align-items: baseline;
-  gap: 14px;
-  font-family: var(--font-serif);
-  font-size: 21px;
-  font-weight: 600;
-  letter-spacing: 0.3em;
-}
-.hero-month span {
-  color: var(--muted);
-  font-family: var(--font-sans);
-  font-size: 13px;
-  font-weight: 400;
-  letter-spacing: 0.18em;
-}
-.hero-day {
-  display: flex;
-  gap: 16px;
-  margin: 0 0 8px -5px;
-}
-.hero-day h1 {
-  font-size: 124px;
-  line-height: 1.12;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-}
-/* 题款：从右往左竖着读，年在右，月日在左，末尾钤一方节气印。 */
-.hero-colophon {
-  display: flex;
-  flex-direction: row-reverse;
-  align-items: flex-start;
-  gap: 7px;
-  padding-top: 24px;
-  color: var(--muted);
-  font-family: var(--font-serif);
-  font-size: 13px;
-  line-height: 1.25;
-  letter-spacing: 0.26em;
-}
-.hero-colophon span {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  writing-mode: vertical-rl;
-}
-.seal {
-  padding: 5px 2.5px 3px;
-  border-radius: 3px;
-  background: var(--seal);
-  color: #fff;
-  font-family: var(--font-serif);
-  font-size: 11.5px;
-  font-style: normal;
-  font-weight: 700;
-  line-height: 1.2;
-  letter-spacing: 0.12em;
-  align-self: flex-end;
-  writing-mode: vertical-rl;
-  filter: url(#seal-rough);
-}
-.today-brief {
-  color: var(--muted);
-  font-size: 14px;
-}
-
-/* 两周的时间尺：贴着湖岸，一天一格，作业按截止日立在尺上。 */
+/* ── 作业 ───────────────────────────────────────────── */
+/* 两周的时间尺：一天一格，待交的作业按截止日立在尺上。 */
 .ruler {
   position: relative;
   z-index: 1;
   display: grid;
   grid-template-columns: repeat(14, minmax(0, 1fr));
-  margin: 0 0 38px;
+  margin: 62px 0 30px;
   padding: 0;
   list-style: none;
   border-top: 1px solid color-mix(in srgb, var(--text) 70%, transparent);
@@ -318,30 +106,6 @@ html[data-theme="dark"] .moon-lit {
   color: var(--muted);
   font-size: 10.5px;
 }
-.today-grid .column {
-  gap: 34px;
-}
-.today-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);
-  gap: 0 48px;
-  align-items: start;
-}
-.assignment-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  width: calc(100% + 20px);
-  margin: 0 -10px;
-  padding: 9px 10px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  text-align: left;
-}
-.assignment-row:hover {
-  background: var(--hover);
-}
 /* 日期印：星期在上，日子在下。 */
 .due-stamp {
   display: grid;
@@ -355,7 +119,7 @@ html[data-theme="dark"] .moon-lit {
   text-align: center;
   transition: background-color 0.16s var(--ease);
 }
-.assignment-row:hover .due-stamp {
+.assignment-choice:hover .due-stamp {
   background: var(--surface);
 }
 .due-stamp small {
@@ -471,15 +235,7 @@ html[data-theme="dark"] .moon-lit {
 .unread .unread-dot {
   background: var(--primary);
 }
-.today-news .news-row {
-  width: calc(100% + 20px);
-  margin: 0 -10px;
-  padding: 9px 10px;
-  border-bottom: 0;
-  border-radius: 10px;
-}
-
-/* 余额：今日页是纯数字，校园卡页是一整张卡面。 */
+/* 校园卡的卡面 */
 .balance-label {
   color: var(--muted);
   font-size: 12.5px;
@@ -555,57 +311,6 @@ html[data-theme="dark"] .moon-lit {
   height: 100%;
   padding: 20px 22px;
 }
-.campus-card-face.plain {
-  overflow: visible;
-  aspect-ratio: auto;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  --primary: inherit;
-  --muted: inherit;
-  --success: inherit;
-  --success-soft: inherit;
-  --danger: inherit;
-  --danger-soft: inherit;
-  color: inherit;
-}
-.campus-card-face.plain .campus-card-content {
-  padding: 0;
-}
-
-/* 本学期课程与常用入口 */
-.shortcuts > button {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  width: calc(100% + 20px);
-  margin: 0 -10px;
-  padding: 7px 10px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  text-align: left;
-}
-.shortcuts > button:hover {
-  background: var(--hover);
-}
-.shortcuts > button strong {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  font-size: 13.5px;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.shortcuts > button > svg {
-  color: var(--faint);
-  opacity: 0;
-  transition: opacity 0.16s var(--ease);
-}
-.shortcuts > button:hover > svg {
-  opacity: 1;
-}
 .course-glyph {
   display: grid;
   place-items: center;
@@ -620,34 +325,6 @@ html[data-theme="dark"] .moon-lit {
   font-weight: 600;
   line-height: 1;
 }
-.quick-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 26px;
-  margin-top: 6px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
-}
-.quick-links > button {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 2px 0;
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-}
-.quick-links > button:hover {
-  color: var(--primary);
-}
-.quick-links > button > svg {
-  color: var(--primary);
-}
-.quick-links strong {
-  font-size: 13px;
-  font-weight: 500;
-}
-
 /* ── 课程列表 ─────────────────────────────────────────── */
 .course-semesters {
   display: grid;
@@ -1347,8 +1024,7 @@ html[data-theme="dark"] .moon-lit {
 }
 @media (max-width: 900px) {
   .card-overview,
-  .statistics-grid,
-  .today-grid {
+  .statistics-grid {
     grid-template-columns: 1fr;
   }
 }

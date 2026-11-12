@@ -71,23 +71,23 @@ it("opens a course as a page focused on replay and returns to the filtered cours
   fireEvent.click(await screen.findByRole("button", { name: /历史课程/ }));
   await screen.findByRole("heading", { level: 1, name: "历史课程" });
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  // 与安卓端一致：课程详情默认落在课程通知，回放要点过去。
+  // 课程详情默认落在作业，回放要点过去。
   expect(
     screen.getByRole("button", { name: "作业", exact: true }),
   ).toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "课堂实录" }),
   ).not.toBeInTheDocument();
-  fireEvent.click(
-    screen.getByRole("button", { name: "课程回放", exact: true }),
+  fireEvent.click(screen.getByRole("button", { name: "回放", exact: true }));
+  expect(screen.getByRole("button", { name: "回放", exact: true })).toHaveClass(
+    "active",
   );
-  expect(
-    screen.getByRole("button", { name: "课程回放", exact: true }),
-  ).toHaveClass("active");
   expect(requests).toContain("videos");
   expect(requests).not.toContain("content");
   expect(requests).not.toContain("recordings");
-  fireEvent.click(screen.getByRole("button", { name: "课程", exact: true }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "全部课程", exact: true }),
+  );
   expect(await screen.findByPlaceholderText("搜索课程")).toHaveValue("历史");
   expect(screen.getByRole("region", { name: "旧学期" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "历史课程" })).toBeInTheDocument();

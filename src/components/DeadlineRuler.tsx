@@ -1,6 +1,5 @@
 import type { Assignment } from "../lib/api";
 import { fmtTime } from "../lib/api";
-import { pageLink } from "../lib/navigation";
 import CourseGlyph from "./CourseGlyph";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -10,16 +9,16 @@ const beijingDay = (time: number) =>
 
 /**
  * 两周的时间尺：一天一格，没交的作业按截止日立在尺上，用课程的颜色。
- * 只画今天起十四天内的；过期的和更远的在下面的清单里。
+ * 只画今天起十四天内的；更远的在下面的清单里。
  */
 export default function DeadlineRuler({
   assignments,
   now,
-  navigate,
+  onOpen,
 }: {
   assignments: Assignment[];
   now: number;
-  navigate: (page: string) => void;
+  onOpen: (assignment: Assignment) => void;
 }) {
   // 以北京时间今天的正午为锚，逐日加 24 小时，避开本机时区。
   const noon = Date.parse(`${beijingDay(now)}T12:00:00+08:00`);
@@ -57,9 +56,7 @@ export default function DeadlineRuler({
                   key={a.hash_id}
                   title={`${a.title} · ${a.course_name} · ${fmtTime(a.deadline!)}`}
                   aria-label={`${a.course_name}：${a.title}，${fmtTime(a.deadline!)} 截止`}
-                  onClick={() =>
-                    navigate(pageLink("作业", { assignment: a.hash_id }))
-                  }
+                  onClick={() => onOpen(a)}
                 >
                   <CourseGlyph name={a.course_name} />
                 </button>

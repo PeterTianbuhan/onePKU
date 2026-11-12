@@ -69,7 +69,7 @@ function mount() {
         new QueryClient({ defaultOptions: { queries: { retry: false } } })
       }
     >
-      <LocalMaterials course="course-id" search="" login={() => {}} />
+      <LocalMaterials course="course-id" login={() => {}} />
     </QueryClientProvider>,
   );
   return requests;
@@ -95,7 +95,7 @@ it("requires confirmation, keeps a failed deletion retryable, and refreshes afte
   fireEvent.click(
     screen.getByRole("button", { name: /^移到(废纸篓|回收站)$/ }),
   );
-  await screen.findByText("还没有本机资料");
+  await screen.findByText(/已将「讲义.txt」移到/);
   expect(requests.filter((r) => r.kind === "trashLocalMaterial")).toEqual([
     { kind: "trashLocalMaterial", course: "course-id", id: "file-id" },
     { kind: "trashLocalMaterial", course: "course-id", id: "file-id" },
@@ -186,7 +186,7 @@ it("merges only the matching download copy and restores download after removing 
         new QueryClient({ defaultOptions: { queries: { retry: false } } })
       }
     >
-      <LocalMaterials course="course-id" search="" login={() => {}} />
+      <LocalMaterials course="course-id" login={() => {}} />
     </QueryClientProvider>,
   );
   await screen.findByText(/已下载 · 本地副本/);
@@ -251,7 +251,7 @@ it("keeps local copies usable when the school materials cannot load", async () =
         new QueryClient({ defaultOptions: { queries: { retry: false } } })
       }
     >
-      <LocalMaterials course="course-id" search="" login={() => {}} />
+      <LocalMaterials course="course-id" login={() => {}} />
     </QueryClientProvider>,
   );
   await screen.findByText("教学网暂不可用");

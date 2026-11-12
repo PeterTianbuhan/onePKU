@@ -29,7 +29,6 @@ export default function LearningGrades({
       q={q}
       service="course"
       login={login}
-      className="resource-plain"
       heading={
         <span className="subtle">过程成绩 · 正式成绩请在“成绩”核对</span>
       }

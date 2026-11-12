@@ -78,7 +78,7 @@ function mount(title: string) {
         new QueryClient({ defaultOptions: { queries: { retry: false } } })
       }
     >
-      <LocalMaterials course="_1_1" search="" login={() => {}} />
+      <LocalMaterials course="_1_1" login={() => {}} />
     </QueryClientProvider>,
   );
   return finish;

@@ -26,7 +26,7 @@ React 页面  ──useResource({kind:"scores"})──▶  src/lib/api.ts  call(
 ### 前端 `src/`
 
 - `App.tsx`：侧栏、页面切换（hash 路由，见 `lib/navigation.ts`）、全局登录弹窗、下载面板。
-- `pages/`：今日、课程、作业、成绩、通知、校历、生活（校园卡、空闲教室）、设置。`Treehole.tsx` 与 `Bookings.tsx` 保留代码但未挂到导航。
+- `pages/`：课程、作业、成绩、通知、校历、生活（校园卡、空闲教室）、设置。`Treehole.tsx` 与 `Bookings.tsx` 保留代码但未挂到导航。
 - `components/ui.tsx`：`Button`、`Resource`、`Empty`、`Modal`、`Search`、`Pager`。`Resource` 负责骨架、旧数据标注、局部错误与"重新登录"按钮，所有数据块都包在它里面。
 - `lib/api.ts`：`call`、`useResource`（TanStack Query，5 分钟 staleTime）、`action`、`openOfficial`，以及请求到服务的映射 `serviceFor`，登录变化时按服务清空查询。
 - `lib/grades.ts`：GPA 与加权平均的官方公式。`lib/curriculum.ts`（培养方案匹配）与此并列。

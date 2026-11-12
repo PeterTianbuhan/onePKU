@@ -10,6 +10,7 @@ import {
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Courses from "../src/pages/Courses";
+import { NotificationProvider } from "../src/lib/notifications";
 import { pageLink, readLocation } from "../src/lib/navigation";
 
 const replay = {
@@ -88,7 +89,7 @@ function mount(video?: string, source = "course") {
                   }
                 : request.kind === "playbackStatus"
                   ? status
-                  : {};
+                  : [];
       return { ok: true, json: async () => envelope(data) };
     }),
   );
@@ -97,7 +98,9 @@ function mount(video?: string, source = "course") {
   });
   render(
     <QueryClientProvider client={client}>
-      <Courses login={() => {}} />
+      <NotificationProvider>
+        <Courses login={() => {}} />
+      </NotificationProvider>
     </QueryClientProvider>,
   );
   return { client, requests };

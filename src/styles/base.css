@@ -254,18 +254,6 @@ summary {
     transform: translateY(6px);
   }
 }
-@keyframes ink-in {
-  from {
-    opacity: 0;
-    filter: blur(8px);
-  }
-}
-@keyframes orb-rise {
-  from {
-    opacity: 0;
-    translate: -50% calc(50% + 3cqw);
-  }
-}
 @keyframes pop {
   from {
     opacity: 0;

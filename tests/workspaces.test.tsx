@@ -70,9 +70,10 @@ it("filters assignments with the same categories as the Android app", async () =
   mount(<AssignmentWorkspace login={() => {}} />);
   // 默认停在「待交」；没有截止时间的作业也按待交处理，与安卓端一致。
   await screen.findByRole("button", { name: /暂未获取详情/ });
-  expect(
-    screen.getByRole("button", { name: /还没到的作业/ }),
-  ).toBeInTheDocument();
+  // 待交的作业同时立在时间尺上、列在清单里。
+  expect(screen.getAllByRole("button", { name: /还没到的作业/ }).length).toBe(
+    2,
+  );
   expect(
     screen.queryByRole("button", { name: /交过的作业/ }),
   ).not.toBeInTheDocument();

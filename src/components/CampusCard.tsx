@@ -9,24 +9,16 @@ export type Card = {
   expires: string;
 };
 
-/** 校园卡。校园卡页是带湖景的整张卡面；今日页的湖景在页头，这里只留数字（plain）。 */
-export default function CampusCard({
-  card,
-  plain = false,
-}: {
-  card: Card;
-  plain?: boolean;
-}) {
+/** 校园卡的卡面：湖景做底，上面是余额、状态与有效期。 */
+export default function CampusCard({ card }: { card: Card }) {
   return (
-    <div className={`campus-card-face ${plain ? "plain" : ""}`}>
-      {!plain && (
-        <img
-          className="campus-card-art"
-          src={landscape}
-          alt=""
-          aria-hidden="true"
-        />
-      )}
+    <div className="campus-card-face">
+      <img
+        className="campus-card-art"
+        src={landscape}
+        alt=""
+        aria-hidden="true"
+      />
       <div className="campus-card-content">
         <div className="card-topline">
           <span className="balance-label">可用余额</span>

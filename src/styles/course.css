@@ -14,18 +14,18 @@
 }
 .course-page-heading > div:first-child {
   display: flex;
-  align-items: center;
-  gap: 14px;
+  flex-direction: column;
+  align-items: flex-start;
   min-width: 0;
+}
+.course-page-heading .back-link {
+  margin-bottom: 2px;
 }
 .course-page-heading h1 {
   font-size: 25px;
 }
 .course-detail > .tabs {
   margin-bottom: 18px;
-}
-.course-detail > .search {
-  margin-bottom: 6px;
 }
 .course-notice-list {
   border: 1px solid var(--border);
@@ -68,7 +68,11 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 12px 0;
+  padding: 0 0 12px;
+}
+.materials-toolbar > .search {
+  flex: 1;
+  max-width: 340px;
 }
 .materials-toolbar .head-actions {
   flex-wrap: wrap;
@@ -447,4 +451,26 @@
   .assignment-detail {
     padding: 18px;
   }
+}
+
+/* 课程页的选项卡：作业和通知后面带数——几项待交、几条没读。 */
+.tab-count {
+  min-width: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 17px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+/* 一张清单里分上下两段时，下段的小标题。 */
+.list-divider {
+  margin: 30px 0 4px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 500;
 }

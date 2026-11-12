@@ -1,6 +1,6 @@
 import ReplayPlayer, { type Replay } from "../components/ReplayPlayer";
 import { useEffect, useState } from "react";
-import { AssignmentWorkspace } from "./Assignments";
+import { CourseAssignments } from "./Assignments";
 import CourseNotices from "../components/CourseNotices";
 import LearningGrades from "../components/LearningGrades";
 import LocalMaterials from "../components/LocalMaterials";
@@ -23,6 +23,7 @@ import {
   type Login,
 } from "../components/ui";
 import { usePageParams } from "../lib/navigation";
+import { useCourseStatus } from "../lib/courseStatus";
 export default function Courses({ login }: { login: Login }) {
   const courses = useResource<Course[]>({ kind: "allCourses" });
   const [search, setSearch] = useState("");
@@ -53,7 +54,7 @@ export default function Courses({ login }: { login: Login }) {
                 onClick={() => navigate({ course: null })}
               >
                 <ArrowLeft size={17} />
-                返回课程
+                全部课程
               </Button>
               <Empty>当前账号未找到这门课程，请返回列表刷新。</Empty>
             </>
@@ -65,7 +66,7 @@ export default function Courses({ login }: { login: Login }) {
   return (
     <>
       <header className="page-heading">
-        <h1>课程</h1>
+        <h1>全部课程</h1>
         <Button onClick={() => void openOfficial("course")}>打开教学网</Button>
       </header>
       <div className="toolbar">
@@ -76,7 +77,7 @@ export default function Courses({ login }: { login: Login }) {
         q={courses}
         login={login}
         service="course"
-        className="resource-plain"
+
         heading={<span className="subtle">按学期查看</span>}
       >
         {(data) => {
@@ -145,6 +146,23 @@ export default function Courses({ login }: { login: Login }) {
     </>
   );
 }
+const tabs = [
+  { id: "assignments", name: "作业" },
+  { id: "notices", name: "通知" },
+  { id: "materials", name: "资料" },
+  { id: "videos", name: "回放" },
+  { id: "grades", name: "成绩" },
+];
+const tabKey = "onepku.course.tab.v1";
+/** 上次在课程里停的是哪一栏，换一门课还停在那一栏。 */
+function lastTab() {
+  try {
+    const saved = localStorage.getItem(tabKey);
+    return tabs.some((t) => t.id === saved) ? saved! : "assignments";
+  } catch {
+    return "assignments";
+  }
+}
 function CourseDetail({
   course,
   onClose,
@@ -155,19 +173,40 @@ function CourseDetail({
   login: Login;
 }) {
   const [params, navigate] = usePageParams("课程");
-  // 与安卓端一致：默认落在课程通知；只有深链带着回放参数时才直接进回放。
-  const tab = params.get("tab") ?? (params.get("video") ? "videos" : "notices");
-  const setTab = (value: string) => navigate({ tab: value, video: null });
-  const [search, setSearch] = useState("");
+  const status = useCourseStatus().get(course.id);
+  // 链接里点名了回放或作业就去那一栏，否则回到上次停的那一栏。
+  const tab =
+    params.get("tab") ??
+    (params.get("video")
+      ? "videos"
+      : params.get("assignment")
+        ? "assignments"
+        : lastTab());
+  function setTab(value: string) {
+    try {
+      localStorage.setItem(tabKey, value);
+    } catch {
+      /* 记不住也不影响切换 */
+    }
+    navigate({ tab: value, video: null, assignment: null });
+  }
+  const counts: Record<string, number | undefined> = {
+    assignments: status?.due,
+    notices: status?.unread,
+  };
 
   return (
     <section className="course-detail">
       <header className="page-heading course-page-heading">
         <div>
-          <Button variant="quiet" className="back-link" onClick={onClose}>
-            <ArrowLeft size={17} />
-            课程
-          </Button>
+          {course.current ? (
+            <p className="eyebrow">{course.semester || "本学期"}</p>
+          ) : (
+            <Button variant="quiet" className="back-link" onClick={onClose}>
+              <ArrowLeft size={17} />
+              全部课程
+            </Button>
+          )}
           <h1>{course.name}</h1>
         </div>
         <div className="heading-actions">
@@ -177,45 +216,33 @@ function CourseDetail({
           </Button>
         </div>
       </header>
-      <div className="tabs">
-        <button
-          className={tab === "notices" ? "active" : ""}
-          onClick={() => setTab("notices")}
-        >
-          课程通知
-        </button>
-        <button
-          className={tab === "assignments" ? "active" : ""}
-          onClick={() => setTab("assignments")}
-        >
-          作业
-        </button>
-        <button
-          className={tab === "materials" ? "active" : ""}
-          onClick={() => setTab("materials")}
-        >
-          课程资料
-        </button>
-        <button
-          className={tab === "videos" ? "active" : ""}
-          onClick={() => setTab("videos")}
-        >
-          课程回放
-        </button>
-        <button
-          className={tab === "grades" ? "active" : ""}
-          onClick={() => setTab("grades")}
-        >
-          教学网成绩
-        </button>
+      <div className="tabs course-tabs">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            className={tab === t.id ? "active" : ""}
+            onClick={() => setTab(t.id)}
+          >
+            {t.name}
+            {!!counts[t.id] && (
+              <span
+                className="tab-count"
+                title={
+                  t.id === "assignments"
+                    ? `${counts[t.id]} 项待交`
+                    : `${counts[t.id]} 条未读`
+                }
+              >
+                {counts[t.id]}
+              </span>
+            )}
+          </button>
+        ))}
       </div>
       {tab === "assignments" ? (
-        <AssignmentWorkspace login={login} course={course.id} />
+        <CourseAssignments login={login} course={course.id} />
       ) : tab === "materials" ? (
-        <>
-          <Search value={search} onChange={setSearch} placeholder="搜索资料" />
-          <LocalMaterials course={course.id} search={search} login={login} />
-        </>
+        <LocalMaterials course={course.id} login={login} />
       ) : tab === "notices" ? (
         <CourseNotices course={course.id} login={login} />
       ) : tab === "grades" ? (
@@ -299,10 +326,13 @@ function Videos({ course, login }: { course: Course; login: Login }) {
   }
   if (ambiguous) {
     return (
-      <section className="resource resource-plain" aria-label="同名课程选择">
+      <section className="resource" aria-label="同名课程选择">
         <div className="resource-head">
           <h2>课程回放</h2>
-          <Button onClick={() => navigate({ source: "course", video: null })}>
+          <Button
+            variant="quiet"
+            onClick={() => navigate({ source: "course", video: null })}
+          >
             查看教学网回放
           </Button>
         </div>
@@ -310,12 +340,7 @@ function Videos({ course, login }: { course: Course; login: Login }) {
           好学上有几门同名的「{course.name}
           」，认一次你上的那一门就好，以后会直接用这一门：
         </p>
-        <Resource
-          title="同名候选"
-          q={candidates}
-          login={login}
-          className="resource-plain"
-        >
+        <Resource title="同名候选" q={candidates} login={login}>
           {(rows) =>
             rows.length ? (
               <div className="video-list">
@@ -368,7 +393,7 @@ function Videos({ course, login }: { course: Course; login: Login }) {
           title="课程回放"
           q={q}
           login={login}
-          className="resource-plain"
+
           heading={
             <span className="subtle">
               {extraSource ? "课堂实录" : "教学网"} ·{" "}
@@ -378,6 +403,7 @@ function Videos({ course, login }: { course: Course; login: Login }) {
           extra={
             <>
               <Button
+                variant="quiet"
                 onClick={() =>
                   navigate({
                     source: extraSource ? "course" : null,

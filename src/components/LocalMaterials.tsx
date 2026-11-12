@@ -1,7 +1,7 @@
 import { trashName } from "../lib/platform";
 import { lazy, Suspense, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { FileText, FolderOpen, Plus, RefreshCw } from "lucide-react";
+import { Download, FileText, FolderOpen, Plus, RefreshCw } from "lucide-react";
 import {
   action,
   chooseCourseFiles,
@@ -15,6 +15,7 @@ import {
   Button,
   Modal,
   Resource,
+  Search,
   type Login,
 } from "./ui";
 
@@ -36,13 +37,12 @@ function size(bytes: number) {
 }
 export default function LocalMaterials({
   course,
-  search,
   login,
 }: {
   course: string;
-  search: string;
   login: Login;
 }) {
+  const [search, setSearch] = useState("");
   const q = useResource<Material[]>({ kind: "localMaterials", course });
   const content = useResource<Content[]>({ kind: "content", course });
   const client = useQueryClient();
@@ -215,10 +215,23 @@ export default function LocalMaterials({
   return (
     <section className="materials-workspace" aria-label="课程资料">
       <div className="materials-toolbar">
-        <span className="subtle">
-          {files.length ? `${files.length} 份已在本机` : ""}
-        </span>
+        <Search value={search} onChange={setSearch} placeholder="搜索资料" />
         <div className="head-actions">
+          {!!pendingIds.length && (
+            <Button disabled={!!busy} onClick={() => void download(pendingIds)}>
+              <Download size={16} />
+              全部下载（{pendingIds.length}）
+            </Button>
+          )}
+          <Button
+            variant="quiet"
+            disabled={!!busy}
+            onClick={() => void add()}
+            title="把电脑里的文件收进这门课的资料夹"
+          >
+            <Plus size={16} />
+            {busy === "import" ? "正在添加…" : "添加资料"}
+          </Button>
           <Button
             variant="quiet"
             onClick={() =>
@@ -231,19 +244,6 @@ export default function LocalMaterials({
           >
             <FolderOpen size={17} />
           </Button>
-          <Button disabled={!!busy} onClick={() => void add()}>
-            <Plus size={16} />
-            {busy === "import" ? "正在添加…" : "添加资料"}
-          </Button>
-          {!!pendingIds.length && (
-            <Button
-              variant="quiet"
-              disabled={!!busy}
-              onClick={() => void download(pendingIds)}
-            >
-              下载未保存资料（{pendingIds.length}）
-            </Button>
-          )}
           <Button
             variant="quiet"
             aria-label="刷新课程资料"
@@ -274,7 +274,7 @@ export default function LocalMaterials({
       <Resource
         title="教学网资料"
         heading={<h3>教学网</h3>}
-        className="resource-plain material-source"
+        className="material-source"
         hideRefresh
         q={content}
         login={login}
@@ -363,11 +363,11 @@ export default function LocalMaterials({
           );
         }}
       </Resource>
-      {(remaining.length > 0 || !files.length || q.error || q.data?.error) && (
+      {(remaining.length > 0 || q.error || q.data?.error) && (
         <Resource
           title="本机资料"
           heading={<h3>本机补充</h3>}
-          className="resource-plain material-source"
+          className="material-source"
           hideRefresh
           q={q}
           login={login}

@@ -63,7 +63,7 @@ export function CardPage({ login }: { login: Login }) {
                 近期交易 <span className="subtle">· 不限月份</span>
               </h2>
             }
-            className="resource-plain transaction-list"
+            className="transaction-list"
             q={transactions}
             login={login}
             service="campuscard"

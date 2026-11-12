@@ -104,6 +104,7 @@ html[data-chrome="overlay"] .sidebar {
 }
 .nav-group {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 2px;
 }
 .nav-group-label {
@@ -164,6 +165,47 @@ html[data-chrome="overlay"] .sidebar {
 .nav-settings.active svg {
   color: var(--primary);
 }
+/* 本学期的课直接列在侧栏：课名首字的小印、课名，右边是待交作业数，有通知没读就多一个点。 */
+.sidebar nav .nav-course .course-glyph {
+  width: 20px;
+  height: 20px;
+  margin: 0 -1.5px;
+  border-radius: 6px;
+  font-size: 11.5px;
+}
+.nav-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 通知没读：小印右上角一个朱砂点。 */
+.nav-glyph {
+  position: relative;
+  display: grid;
+  flex-shrink: 0;
+}
+.nav-dot {
+  position: absolute;
+  top: -3px;
+  right: -4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 0 1.5px var(--sidebar);
+}
+/* 「更多」：不常用的几页，折起来只占一行。 */
+.sidebar nav .nav-group .nav-more {
+  color: var(--muted);
+}
+.nav-more svg {
+  transition: transform 0.16s var(--ease);
+}
+.nav-more[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
 .nav-badge {
   margin-left: auto;
   min-width: 20px;
@@ -219,7 +261,7 @@ html[data-chrome="overlay"] .sidebar {
   justify-content: center;
 }
 .compact-nav .brand strong,
-.compact-nav .nav-group span,
+.compact-nav .nav-group span:not(.course-glyph, .nav-glyph),
 .compact-nav .nav-settings span,
 .compact-nav .sidebar-status span,
 .compact-nav .sidebar-status i {
