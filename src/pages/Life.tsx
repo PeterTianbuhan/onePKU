@@ -219,10 +219,9 @@ export function Rooms({ login }: { login: Login }) {
                           <span
                             className={`room-slot ${o ? "occupied" : ""}`}
                             title={`第 ${i + 1} 节${o ? "占用" : "空闲"}`}
+                            role="img"
                             aria-label={`第 ${i + 1} 节${o ? "占用" : "空闲"}`}
-                          >
-                            {o ? "×" : "✓"}
-                          </span>
+                          />
                         </td>
                       ))}
                     </tr>

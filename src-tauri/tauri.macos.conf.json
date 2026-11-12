@@ -1,5 +1,17 @@
 {
   "app": {
-    "macOSPrivateApi": true
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "title": "OnePKU",
+        "width": 1320,
+        "height": 880,
+        "minWidth": 760,
+        "minHeight": 600,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 18, "y": 22 }
+      }
+    ]
   }
 }

@@ -19,7 +19,7 @@ const out =
   Object.entries(doc.rounded)
     .map(([k, v]) => `  --radius-${k.toLowerCase()}: ${v};`)
     .join("\n") +
-  `\n  --font-sans: ${doc.typography.sans.fontFamily};\n  --font-mono: ${doc.typography.mono.fontFamily};\n}\n` +
+  `\n  --font-sans: ${doc.typography.sans.fontFamily};\n  --font-serif: ${doc.typography.serif.fontFamily};\n  --font-mono: ${doc.typography.mono.fontFamily};\n}\n` +
   // 深色只改颜色取值：同一批语义名，由 theme.ts 决定何时挂上这个属性。
   '\n[data-theme="dark"] {\n' +
   Object.entries(doc.darkColors)

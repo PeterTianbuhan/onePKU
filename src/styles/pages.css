@@ -1,0 +1,1580 @@
+/* 各页面：今日、课程列表、作业列表、通知、成绩、校历、校园卡、空闲教室、设置。 */
+
+/* ── 今日 ───────────────────────────────────────────── */
+.today-hero {
+  position: relative;
+  isolation: isolate;
+  margin: -40px calc(-1 * var(--page-pad)) 22px;
+  padding: 76px var(--page-pad) 48px;
+  overflow: hidden;
+}
+/* 未名湖与博雅塔：从右下角淡入，左边留给日期。 */
+.today-hero-art {
+  position: absolute;
+  z-index: -1;
+  right: 0;
+  bottom: 0;
+  width: min(880px, 82%);
+  height: 100%;
+  object-fit: cover;
+  object-position: 100% 81%;
+  mix-blend-mode: multiply;
+  opacity: 0.62;
+  pointer-events: none;
+  -webkit-mask-image:
+    linear-gradient(
+      to right,
+      transparent 0,
+      #000 44%,
+      #000 80%,
+      transparent 91%
+    ),
+    linear-gradient(to bottom, transparent 0, #000 20%, #000 64%, transparent);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    linear-gradient(
+      to right,
+      transparent 0,
+      #000 44%,
+      #000 80%,
+      transparent 91%
+    ),
+    linear-gradient(to bottom, transparent 0, #000 20%, #000 64%, transparent);
+  mask-composite: intersect;
+}
+/* 深色下把画反相成夜色：白底变黑后用滤色叠掉，只剩朱红的线。 */
+html[data-theme="dark"] .today-hero-art {
+  filter: invert(1) hue-rotate(180deg) saturate(0.7);
+  mix-blend-mode: screen;
+  opacity: 0.4;
+}
+.today-hero h1 {
+  font-size: 46px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.today-hero .eyebrow {
+  margin-bottom: 8px;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+}
+.today-brief {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.today-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);
+  gap: var(--section-gap);
+  align-items: start;
+}
+.assignment-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: calc(100% + 20px);
+  margin: 0 -10px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+}
+.assignment-row:hover {
+  background: var(--hover);
+}
+/* 日期印：星期在上，日子在下。 */
+.due-stamp {
+  display: grid;
+  place-content: center;
+  flex-shrink: 0;
+  width: 42px;
+  height: 44px;
+  border-radius: 10px;
+  background: var(--hover);
+  line-height: 1.15;
+  text-align: center;
+  transition: background-color 0.16s var(--ease);
+}
+.assignment-row:hover .due-stamp {
+  background: var(--surface);
+}
+.due-stamp small {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.due-stamp b {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: lining-nums;
+}
+.due-stamp.urgent {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.due-stamp.urgent small {
+  color: inherit;
+}
+.due-stamp.overdue {
+  color: var(--faint);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.due-stamp.overdue small {
+  color: inherit;
+}
+/* 没有截止时间：不写占位文字，只留一支笔 */
+.due-stamp.open {
+  color: var(--muted);
+}
+.deadline {
+  color: var(--muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.deadline.urgent {
+  color: var(--primary);
+  font-weight: 600;
+}
+.deadline.overdue {
+  color: var(--danger);
+}
+.deadline.submitted {
+  color: var(--success);
+}
+
+.news-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 13px 18px 13px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.news-row:hover {
+  background: var(--hover);
+}
+.news-row.selected {
+  background: var(--primary-soft);
+}
+.news-row strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.news-row.read strong {
+  color: var(--muted);
+  font-weight: 400;
+}
+.news-row-meta {
+  display: flex;
+  gap: 8px;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.news-row-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.news-row-meta span::after {
+  content: "·";
+  margin-left: 8px;
+  color: var(--faint);
+}
+.news-row-meta time {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.news-event-time {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.unread-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  margin-top: 8px;
+  border-radius: 50%;
+  background: transparent;
+}
+.unread .unread-dot {
+  background: var(--primary);
+}
+.today-news .news-row {
+  width: calc(100% + 20px);
+  margin: 0 -10px;
+  padding: 9px 10px;
+  border-bottom: 0;
+  border-radius: 10px;
+}
+
+/* 余额：今日页是纯数字，校园卡页是一整张卡面。 */
+.balance-label {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.card-topline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.card-status {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--success-soft);
+  color: var(--success);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+.card-status.restricted {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.balance {
+  margin: 2px 0 6px;
+  color: var(--primary);
+  font-family: var(--font-serif);
+  font-size: 40px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.balance > span {
+  margin-right: 4px;
+  font-size: 22px;
+  font-weight: 400;
+}
+.card-validity {
+  color: var(--muted);
+  font-size: 12px;
+}
+.campus-card-face {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  aspect-ratio: 1.586;
+  border-radius: 16px;
+  background: #fffdfb;
+  box-shadow:
+    var(--shadow-md),
+    inset 0 0 0 1px rgb(143 35 56 / 0.1);
+  /* 卡面是一件印出来的东西：深色主题下它仍然是白底朱红。 */
+  --primary: #8f2338;
+  --muted: #7a6f6c;
+  --success: #2f7a5b;
+  --success-soft: #eaf4ee;
+  --danger: #b03a32;
+  --danger-soft: #fbedeb;
+  color: #1d1b19;
+}
+.campus-card-art {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+.campus-card-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  height: 100%;
+  padding: 20px 22px;
+}
+.campus-card-face.plain {
+  overflow: visible;
+  aspect-ratio: auto;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  --primary: inherit;
+  --muted: inherit;
+  --success: inherit;
+  --success-soft: inherit;
+  --danger: inherit;
+  --danger-soft: inherit;
+  color: inherit;
+}
+.campus-card-face.plain .campus-card-content {
+  padding: 0;
+}
+
+/* 本学期课程与常用入口 */
+.shortcuts > button {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: calc(100% + 20px);
+  margin: 0 -10px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+}
+.shortcuts > button:hover {
+  background: var(--hover);
+}
+.shortcuts > button strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shortcuts > button > svg {
+  color: var(--faint);
+  opacity: 0;
+  transition: opacity 0.16s var(--ease);
+}
+.shortcuts > button:hover > svg {
+  opacity: 1;
+}
+.course-glyph {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--pigment) 13%, var(--surface));
+  color: var(--pigment);
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+}
+.quick-links {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.quick-links > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-default);
+  background: var(--surface);
+  text-align: left;
+}
+.quick-links > button:hover {
+  border-color: var(--border-strong);
+  background: var(--hover);
+}
+.quick-links > button > svg {
+  color: var(--primary);
+}
+.quick-links strong {
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+/* ── 课程列表 ─────────────────────────────────────────── */
+.course-semesters {
+  display: grid;
+  gap: 26px;
+}
+.course-semester-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  list-style: none;
+}
+.course-semester-heading::-webkit-details-marker {
+  display: none;
+}
+.course-semester-heading::before {
+  content: "";
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  margin: 0 3px 0 2px;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: rotate(-45deg);
+  transition: transform 0.16s var(--ease);
+}
+.semester-group[open] > .course-semester-heading::before {
+  transform: rotate(45deg);
+}
+.course-semester-heading h3 {
+  font-family: var(--font-serif);
+  font-size: 17px;
+  font-weight: 600;
+}
+.course-semester-heading > span {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.course-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 12px;
+}
+.course-tile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 62px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-default);
+  background: var(--surface);
+  text-align: left;
+  transition:
+    transform 0.16s var(--ease),
+    box-shadow 0.16s var(--ease),
+    border-color 0.16s var(--ease);
+}
+.course-tile:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+.course-tile .course-glyph {
+  width: 34px;
+  height: 34px;
+  font-size: 17px;
+}
+.course-tile h4 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 550;
+  line-height: 1.45;
+}
+.course-tile > svg {
+  color: var(--faint);
+}
+
+/* ── 作业列表 ─────────────────────────────────────────── */
+.assignment-filters {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(220px, 320px);
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.assignment-filters > .search,
+.assignment-filters > select {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+}
+.assignment-filters > select {
+  text-overflow: ellipsis;
+}
+.assignment-tabs {
+  margin-bottom: 14px;
+}
+.assignment-index,
+.video-list {
+  display: flex;
+  flex-direction: column;
+}
+.assignment-choice {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 13px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.assignment-choice:last-child {
+  border-bottom: 0;
+}
+.assignment-choice:hover {
+  background: var(--hover);
+}
+.assignment-choice strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 550;
+}
+.assignment-choice small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.assignment-index,
+.resource-plain > .video-list {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-default);
+  background: var(--surface);
+  overflow: hidden;
+}
+@media (max-width: 1050px) {
+  .assignment-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ── 通知 ───────────────────────────────────────────── */
+.news-filters {
+  margin-bottom: 16px;
+}
+.news-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+.news-tools .search {
+  flex: 1;
+  min-width: 200px;
+}
+.news-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.news-tabs {
+  margin: 14px 0 0;
+}
+.feed-issues {
+  display: grid;
+  gap: 5px;
+}
+.feed-issues span {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+}
+.news-workspace {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.85fr) minmax(0, 1.2fr);
+  min-height: 420px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-default);
+  background: var(--surface);
+  overflow: hidden;
+}
+.news-workspace.index-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+.news-index {
+  min-width: 0;
+  max-height: calc(100dvh - 250px);
+  min-height: 420px;
+  overflow-y: auto;
+}
+.news-workspace.has-selection .news-index {
+  border-right: 1px solid var(--border);
+}
+.index-footnote {
+  margin: 0;
+  padding: 12px 18px;
+}
+.load-more {
+  padding: 18px;
+  text-align: center;
+}
+.news-reader {
+  min-width: 0;
+  max-height: calc(100dvh - 250px);
+  padding: 18px 30px 34px;
+  overflow: auto;
+}
+.news-reader h2 {
+  display: block;
+  margin: 10px 0 22px;
+  font-family: var(--font-serif);
+  font-size: 23px;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.reader-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-bottom: 18px;
+}
+.reader-toolbar > :first-child {
+  margin-right: auto;
+}
+.reader-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.event-details {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 16px;
+  margin: 0 0 24px;
+  padding: 16px 0;
+  border-block: 1px solid var(--border);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.event-details dt {
+  color: var(--muted);
+}
+.event-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.article-body {
+  max-width: 68ch;
+  font-size: 15px;
+  line-height: 1.95;
+  overflow-wrap: anywhere;
+}
+.article-body p {
+  margin: 0 0 1.1em;
+  white-space: pre-wrap;
+}
+.article-body h1,
+.article-body h2,
+.article-body h3 {
+  margin: 1.5em 0 0.7em;
+  font-size: 18px;
+}
+.article-body img {
+  max-width: 100%;
+  height: auto;
+}
+.article-body table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  font-size: 13px;
+}
+.article-body td,
+.article-body th {
+  padding: 8px;
+  border: 1px solid var(--border);
+}
+.article-body ul,
+.article-body ol {
+  padding-left: 24px;
+}
+.article-body iframe {
+  display: none;
+}
+.modal-body .news-reader {
+  max-height: none;
+  padding: 0;
+}
+.source-options {
+  display: grid;
+}
+.source-options label {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.source-options label:last-child {
+  border: 0;
+}
+.source-options strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+}
+.source-options small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+@media (max-width: 900px) {
+  .news-workspace {
+    display: block;
+  }
+  .news-index,
+  .news-reader {
+    max-height: none;
+  }
+  .news-workspace.has-selection .news-index {
+    display: none;
+  }
+}
+
+/* ── 成绩与数字 ───────────────────────────────────────── */
+.study-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 44px;
+  padding: 6px 0 22px;
+}
+.study-metrics > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 110px;
+}
+.study-metrics span {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.study-metrics strong {
+  font-family: var(--font-serif);
+  font-size: 34px;
+  font-weight: 600;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.study-metrics strong + span {
+  color: var(--faint);
+  font-size: 12px;
+}
+.grade-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.grade-tools .tabs {
+  margin: 0;
+}
+.grade-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.grade-help {
+  position: relative;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.grade-help summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 18px;
+  list-style: none;
+}
+.grade-help-content {
+  top: 26px;
+  left: -64px;
+  width: min(320px, 65vw);
+  padding: 12px 16px;
+}
+.grade-help-content p {
+  margin: 0 0 8px;
+}
+.grade-term {
+  margin-top: 8px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.grade-term h3 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 6px;
+  font-family: var(--font-serif);
+  font-size: 16px;
+}
+.grade-term h3 .subtle {
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.grade-term table {
+  table-layout: fixed;
+}
+.grade-term th:nth-child(1) {
+  width: 44%;
+}
+.grade-term th:nth-child(2) {
+  width: 24%;
+}
+.grade-term td:nth-child(4) strong {
+  font-weight: 600;
+}
+
+/* ── 校历 ───────────────────────────────────────────── */
+.calendar-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-default) var(--radius-default) 0 0;
+  background: var(--surface);
+}
+.calendar-controls select {
+  min-width: 145px;
+}
+.calendar-controls .subtle {
+  font-size: 12px;
+}
+.calendar-control-separator {
+  height: 20px;
+  margin: 0 8px;
+  border-left: 1px solid var(--border);
+}
+.zoom-value {
+  min-width: 43px;
+  font-size: 12.5px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.calendar-viewport {
+  width: 100%;
+  min-height: 300px;
+  max-height: calc(100dvh - 240px);
+  padding: 16px;
+  overflow: auto;
+  /* 滚动条槽常驻：否则「出现滚动条 → 内容变窄 → 画布变矮 → 滚动条消失」会来回抖。 */
+  scrollbar-gutter: stable;
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 var(--radius-default) var(--radius-default);
+  background: var(--sidebar);
+}
+.calendar-viewport canvas {
+  display: block;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+}
+.calendar-loading {
+  min-height: 420px;
+  padding: 80px;
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 var(--radius-default) var(--radius-default);
+  color: var(--muted);
+  text-align: center;
+}
+.calendar-caption {
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+@media (max-width: 900px) {
+  .calendar-controls {
+    flex-wrap: wrap;
+  }
+  .calendar-controls .subtle {
+    display: none;
+  }
+}
+
+/* ── 校园卡 ─────────────────────────────────────────── */
+.card-overview {
+  display: grid;
+  grid-template-columns: minmax(280px, 380px) minmax(240px, 1fr);
+  gap: var(--section-gap);
+  align-items: stretch;
+  margin-bottom: 24px;
+}
+.life-balance.resource {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.life-balance > .resource-head {
+  margin-bottom: 10px;
+}
+.month-summary {
+  display: flex;
+  flex-direction: column;
+}
+.month-summary .head-actions label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+/* 支出、收入各占一行：左边是名目，右边是数。 */
+.month-summary .study-metrics {
+  flex: 1;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  justify-content: space-evenly;
+  gap: 0;
+  padding: 0;
+}
+.month-summary .study-metrics > div {
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 10px 0;
+}
+.month-summary .study-metrics > div + div {
+  border-top: 1px solid var(--border);
+}
+.month-summary .study-metrics span {
+  font-size: 13.5px;
+}
+.statistics-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(230px, 1fr);
+  gap: var(--section-gap);
+}
+.daily-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 170px;
+  padding-top: 8px;
+  overflow-x: auto;
+}
+.day-bar {
+  display: flex;
+  flex: 1;
+  max-width: 34px;
+  flex-direction: column;
+  align-items: center;
+  min-width: 10px;
+  height: 100%;
+}
+.bar-track {
+  display: flex;
+  align-items: flex-end;
+  width: 100%;
+  height: 140px;
+}
+.bar-track i {
+  width: 100%;
+  min-height: 2px;
+  border-radius: 4px 4px 1px 1px;
+  background: color-mix(in srgb, var(--primary) 70%, var(--surface));
+  transition: background-color 0.16s var(--ease);
+}
+.day-bar:hover .bar-track i {
+  background: var(--primary);
+}
+.day-bar small {
+  margin-top: 8px;
+  color: var(--faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.category-list > div {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13.5px;
+}
+.category-list > div:last-child {
+  border-bottom: 0;
+}
+.category-list strong {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+/* 占比：行底那条线按份额染上朱砂色。 */
+.category-list > div[style]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: var(--share);
+  height: 2px;
+  border-radius: 2px;
+  background: var(--primary);
+}
+.daily-detail {
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.transaction-list h2 .subtle {
+  font-weight: 400;
+}
+.transaction-list > .table-scroll,
+.transaction-list > .skeleton,
+.transaction-list > .empty {
+  padding: 4px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-default);
+  background: var(--surface);
+}
+@media (max-width: 900px) {
+  .card-overview,
+  .statistics-grid,
+  .today-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── 空闲教室 ────────────────────────────────────────── */
+.room-table {
+  min-width: 680px;
+  table-layout: fixed;
+}
+.room-table th:first-child {
+  width: 110px;
+}
+.room-table th:nth-child(2) {
+  width: 64px;
+}
+.room-table th,
+.room-table td {
+  padding: 5px 2px;
+  border-bottom: 0;
+  text-align: center;
+}
+.room-table th:first-child,
+.room-table td:first-child {
+  padding-right: 12px;
+  text-align: left;
+}
+.room-table th:nth-child(2),
+.room-table td:nth-child(2) {
+  padding-right: 14px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.room-table th {
+  padding-bottom: 8px;
+  font-variant-numeric: tabular-nums;
+}
+/* 一格一节课：空闲是石绿，占用留白。 */
+.room-slot {
+  display: block;
+  height: 22px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--success) 26%, var(--surface));
+  transition: background-color 0.16s var(--ease);
+}
+.room-slot:hover {
+  background: color-mix(in srgb, var(--success) 48%, var(--surface));
+}
+.room-slot.occupied {
+  background: var(--hover);
+}
+.room-legend {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.room-legend i {
+  width: 10px;
+  height: 10px;
+  margin-left: 8px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--success) 26%, var(--surface));
+}
+.room-legend i.occupied {
+  background: var(--hover);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+/* ── 设置 ───────────────────────────────────────────── */
+.page:has(.settings-section[aria-label="服务连接"]) {
+  max-width: calc(820px + var(--page-pad) * 2);
+}
+.settings-section {
+  margin-top: var(--section-gap);
+}
+.settings-section > h2 {
+  margin-bottom: 6px;
+}
+.settings-section > .footnote {
+  margin: 4px 0 14px;
+}
+.section-description {
+  margin: 6px 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.connection {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.connection:last-child {
+  border-bottom: 0;
+}
+.connection h3 {
+  font-size: 14px;
+  font-weight: 550;
+}
+.connection p {
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.service-symbol {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: color-mix(
+    in srgb,
+    var(--pigment, var(--pigment-1)) 13%,
+    var(--surface)
+  );
+  color: var(--pigment, var(--pigment-1));
+  font-family: var(--font-serif);
+  font-size: 17px;
+  font-weight: 600;
+}
+.service-symbol.treehole {
+  --pigment: var(--pigment-4);
+}
+.service-symbol.campuscard {
+  --pigment: var(--pigment-3);
+}
+.service-symbol.portal {
+  --pigment: var(--pigment-5);
+}
+.service-symbol.haoxue,
+.service-symbol.bdkj {
+  --pigment: var(--pigment-6);
+}
+.connection-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+  color: var(--muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.connection-state::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.connection-state.saved {
+  color: var(--success);
+}
+.connection-state.saved::before {
+  background: var(--success);
+}
+.setting-row {
+  padding: 15px 0;
+  border-top: 1px solid var(--border);
+}
+.settings-section h2 + .setting-row,
+.settings-section h2 + .setting-anchor > .setting-row:first-child {
+  border-top: 0;
+}
+.setting-row-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+.setting-row.stacked .setting-row-main {
+  align-items: flex-start;
+}
+.setting-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.setting-row-label,
+.setting-label {
+  font-size: 14px;
+  font-weight: 550;
+}
+.setting-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.setting-row-description {
+  max-width: 62ch;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.path-value {
+  color: var(--text);
+  font-weight: 500;
+  word-break: break-all;
+}
+.setting-row-control {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 8px;
+}
+.setting-row-control select {
+  min-width: 200px;
+}
+.setting-row-body {
+  margin-top: 14px;
+}
+.setting-row-body .profile-form {
+  margin: 0;
+}
+.setting-row-status,
+.settings-message {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+}
+.setting-row-status.error {
+  color: var(--danger);
+}
+.setting-details > summary,
+.operation-summary > summary,
+.daily-detail > summary,
+.partial > summary,
+.settings-explanation > summary,
+.assignment-instructions > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  list-style: none;
+}
+.setting-details > summary::-webkit-details-marker,
+.operation-summary > summary::-webkit-details-marker,
+.daily-detail > summary::-webkit-details-marker,
+.partial > summary::-webkit-details-marker,
+.settings-explanation > summary::-webkit-details-marker,
+.assignment-instructions > summary::-webkit-details-marker {
+  display: none;
+}
+.setting-details > summary::before,
+.operation-summary > summary::before,
+.daily-detail > summary::before,
+.partial > summary::before,
+.settings-explanation > summary::before,
+.assignment-instructions > summary::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  margin: 0 4px 0 2px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.16s var(--ease);
+}
+.setting-details[open] > summary::before,
+.operation-summary[open] > summary::before,
+.daily-detail[open] > summary::before,
+.partial[open] > summary::before,
+.settings-explanation[open] > summary::before,
+.assignment-instructions[open] > summary::before {
+  transform: rotate(45deg);
+}
+.setting-details-body {
+  max-width: 65ch;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.setting-details-body p {
+  margin: 0 0 6px;
+}
+.setting-details-body pre {
+  margin: 6px 0 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--hover);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-x: auto;
+}
+.operation-summary {
+  padding-top: 15px;
+  border-top: 1px solid var(--border);
+}
+.operation-summary > summary span {
+  margin-left: 4px;
+  font-size: 12.5px;
+}
+.settings-section .connections + .setting-row {
+  border-top: 1px solid var(--border);
+}
+.operation-record {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.operation-record header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+.operation-record small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+.operation-record time {
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.update-settings .settings-facts {
+  margin-bottom: 12px;
+}
+.update-settings p {
+  margin: 10px 0 0;
+  font-size: 13px;
+}
+.update-notes {
+  white-space: pre-wrap;
+}
+.update-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-facts > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.settings-facts > div:last-child {
+  border-bottom: 0;
+}
+.settings-facts span {
+  color: var(--muted);
+}
+.settings-facts strong {
+  font-weight: 400;
+  text-align: right;
+}
+.subtitle-settings-link {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.subtitle-model-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  margin: 16px 0 8px;
+}
+.subtitle-model-row label {
+  font-weight: 550;
+}
+.subtitle-model-row p {
+  margin: 4px 0 0;
+}
+.subtitle-model-row select {
+  min-width: 210px;
+  max-width: 100%;
+}
+@media (max-width: 640px) {
+  .connection {
+    flex-wrap: wrap;
+  }
+  .connection-state {
+    display: none;
+  }
+  .setting-row-main {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+}
+
+/* ── 场地预约（入口暂未开放，实现保留）──────────────────── */
+.booking-intro {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.booking-intro p,
+.booking-profile p {
+  color: var(--muted);
+  line-height: 1.7;
+}
+.booking-intro .footnote {
+  flex-basis: 100%;
+  margin: 0;
+}
+.booking-toolbar {
+  margin: 24px 0;
+  gap: 16px;
+}
+.booking-profile {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 20px;
+  background: var(--warning-soft);
+}
+.booking-scroll {
+  max-height: 580px;
+}
+.booking-grid {
+  min-width: 690px;
+  border-collapse: separate;
+  border-spacing: 4px;
+}
+.booking-grid th {
+  white-space: nowrap;
+}
+.booking-grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+}
+.booking-grid th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 130px;
+  background: var(--surface);
+}
+.booking-grid td {
+  padding: 12px 8px;
+  border: 0;
+  border-radius: 5px;
+  font-size: 12px;
+  text-align: center;
+  white-space: nowrap;
+}
+.booking-grid .slot-occupied {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.booking-grid .slot-unlisted {
+  background: var(--hover);
+  color: var(--muted);
+}
+.booking-grid .slot-unknown {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+/* ── 树洞（不在导航里，底层查询保留）───────────────────── */
+.hole-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.hole-card {
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-default);
+  background: var(--surface);
+  text-align: left;
+}
+.hole-card:hover {
+  background: var(--hover);
+}
+.hole-meta {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.hole-meta > span {
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+}
+.hole-card > p {
+  display: -webkit-box;
+  margin-bottom: 16px;
+  overflow: hidden;
+  font-size: 13.5px;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: 7;
+  -webkit-box-orient: vertical;
+}
+.hole-stats {
+  display: flex;
+  gap: 16px;
+  margin-top: auto;
+  padding-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.hole-stats span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.hole-original {
+  font-size: 15px;
+}
+.comments {
+  margin-top: 24px;
+}
+.comments article {
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+}
+.comments article > div {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+}
+.comments time {
+  color: var(--muted);
+}
+.comments .prose {
+  margin-top: 8px;
+  font-size: 13.5px;
+}
+@media (max-width: 900px) {
+  .hole-list {
+    grid-template-columns: 1fr;
+  }
+}

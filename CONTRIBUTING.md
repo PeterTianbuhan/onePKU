@@ -15,6 +15,8 @@ npm run tauri -- dev
 
 浏览器验收（真实后端）：`npm run build && npm run preview:live`，打开 `http://127.0.0.1:1421`。
 
+改界面不需要登录：`npm run demo` 在 `http://127.0.0.1:1422` 起一个全是虚构数据的预览（`scripts/demo/plugin.mjs` 接住 `/api`），截图、调样式都用它。演示数据里没有的请求会返回一条「演示数据里没有这一项」的错误，需要时往那个文件里补。
+
 ### Android 端
 
 `android/` 是独立的 Kotlin + Compose 实现，下面那串桌面检查命令覆盖不到它。需要 JDK 17 与 Android SDK（`compileSdk` 35），改了 `android/` 就跑：

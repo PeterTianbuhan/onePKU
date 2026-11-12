@@ -11,17 +11,18 @@ import {
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  BookOpen,
-  FileCheck2,
-  CalendarDays,
-  Settings as SettingsIcon,
+  Award,
   Bell,
+  BookOpen,
+  CalendarRange,
   CreditCard,
-  MapPin,
-  BookOpenText,
+  FileCheck2,
   GraduationCap,
+  MapPin,
   PanelLeftClose,
   PanelLeftOpen,
+  Settings as SettingsIcon,
+  Sun,
 } from "lucide-react";
 import { call, resetService, type Service } from "./lib/api";
 import { listen } from "@tauri-apps/api/event";
@@ -57,10 +58,10 @@ const groups = [
   {
     label: "学习",
     items: [
-      { name: "今日", icon: CalendarDays },
+      { name: "今日", icon: Sun },
       { name: "课程", icon: BookOpen },
       { name: "作业", icon: FileCheck2 },
-      { name: "成绩", icon: BookOpenText },
+      { name: "成绩", icon: Award },
       { name: "培养方案", icon: GraduationCap },
     ],
   },
@@ -68,7 +69,7 @@ const groups = [
     label: "校园",
     items: [
       { name: "通知", icon: Bell },
-      { name: "校历", icon: BookOpenText },
+      { name: "校历", icon: CalendarRange },
     ],
   },
   {
@@ -122,6 +123,8 @@ export default function App() {
   // 课堂实录的登录窗口是自己关的：登录成功就刷新所有资源，回放列表立刻出现。
   useEffect(() => {
     let dispose: (() => void) | undefined;
+    // 浏览器预览里没有 Tauri 事件通道，不订阅。
+    if (!("__TAURI_INTERNALS__" in window)) return;
     void listen("haoxue-connected", () => {
       void queryClient.invalidateQueries({ queryKey: ["resource"] });
     }).then((unlisten) => {
@@ -220,6 +223,8 @@ export default function App() {
       >
         跳转到主内容
       </a>
+      {/* 只有 macOS 的融合标题栏会显示它：拖这一条就是拖窗口。 */}
+      <div className="titlebar" data-tauri-drag-region />
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark">未</span>
@@ -247,7 +252,7 @@ export default function App() {
                   title={p}
                   onClick={() => navigate(p)}
                 >
-                  <Icon size={19} />
+                  <Icon size={17} />
                   <span>{p}</span>
                   {p === "通知" && news.unread > 0 && (
                     <span className="nav-badge">
@@ -266,7 +271,7 @@ export default function App() {
             onClick={() => navigate("设置")}
             title="设置"
           >
-            <SettingsIcon size={19} />
+            <SettingsIcon size={17} />
             <span>设置</span>
           </button>
           <div className="sidebar-status">

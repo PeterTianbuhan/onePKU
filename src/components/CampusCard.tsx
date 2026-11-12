@@ -1,5 +1,5 @@
 import { expiry, money } from "../lib/api";
-import landscape from "../assets/campus-card-school-v2.png";
+import landscape from "../assets/campus-card-school.webp";
 
 export type Card = {
   name: string;
@@ -9,15 +9,24 @@ export type Card = {
   expires: string;
 };
 
-export default function CampusCard({ card }: { card: Card }) {
+/** 校园卡。校园卡页是带湖景的整张卡面；今日页的湖景在页头，这里只留数字（plain）。 */
+export default function CampusCard({
+  card,
+  plain = false,
+}: {
+  card: Card;
+  plain?: boolean;
+}) {
   return (
-    <div className="campus-card-face">
-      <img
-        className="campus-card-art"
-        src={landscape}
-        alt=""
-        aria-hidden="true"
-      />
+    <div className={`campus-card-face ${plain ? "plain" : ""}`}>
+      {!plain && (
+        <img
+          className="campus-card-art"
+          src={landscape}
+          alt=""
+          aria-hidden="true"
+        />
+      )}
       <div className="campus-card-content">
         <div className="card-topline">
           <span className="balance-label">可用余额</span>
@@ -31,13 +40,9 @@ export default function CampusCard({ card }: { card: Card }) {
           <span>¥</span>
           {money(card.balance)}
         </div>
-        <div className="campus-card-bottom">
-          {card.expires && (
-            <span className="card-validity">
-              有效期至 {expiry(card.expires)}
-            </span>
-          )}
-        </div>
+        {card.expires && (
+          <span className="card-validity">有效期至 {expiry(card.expires)}</span>
+        )}
       </div>
     </div>
   );

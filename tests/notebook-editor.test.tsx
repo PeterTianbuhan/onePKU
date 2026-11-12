@@ -51,6 +51,8 @@ function mount(initial = "# 课\n\n## 笔记\n\n原文\n", initialHash = "first"
       };
     }),
   );
+  // 笔记默认收起；这里测的是编辑与保存，先按用户展开过的状态来。
+  localStorage.setItem("onepku.notebook.open.v1", "1");
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });

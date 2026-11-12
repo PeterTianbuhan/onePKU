@@ -38,11 +38,15 @@ export default function CardStats({
     <div className="card-statistics">
       <div className="card-overview">
         {card}
-        <div className="month-summary">
-          <div className="toolbar">
-            <h2>月度收支</h2>
+        <Resource
+          title="月度收支"
+          className="month-summary"
+          q={total}
+          login={login}
+          service="campuscard"
+          extra={
             <label>
-              月份{" "}
+              月份
               <input
                 aria-label="统计月份"
                 type="month"
@@ -54,29 +58,21 @@ export default function CardStats({
                 }}
               />
             </label>
-          </div>
-          <Resource
-            title="月度收支"
-            className="resource-plain"
-            heading={<span className="sr-only">{month} 收支</span>}
-            q={total}
-            login={login}
-            service="campuscard"
-          >
-            {(d) => (
-              <div className="study-metrics">
-                <div>
-                  <span>支出</span>
-                  <strong>¥{money(d.expenses)}</strong>
-                </div>
-                <div>
-                  <span>收入</span>
-                  <strong>¥{money(d.income)}</strong>
-                </div>
+          }
+        >
+          {(d) => (
+            <div className="study-metrics">
+              <div>
+                <span>支出</span>
+                <strong>¥{money(d.expenses)}</strong>
               </div>
-            )}
-          </Resource>
-        </div>
+              <div>
+                <span>收入</span>
+                <strong>¥{money(d.income)}</strong>
+              </div>
+            </div>
+          )}
+        </Resource>
       </div>
       <div className="tabs" aria-label="校园卡视图">
         <button
@@ -158,8 +154,15 @@ export default function CardStats({
                 <div className="category-list">
                   {[...d]
                     .sort((a, b) => b.amount - a.amount)
-                    .map((c, i) => (
-                      <div key={i}>
+                    .map((c, i, sorted) => (
+                      <div
+                        key={i}
+                        style={
+                          {
+                            "--share": `${(c.amount / Math.max(sorted[0].amount, 1)) * 100}%`,
+                          } as object
+                        }
+                      >
                         <span>{c.turnoverType || "其他"}</span>
                         <strong>¥{money(c.amount)}</strong>
                       </div>

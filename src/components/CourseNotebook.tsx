@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download, FolderOpen, Plus, Trash2 } from "lucide-react";
+import { ChevronRight, Download, FolderOpen, Plus, Trash2 } from "lucide-react";
 import {
   action,
   call,
@@ -84,6 +84,7 @@ export default function CourseNotebook(props: {
   );
 }
 
+const openKey = "onepku.notebook.open.v1";
 function NotebookEditor({
   course,
   lectureLabel,
@@ -136,6 +137,14 @@ function NotebookEditor({
   const [error, setError] = useState("");
   const [conflict, setConflict] = useState<Snapshot>();
   const [notice, setNotice] = useState("");
+  // 笔记默认收成一行，课程页先看到通知和作业；展开与否记在本机。
+  const [open, setOpen] = useState(() => {
+    try {
+      return localStorage.getItem(openKey) === "1";
+    } catch {
+      return false;
+    }
+  });
   const base = useRef<string | null>(null);
   const setBase = (hash: string) => {
     base.current = hash;
@@ -334,10 +343,44 @@ function NotebookEditor({
       </section>
     );
 
+  // 冲突和保存失败必须让人看见，这两种情况不管收没收起都展开。
+  const shown = open || !!conflict || !!error;
+  const left = (key: ListKey) => {
+    const items = itemsOf(doc, key);
+    const todo = items.filter((i) => !i.done).length;
+    return items.length
+      ? `${sectionNames[key]} ${todo} / ${items.length} 未完成`
+      : "";
+  };
+  const summary =
+    [left("tasks"), left("lectures")].filter(Boolean).join(" · ") ||
+    (notesOf(doc).trim() ? "" : "还没有笔记");
   return (
-    <section className="notebook" aria-label="课程笔记">
+    <section
+      className={`notebook ${shown ? "" : "collapsed"}`}
+      aria-label="课程笔记"
+    >
       <header className="notebook-heading">
-        <h2>课程笔记</h2>
+        <h2>
+          <button
+            type="button"
+            className="notebook-toggle"
+            aria-expanded={shown}
+            onClick={() => {
+              const next = !shown;
+              setOpen(next);
+              try {
+                localStorage.setItem(openKey, next ? "1" : "0");
+              } catch {
+                /* 记不住只影响下次打开时的默认状态。 */
+              }
+            }}
+          >
+            <ChevronRight size={15} aria-hidden="true" />
+            课程笔记
+          </button>
+        </h2>
+        {!shown && <span className="notebook-summary">{summary}</span>}
         <span className={`notebook-state ${state}`} role="status">
           {state === "pending" || state === "saving"
             ? "保存中…"
@@ -379,30 +422,37 @@ function NotebookEditor({
           <Button onClick={() => void save(true)}>重试保存</Button>
         </div>
       )}
-      <textarea
-        className="notebook-notes"
-        aria-label="课程笔记"
-        placeholder="课程要求、给分细则、老师说过的重点……随便写，自动保存。"
-        value={notesOf(doc)}
-        onChange={(e) => update(setNotes(doc, e.target.value))}
-        rows={Math.min(24, Math.max(5, notesOf(doc).split("\n").length + 1))}
-      />
-      <div className="notebook-lists">
-        <Checklist
-          title={sectionNames.tasks}
-          items={itemsOf(doc, "tasks")}
-          onChange={(items) => update(setItems(doc, "tasks", items))}
-          onImport={() => void importFrom("tasks")}
-          placeholder="添加任务"
-        />
-        <Checklist
-          title={sectionNames.lectures}
-          items={itemsOf(doc, "lectures")}
-          onChange={(items) => update(setItems(doc, "lectures", items))}
-          onImport={() => void importFrom("lectures")}
-          placeholder="添加课次"
-        />
-      </div>
+      {shown && (
+        <>
+          <textarea
+            className="notebook-notes"
+            aria-label="课程笔记"
+            placeholder="课程要求、给分细则、老师说过的重点……随便写，自动保存。"
+            value={notesOf(doc)}
+            onChange={(e) => update(setNotes(doc, e.target.value))}
+            rows={Math.min(
+              24,
+              Math.max(5, notesOf(doc).split("\n").length + 1),
+            )}
+          />
+          <div className="notebook-lists">
+            <Checklist
+              title={sectionNames.tasks}
+              items={itemsOf(doc, "tasks")}
+              onChange={(items) => update(setItems(doc, "tasks", items))}
+              onImport={() => void importFrom("tasks")}
+              placeholder="添加任务"
+            />
+            <Checklist
+              title={sectionNames.lectures}
+              items={itemsOf(doc, "lectures")}
+              onChange={(items) => update(setItems(doc, "lectures", items))}
+              onImport={() => void importFrom("lectures")}
+              placeholder="添加课次"
+            />{" "}
+          </div>
+        </>
+      )}
       {notice && (
         <p className="subtle notebook-notice" role="status">
           {notice}

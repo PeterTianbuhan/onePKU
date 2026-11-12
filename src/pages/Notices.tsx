@@ -274,13 +274,13 @@ export default function Notices({ login }: { login: Login }) {
                     {news.isRead(n.key) ? "已读" : "未读"}
                   </span>
                   <div className="grow">
+                    <strong>{n.title}</strong>
                     <div className="news-row-meta">
                       <span>{n.department}</span>
                       <time>
                         {n.dateLabel} {newsDate(n.date).slice(5)}
                       </time>
                     </div>
-                    <strong>{n.title}</strong>
                     {n.eventStart && (
                       <span className="news-event-time">
                         活动 · {n.eventStart}（北京）

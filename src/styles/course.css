@@ -1,0 +1,626 @@
+/* 课程详情与作业详情：通知、资料、笔记、反馈、提交。 */
+
+/* 详情页自己有标题，外层 Resource 的标题收起来 */
+.resource-page:has(.course-detail) > .resource-head {
+  display: none;
+}
+.page:has(.course-detail),
+.page:has(.assignment-full) {
+  padding-top: 30px;
+}
+.course-page-heading {
+  align-items: center;
+  margin-bottom: 16px;
+}
+.course-page-heading > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+.course-page-heading h1 {
+  font-size: 25px;
+}
+.course-detail > .tabs {
+  margin-bottom: 18px;
+}
+.course-detail > .search {
+  margin-bottom: 6px;
+}
+.course-notice-list {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-default);
+  background: var(--surface);
+  overflow: hidden;
+}
+.course-notice-list .news-row:last-child {
+  border-bottom: 0;
+}
+
+/* 内容与资料 */
+.content-list {
+  margin-top: 8px;
+}
+.content-item {
+  padding: 13px 0;
+  border-bottom: 1px solid var(--border);
+}
+.content-item summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.content-item summary span {
+  flex: 1;
+}
+.content-item summary small {
+  color: var(--muted);
+}
+.content-item .prose {
+  margin: 12px 0;
+  font-size: 13px;
+}
+.content-item > p.subtle {
+  margin: 10px 0;
+}
+.materials-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 0;
+}
+.materials-toolbar .head-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.material-source {
+  margin-top: 16px;
+}
+.material-source > .resource-head h3 {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.material-source .content-list {
+  margin-top: 0;
+}
+.material-source .content-item {
+  padding: 11px 0;
+}
+.material-source .content-item:first-child {
+  padding-top: 0;
+}
+.material-entry {
+  border-bottom: 1px solid var(--border);
+}
+.material-entry .attachment {
+  border: 0;
+}
+.local-materials {
+  margin: 16px 0 24px;
+}
+.local-material-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.local-material-row:last-child {
+  border-bottom: 0;
+}
+.local-material-name {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.local-material-name:hover {
+  background: var(--hover);
+}
+.local-material-name > svg {
+  color: var(--muted);
+}
+.local-material-name > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.local-material-name small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+}
+.local-material-confirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+}
+.archive-hint {
+  margin: 12px 0;
+  font-size: 12.5px;
+}
+
+/* 回放列表 */
+.video-list .attachment {
+  padding: 10px 14px;
+}
+.video-list .attachment:first-child {
+  border-top: 0;
+}
+.video-list .attachment-line > svg {
+  box-sizing: content-box;
+  padding: 7px;
+  border-radius: 50%;
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+/* 每一行都有「播放」：用浅色，悬停才变实心，不让一列红按钮抢眼 */
+.video-list .button.primary {
+  background: var(--primary-soft);
+  color: var(--primary);
+  box-shadow: none;
+}
+.video-list .button.primary:hover:not(:disabled) {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+.video-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 14px 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  text-align: left;
+}
+.video-row:hover {
+  background: var(--hover);
+}
+.video-row small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+.video-row > span:last-child {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.video-play {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.recording-session {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.recording-session small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+/* 课程笔记 */
+.notebook {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 24px;
+  padding: 16px 18px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-default);
+  background: var(--surface);
+}
+.notebook-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.notebook-heading h2 {
+  margin: 0;
+}
+.notebook-heading .button {
+  margin-left: auto;
+}
+.notebook-state {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.notebook-state.error {
+  color: var(--danger);
+}
+.notebook-alert {
+  align-items: center;
+  margin: 0;
+  font-size: 13px;
+}
+.notebook-alert span {
+  flex: 1 1 260px;
+}
+.notebook-notes {
+  width: 100%;
+  min-height: 96px;
+  padding: 10px 12px;
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--hover) 45%, var(--surface));
+  font: 13.5px/1.7 var(--font-sans);
+  resize: vertical;
+}
+.notebook-lists {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+}
+.checklist {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.checklist header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.checklist h3 {
+  margin: 0;
+}
+.checklist header .subtle {
+  font-size: 12px;
+}
+.checklist header .button {
+  margin-left: auto;
+  min-height: 28px;
+  font-size: 12.5px;
+}
+.checklist ul {
+  max-height: 300px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.checklist li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 1px 0;
+}
+.checklist li input[type="checkbox"] {
+  flex: none;
+}
+.checklist-text {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+.checklist-text:hover {
+  background: var(--hover);
+}
+.checklist-text:focus {
+  border-color: var(--border-strong);
+  background: var(--surface);
+}
+.checklist li.done .checklist-text {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.checklist-remove {
+  flex: none;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  opacity: 0;
+}
+.checklist li:hover .checklist-remove,
+.checklist-remove:focus-visible {
+  opacity: 1;
+}
+.checklist-remove:hover {
+  background: var(--hover);
+  color: var(--danger);
+}
+.checklist-add {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.checklist-add input {
+  flex: 1;
+  min-width: 0;
+}
+.notebook-notice {
+  margin: 0;
+  font-size: 12.5px;
+}
+
+/* 作业详情 */
+.assignment-full {
+  position: relative;
+}
+.assignment-full > .back-link {
+  margin-bottom: 16px;
+}
+.resource-page:has(.assignment-detail) > .resource-head {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+.resource-page:has(.assignment-detail) > .resource-head h2 {
+  display: none;
+}
+.assignment-detail {
+  max-width: 860px;
+  padding: 26px 30px 30px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-default);
+  background: var(--surface);
+}
+.assignment-detail h1 {
+  margin: 4px 0 14px;
+  font-size: 25px;
+}
+.assignment-detail .prose {
+  max-width: 78ch;
+}
+.detail-meta {
+  margin-bottom: 16px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--hover);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.assignment-detail .detail-meta {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.assignment-instructions {
+  margin: 22px 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.assignment-instructions > summary {
+  padding: 6px 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 550;
+}
+/* 详情本身已经是一张卡片，里面的反馈不再套一层 */
+.assignment-detail .resource {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.assignment-feedback {
+  margin-top: 24px;
+}
+.assignment-feedback .feedback-compact {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 12px 0;
+  border: 0;
+}
+.feedback-compact > .resource-head {
+  flex: 1;
+  margin: 0;
+}
+.feedback-compact > .resource-head h2 {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+.feedback-compact .feedback-empty {
+  margin: 0;
+}
+.feedback-attempt {
+  border-top: 1px solid var(--border);
+}
+.feedback-attempt:first-child {
+  border-top: 0;
+}
+.feedback-attempt > summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+}
+.feedback-attempt > summary::before {
+  content: "›";
+  color: var(--muted);
+}
+.feedback-attempt[open] > summary::before {
+  transform: rotate(90deg);
+}
+.feedback-attempt > summary > span {
+  flex: 1;
+  min-width: 0;
+}
+.feedback-attempt > summary > strong {
+  flex-shrink: 0;
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-variant-numeric: lining-nums;
+}
+.feedback-body {
+  padding: 0 0 14px 22px;
+}
+.feedback-body .prose {
+  margin: 0 0 12px;
+}
+.feedback-links {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+.feedback-files {
+  margin: 10px 0;
+}
+.feedback-files > .subtle {
+  display: block;
+  margin-bottom: 6px;
+}
+.feedback-empty {
+  margin: 8px 0;
+}
+
+/* 提交 */
+.submission-panel {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.submission-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.submission-panel > .button {
+  margin-top: 12px;
+  margin-right: 8px;
+}
+.submission-file {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 14px 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--hover);
+}
+.submission-file strong {
+  overflow-wrap: anywhere;
+}
+.submission-file span {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.submission-review {
+  margin-top: 18px;
+  padding: 18px;
+  border-radius: var(--radius-default);
+  background: var(--hover);
+}
+.submission-review h3 {
+  margin: 0 0 14px;
+  font-size: 15px;
+}
+.submission-review dl {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 10px;
+  margin: 0;
+  font-size: 13.5px;
+}
+.submission-review dt {
+  color: var(--muted);
+}
+.submission-review dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.submission-review .button {
+  margin-top: 12px;
+}
+.submission-result {
+  padding: 14px 0;
+}
+.submission-status-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.submission-result p {
+  font-size: 13px;
+}
+
+@media (max-width: 700px) {
+  .local-material-row:has(.local-material-confirm) {
+    flex-wrap: wrap;
+  }
+  .local-material-confirm {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  .materials-toolbar {
+    flex-wrap: wrap;
+  }
+  .course-page-heading h1 {
+    font-size: 21px;
+  }
+  .course-page-heading > .heading-actions {
+    display: none;
+  }
+  .assignment-detail {
+    padding: 18px;
+  }
+}
+
+/* 笔记收起时只是一行：标题、摘要、保存状态 */
+.notebook.collapsed {
+  padding-block: 10px;
+}
+.notebook-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: -6px;
+  padding: 3px 8px 3px 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+}
+.notebook-toggle:hover {
+  background: var(--hover);
+}
+.notebook-toggle svg {
+  color: var(--muted);
+  transition: transform 0.16s var(--ease);
+}
+.notebook-toggle[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
+.notebook-summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

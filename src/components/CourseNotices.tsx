@@ -120,11 +120,11 @@ export default function CourseNotices({
                   <span className="unread-dot" aria-hidden="true" />
                   <span className="sr-only">{read(n) ? "已读" : "未读"}</span>
                   <div className="grow">
+                    <strong>{n.announcement.title}</strong>
                     <div className="news-row-meta">
                       <span>{n.announcement.author}</span>
                       <time>{newsDate(n.announcement.date)}</time>
                     </div>
-                    <strong>{n.announcement.title}</strong>
                   </div>
                 </button>
               ))}

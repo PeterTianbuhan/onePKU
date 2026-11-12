@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
+    "demo": "vite --mode demo --host 127.0.0.1 --port 1422",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "test": "vitest run",

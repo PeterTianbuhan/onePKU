@@ -1,26 +1,57 @@
 import { useState } from "react";
-import { BookOpenText, Clock3, FileCheck2, MapPin } from "lucide-react";
-import { useResource, type Assignment, fmtTime } from "../lib/api";
+import { CalendarRange, ChevronRight, MapPin, PenLine } from "lucide-react";
+import { useResource, type Assignment, type Course, fmtTime } from "../lib/api";
 import {
   useNotifications,
   newsDate,
   type NewsItem,
 } from "../lib/notifications";
-import { Button, Empty, Resource, Modal, type Login } from "../components/ui";
+import { Empty, Resource, Modal, type Login } from "../components/ui";
 import { openBrowser } from "../lib/browser";
 import { NoticeReader } from "./Notices";
 import { pageLink } from "../lib/navigation";
 import CampusCard, { type Card } from "../components/CampusCard";
-/** 与安卓端一致：24 小时内显示倒计时，其余显示日期。 */
-function deadlineLabel(deadline: string): string {
-  const left = Date.parse(deadline) - Date.now();
-  if (left > 0 && left < 24 * 60 * 60 * 1000) {
+import CourseGlyph from "../components/CourseGlyph";
+import landscape from "../assets/campus-card-school.webp";
+
+const DAY = 24 * 60 * 60 * 1000;
+const beijingDay = (time: number) =>
+  new Date(time).toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" });
+const beijing = (time: number, options: Intl.DateTimeFormatOptions) =>
+  new Date(time).toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    ...options,
+  });
+function numeral(n: number): string {
+  const digits = "〇一二三四五六七八九";
+  if (n < 10) return digits[n];
+  const ones = n % 10 ? digits[n % 10] : "";
+  return (n < 20 ? "" : digits[Math.floor(n / 10)]) + "十" + ones;
+}
+/** 与安卓端一致：24 小时内显示倒计时。更远的按北京时间的日历日说「明天 / 后天 / 几天后」。 */
+function deadlineLabel(deadline: string, now: number): string {
+  const due = Date.parse(deadline);
+  const left = due - now;
+  if (left <= 0) return "已截止";
+  if (left < DAY) {
     const minutes = Math.ceil(left / 60000);
     return minutes >= 60
       ? `剩余 ${Math.floor(minutes / 60)} 小时`
       : `剩余 ${minutes} 分钟`;
   }
-  return fmtTime(deadline);
+  const days = Math.round(
+    (Date.parse(beijingDay(due)) - Date.parse(beijingDay(now))) / DAY,
+  );
+  const clock = beijing(due, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  return days === 1
+    ? `明天 ${clock}`
+    : days === 2
+      ? `后天 ${clock}`
+      : `${days} 天后`;
 }
 
 export default function Today({
@@ -34,23 +65,39 @@ export default function Today({
   const [noticeError, setNoticeError] = useState("");
   const assignments = useResource<Assignment[]>({ kind: "assignments" });
   const card = useResource<Card[]>({ kind: "card" });
+  const courses = useResource<Course[]>({ kind: "allCourses" });
   const news = useNotifications();
-  const date = new Date().toLocaleDateString("zh-CN", {
-    timeZone: "Asia/Shanghai",
-    month: "long",
-    day: "numeric",
-    weekday: "long",
-  });
-  const latest = news.items.slice(0, 3);
+  const now = Date.now();
+  const [month, day] = beijingDay(now).split("-").slice(1).map(Number);
+  const latest = news.items.slice(0, 4);
+  const current = (courses.data?.data ?? []).filter((c) => c.current);
+  // 页头一句话：只说已经读到的数，没读到的那一半不出现。
+  const open = assignments.data?.data?.filter(
+    (a) => !a.last_attempt && (!a.deadline || Date.parse(a.deadline) >= now),
+  );
+  const soon = open?.filter(
+    (a) => a.deadline && Date.parse(a.deadline) - now < 3 * DAY,
+  ).length;
+  const brief = [
+    open &&
+      (open.length
+        ? `${open.length} 项作业待交${soon ? `，${soon} 项三天内截止` : ""}`
+        : "没有待交作业"),
+    news.unread > 0 && `${news.unread} 条通知未读`,
+  ].filter(Boolean);
   return (
     <>
-      <header className="page-heading">
-        <div>
-          <div className="eyebrow">{date} · 北京时间</div>
-          <h1>今日</h1>
+      <header className="today-hero">
+        <img className="today-hero-art" src={landscape} alt="" />
+        <div className="eyebrow">
+          今日 · {beijing(now, { weekday: "long" })}
         </div>
+        <h1 aria-label={`今日，${month}月${day}日`}>
+          {numeral(month)}月{numeral(day)}日
+        </h1>
+        <p className="today-brief">{brief.join(" · ") || "北京时间"}</p>
       </header>
-      <div className="today-grid refreshed-today">
+      <div className="today-grid">
         <div className="column">
           <Resource
             title="作业"
@@ -59,7 +106,7 @@ export default function Today({
             login={login}
             extra={
               <button className="text-button" onClick={() => navigate("作业")}>
-                查看全部
+                全部作业
               </button>
             }
           >
@@ -75,59 +122,64 @@ export default function Today({
                 .slice(0, 5);
               return items.length ? (
                 <div className="list">
-                  {items.map((a) => (
-                    <button
-                      className="assignment-row"
-                      key={a.hash_id}
-                      onClick={() =>
-                        navigate(pageLink("作业", { assignment: a.hash_id }))
-                      }
-                    >
-                      <span
-                        className={`task-mark ${a.last_attempt ? "completed" : ""}`}
+                  {items.map((a) => {
+                    const due = a.deadline ? Date.parse(a.deadline) : null;
+                    const tone =
+                      due === null
+                        ? "open"
+                        : due < now
+                          ? "overdue"
+                          : due - now < DAY
+                            ? "urgent"
+                            : "";
+                    return (
+                      <button
+                        className="assignment-row"
+                        key={a.hash_id}
+                        onClick={() =>
+                          navigate(pageLink("作业", { assignment: a.hash_id }))
+                        }
                       >
-                        <FileCheck2 size={17} />
-                      </span>
-                      <span className="grow">
-                        <strong>{a.title}</strong>
-                        <small>{a.course_name}</small>
-                      </span>
-                      <span
-                        className={`deadline ${
-                          !a.last_attempt && a.deadline
-                            ? Date.parse(a.deadline) < Date.now()
-                              ? "overdue"
-                              : Date.parse(a.deadline) - Date.now() <
-                                  24 * 60 * 60 * 1000
-                                ? "urgent"
-                                : ""
-                            : ""
-                        }`}
-                      >
-                        {a.detail_error ? (
-                          "详情待更新"
-                        ) : a.last_attempt ? (
-                          "有提交记录"
-                        ) : a.deadline ? (
-                          <>
-                            <Clock3 size={12} />
-                            {deadlineLabel(a.deadline)}
-                          </>
-                        ) : null}
-                      </span>
-                    </button>
-                  ))}
+                        <span className={`due-stamp ${tone}`}>
+                          {due === null ? (
+                            <PenLine size={16} />
+                          ) : (
+                            <>
+                              <small>
+                                {beijing(due, { weekday: "short" })}
+                              </small>
+                              <b>{Number(beijingDay(due).slice(8))}</b>
+                            </>
+                          )}
+                        </span>
+                        <span className="grow">
+                          <strong>{a.title}</strong>
+                          <small>{a.course_name}</small>
+                        </span>
+                        <span
+                          className={`deadline ${tone}`}
+                          title={a.deadline ? fmtTime(a.deadline) : undefined}
+                        >
+                          {a.detail_error
+                            ? "详情待更新"
+                            : a.deadline
+                              ? deadlineLabel(a.deadline, now)
+                              : null}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               ) : (
                 <Empty>没有待处理作业</Empty>
               );
             }}
           </Resource>
-          <section className="resource today-news">
+          <section className="resource today-news" aria-label="最新通知">
             <div className="resource-head">
               <h2>最新通知</h2>
               <button className="text-button" onClick={() => navigate("通知")}>
-                查看全部
+                全部通知
               </button>
             </div>
             {latest.length ? (
@@ -151,11 +203,11 @@ export default function Today({
                   >
                     <span className="unread-dot" />
                     <div className="grow">
+                      <strong>{n.title}</strong>
                       <div className="news-row-meta">
                         <span>{n.department}</span>
                         <time>{newsDate(n.date).slice(5)}</time>
                       </div>
-                      <strong>{n.title}</strong>
                     </div>
                   </button>
                 ))}
@@ -194,25 +246,43 @@ export default function Today({
           >
             {(data) =>
               data.length ? (
-                data.map((c, i) => <CampusCard key={i} card={c} />)
+                data.map((c, i) => <CampusCard key={i} card={c} plain />)
               ) : (
                 <Empty>暂无校园卡</Empty>
               )
             }
           </Resource>
-          <section className="quick-links compact-links">
-            <h2>常用</h2>
+          {current.length > 0 && (
+            <section className="resource shortcuts" aria-label="本学期课程">
+              <div className="resource-head">
+                <h2>本学期课程</h2>
+                <button
+                  className="text-button"
+                  onClick={() => navigate("课程")}
+                >
+                  全部课程
+                </button>
+              </div>
+              {current.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => navigate(pageLink("课程", { course: c.id }))}
+                >
+                  <CourseGlyph name={c.name} />
+                  <strong>{c.name}</strong>
+                  <ChevronRight size={15} aria-hidden="true" />
+                </button>
+              ))}
+            </section>
+          )}
+          <section className="quick-links" aria-label="常用">
             <button onClick={() => navigate("校历")}>
-              <BookOpenText size={17} />
-              <span>
-                <strong>学校校历</strong>
-              </span>
+              <CalendarRange size={18} />
+              <strong>学校校历</strong>
             </button>
             <button onClick={() => navigate("空闲教室")}>
-              <MapPin size={17} />
-              <span>
-                <strong>找间自习教室</strong>
-              </span>
+              <MapPin size={18} />
+              <strong>找间自习教室</strong>
             </button>
           </section>
         </div>

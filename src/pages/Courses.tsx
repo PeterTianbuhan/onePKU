@@ -6,6 +6,7 @@ import LearningGrades from "../components/LearningGrades";
 import LocalMaterials from "../components/LocalMaterials";
 import CourseNotebook from "../components/CourseNotebook";
 import CourseReviews from "../components/CourseReviews";
+import CourseGlyph from "../components/CourseGlyph";
 import { ArrowLeft, BookOpen, ChevronRight, Play } from "lucide-react";
 import {
   action,
@@ -125,6 +126,7 @@ export default function Courses({ login }: { login: Login }) {
                           key={c.id}
                           onClick={() => navigate({ course: c.id })}
                         >
+                          <CourseGlyph name={c.name} />
                           <h4>{c.name}</h4>
                           <ChevronRight size={16} aria-hidden="true" />
                         </button>
@@ -329,12 +331,14 @@ function Videos({ course, login }: { course: Course; login: Login }) {
                     className="assignment-choice"
                     onClick={() => pick(c)}
                   >
-                    <strong>{c.name}</strong>
-                    <small>
-                      {[c.teacher, c.college, c.term]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </small>
+                    <span className="grow">
+                      <strong>{c.name}</strong>
+                      <small>
+                        {[c.teacher, c.college, c.term]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </small>
+                    </span>
                   </button>
                 ))}
               </div>

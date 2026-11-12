@@ -154,14 +154,14 @@ export function AssignmentWorkspace({
                     className="assignment-choice"
                     onClick={() => select(a.hash_id)}
                   >
-                    <strong>{a.title}</strong>
-                    <small>
-                      {a.course_name}
-                      {a.score ? ` · 分数 ${a.score}` : ""}
-                    </small>
-                    <span
-                      className={state === "overdue" ? "overdue" : "subtle"}
-                    >
+                    <span className="grow">
+                      <strong>{a.title}</strong>
+                      <small>
+                        {a.course_name}
+                        {a.score ? ` · 分数 ${a.score}` : ""}
+                      </small>
+                    </span>
+                    <span className={`deadline ${state}`}>
                       {state === "unknown"
                         ? "状态待核对"
                         : state === "submitted"

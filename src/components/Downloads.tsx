@@ -40,7 +40,7 @@ export default function Downloads() {
         title="下载记录"
         onClick={() => setOpen(true)}
       >
-        <Download size={19} />
+        <Download size={17} />
         <span>下载{running ? ` · ${running}` : ""}</span>
       </button>
       <Modal

@@ -1,0 +1,517 @@
+/* 培养方案：资料表单、圆环、缺口明细与课程规划。 */
+.profile-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px 20px;
+  margin: 8px 0 16px;
+}
+.profile-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.profile-form select {
+  width: 100%;
+  min-width: 0;
+}
+.profile-suggestions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.chip small {
+  color: var(--muted);
+}
+.chip.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.inference-evidence {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.curriculum-login-hints p {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.curriculum-plan.secondary {
+  margin-top: 24px;
+}
+.curriculum-table tr.depth-0 > td:first-child {
+  font-weight: 600;
+}
+.curriculum-table tr.depth-1 > td:first-child {
+  padding-left: 22px;
+}
+.curriculum-table tr.complete td.numeric:last-child {
+  color: var(--success);
+}
+.curriculum-table tr.course-row td {
+  background: var(--sidebar);
+  font-size: 13px;
+}
+.curriculum-table .course-indent {
+  padding-left: 40px;
+}
+.section-toggle {
+  color: inherit;
+  font: inherit;
+  text-decoration: none;
+}
+.curriculum-pending {
+  margin-top: 20px;
+}
+.curriculum-pending h3 {
+  font-size: 15px;
+  margin: 0 0 4px;
+}
+.curriculum-pending ul,
+.curriculum-ignored,
+.curriculum-notes {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+.curriculum-pending li {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.curriculum-pending li .grow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.curriculum-pending select {
+  max-width: 280px;
+}
+.curriculum-ignored li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.curriculum-notes li {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 3px 0;
+  line-height: 1.6;
+}
+.curriculum-footnote {
+  margin-top: 20px;
+  font-size: 12px;
+}
+.curriculum-footnote .text-button {
+  margin: 0 4px;
+}
+
+/* 培养方案：圆环与明细 */
+.curriculum-hint {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.ring-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 12px;
+  margin: 12px 0 20px;
+}
+.ring-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 18px 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  text-align: center;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.ring-card:hover {
+  background: var(--hover);
+}
+.ring-card.selected {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+.ring-card:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.ring svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.ring circle {
+  fill: none;
+  stroke-linecap: round;
+}
+.ring-track {
+  stroke: var(--hover);
+}
+.ring-pending {
+  stroke: var(--primary);
+  opacity: 0.28;
+}
+.ring-done {
+  stroke: var(--primary);
+}
+.ring.complete .ring-done {
+  stroke: var(--success);
+}
+.ring-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.1;
+}
+.ring-center strong {
+  font-family: var(--font-serif);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-size: 30px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+.ring-center small {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.ring-name {
+  margin-top: 6px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.ring-detail {
+  font-size: 13px;
+  color: var(--muted);
+}
+.ring-detail.complete {
+  color: var(--success);
+}
+.section-detail {
+  display: flex;
+  flex-direction: column;
+}
+.detail-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  column-gap: 20px;
+  row-gap: 8px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+}
+.detail-row.top .detail-name {
+  font-weight: 600;
+}
+.detail-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.detail-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 15px;
+}
+.detail-title .subtle {
+  font-size: 13px;
+}
+.detail-bar {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--hover);
+  overflow: hidden;
+}
+.detail-bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 3px;
+  background: var(--primary);
+}
+.detail-bar i.pending {
+  opacity: 0.28;
+}
+.detail-bar i.draft {
+  background: transparent;
+  border: 1px dashed var(--primary);
+}
+.detail-find.active {
+  font-weight: 600;
+}
+
+/* 课程规划：左缺口树，右侧上候选、下学期草稿；窄屏上下排。
+   页面内容最宽约 1180px，三栏会把课程行挤坏，所以右侧两块叠放。 */
+.planner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.planner-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+@media (min-width: 1100px) {
+  .planner {
+    grid-template-columns: minmax(0, 1.75fr) minmax(260px, 1fr);
+  }
+  .planner-side {
+    position: sticky;
+    top: 16px;
+  }
+}
+.planner-panel {
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-default);
+  background: var(--surface);
+}
+.planner-panel h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.planner-panel > .subtle {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.planner-panel > button {
+  align-self: flex-start;
+}
+.planner-placeholder {
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+}
+.candidate-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.planner-panel[aria-label="候选课程"] .candidate-list {
+  max-height: 56vh;
+  overflow-y: auto;
+}
+.candidate-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.candidate-list li:first-child {
+  border-top: none;
+}
+.candidate-list .grow {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 14px;
+}
+.candidate-list .subtle {
+  font-size: 12px;
+}
+.candidate-multi {
+  color: var(--primary);
+}
+.draft-total {
+  margin: 0;
+  font-size: 14px;
+}
+.draft-total strong {
+  font-family: var(--font-serif);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-size: 22px;
+  font-weight: 650;
+}
+.detail-numbers {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  white-space: nowrap;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.detail-numbers strong {
+  font-family: var(--font-serif);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-size: 20px;
+  font-weight: 650;
+}
+.detail-gap {
+  margin-left: 12px;
+  color: var(--muted);
+}
+.detail-gap.complete {
+  color: var(--success);
+}
+.detail-toggle {
+  font-size: 13px;
+  white-space: nowrap;
+}
+.detail-children {
+  grid-column: 1 / -1;
+  padding-left: 18px;
+  border-left: 2px solid var(--border);
+}
+.detail-children .detail-row {
+  padding: 10px 0;
+}
+.detail-children .detail-row:first-child {
+  border-top: none;
+}
+.course-list {
+  grid-column: 1 / -1;
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 18px;
+}
+.course-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto 68px minmax(120px, auto);
+  align-items: baseline;
+  gap: 14px;
+  padding: 7px 0;
+  font-size: 14px;
+  border-top: 1px dashed var(--border);
+}
+.course-list li:first-child {
+  border-top: none;
+}
+.course-list .subtle {
+  font-size: 12px;
+}
+.course-credit {
+  min-width: 0;
+  text-align: right;
+}
+.course-list select {
+  max-width: 132px;
+}
+.course-group {
+  color: var(--muted);
+  font-size: 12px;
+  padding-top: 10px;
+}
+.detail-note {
+  grid-column: 1 / -1;
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+.course-status {
+  font-size: 13px;
+  color: var(--muted);
+}
+.course-status.passed {
+  color: var(--success);
+}
+.course-status.inProgress {
+  color: var(--primary);
+}
+.course-status.failed {
+  color: var(--danger);
+}
+.course-credits {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.course-list-empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+.source-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.source-path {
+  font-size: 12px;
+  word-break: break-all;
+}
+.source-pages {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  max-height: 70vh;
+  overflow: auto;
+  padding: 8px;
+  background: var(--sidebar);
+  border-radius: var(--radius-default);
+}
+.source-pages canvas {
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
+  background: white;
+}
+.settings-explanation {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.settings-explanation > summary {
+  padding: 6px 0;
+}
+.settings-explanation p {
+  max-width: 65ch;
+  margin: 8px 0;
+}

@@ -1,0 +1,325 @@
+/* 外壳：侧栏、主区域与页面标题。 */
+.app {
+  position: relative;
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* macOS 上标题栏与内容融合：红绿灯浮在侧栏上，顶部一条用来拖动窗口。 */
+.titlebar {
+  display: none;
+}
+html[data-chrome="overlay"] .titlebar {
+  display: block;
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 30px;
+  z-index: 5;
+  -webkit-user-select: none;
+  user-select: none;
+}
+html[data-chrome="overlay"] .sidebar {
+  padding-top: 50px;
+}
+
+.sidebar {
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 22px 12px 12px;
+  background: var(--sidebar);
+  border-right: 1px solid var(--border);
+  -webkit-user-select: none;
+  user-select: none;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px;
+  margin-bottom: 18px;
+}
+/* 印章：朱砂底、白文「未」。 */
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-family: var(--font-serif);
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow:
+    inset 0 0 0 1.5px color-mix(in srgb, var(--on-primary) 28%, transparent),
+    0 1px 2px rgb(var(--shadow-ink) / 0.2);
+}
+/* 印泥的颜色不随主题变浅。 */
+html[data-theme="dark"] .brand-mark {
+  background: #a32b43;
+  color: #fff;
+}
+.brand strong {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.sidebar nav {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  overflow-y: auto;
+  min-height: 0;
+  margin: 0 -4px;
+  padding: 0 4px 16px;
+}
+.nav-group {
+  display: grid;
+  gap: 2px;
+}
+.nav-group-label {
+  padding: 0 10px 5px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+}
+.sidebar nav .nav-group button,
+.nav-settings {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: color-mix(in srgb, var(--text) 72%, var(--muted));
+  font-size: 13.5px;
+  font-weight: 500;
+  text-align: left;
+}
+.sidebar nav .nav-group button svg,
+.nav-settings svg {
+  color: var(--muted);
+  transition: color 0.16s var(--ease);
+}
+.sidebar nav .nav-group button:hover,
+.nav-settings:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text);
+}
+.sidebar nav .nav-group .active,
+.nav-settings.active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+.sidebar nav .nav-group .active:hover,
+.nav-settings.active:hover {
+  background: var(--surface);
+}
+.sidebar nav .nav-group .active svg,
+.nav-settings.active svg {
+  color: var(--primary);
+}
+.nav-badge {
+  margin-left: auto;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebar-bottom {
+  margin-top: auto;
+  padding-top: 8px;
+  display: grid;
+  gap: 2px;
+}
+.sidebar-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  padding: 8px 6px 0 12px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.sidebar-status i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 18%, transparent);
+}
+.sidebar-status i.offline {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 18%, transparent);
+}
+.collapse {
+  margin-left: auto;
+}
+
+/* 收起：只留图标 */
+.compact-nav .sidebar {
+  width: 60px;
+  padding-inline: 10px;
+}
+.compact-nav .brand {
+  padding: 0;
+  justify-content: center;
+}
+.compact-nav .brand strong,
+.compact-nav .nav-group span,
+.compact-nav .nav-settings span,
+.compact-nav .sidebar-status span,
+.compact-nav .sidebar-status i {
+  display: none;
+}
+.compact-nav .sidebar nav .nav-group button,
+.compact-nav .nav-settings {
+  justify-content: center;
+  padding: 0;
+}
+.compact-nav .nav-group-label {
+  height: 1px;
+  margin: 0 8px 6px;
+  padding: 0;
+  background: var(--border);
+  font-size: 0;
+}
+.compact-nav .sidebar-status {
+  padding: 8px 0 0;
+  justify-content: center;
+}
+.compact-nav .collapse {
+  margin: 0;
+}
+
+main {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+.page {
+  max-width: calc(var(--page-max) + var(--page-pad) * 2);
+  margin: 0 auto;
+  padding: 40px var(--page-pad) 56px;
+  animation: rise 0.24s var(--ease) both;
+}
+.page-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 24px;
+  min-height: 44px;
+}
+.eyebrow {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+}
+.page-subtitle {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.back-link {
+  flex-shrink: 0;
+  margin-left: -10px;
+}
+.version {
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1100px) {
+  .page {
+    padding: 32px 28px 44px;
+  }
+  .sidebar {
+    width: 188px;
+  }
+}
+@media (max-height: 720px) {
+  .sidebar nav {
+    gap: 12px;
+  }
+  .sidebar nav .nav-group button,
+  .nav-settings {
+    height: 31px;
+  }
+}
+/* 手机宽度的预览：导航横排在顶部 */
+@media (max-width: 640px) {
+  .app {
+    display: block;
+    overflow: auto;
+  }
+  .sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    width: 100%;
+    padding: 8px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .brand,
+  .sidebar-bottom,
+  .nav-group-label,
+  .global-search-trigger {
+    display: none !important;
+  }
+  .sidebar nav {
+    flex-direction: row;
+    gap: 2px;
+    overflow-x: auto;
+    padding: 0;
+    margin: 0;
+  }
+  .nav-group {
+    display: flex;
+    gap: 2px;
+  }
+  .sidebar nav .nav-group button {
+    width: auto;
+    white-space: nowrap;
+  }
+  main {
+    overflow: visible;
+  }
+  .page {
+    padding: 22px 16px 36px;
+  }
+  .page-heading h1 {
+    font-size: 24px;
+  }
+}
