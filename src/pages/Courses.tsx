@@ -6,8 +6,8 @@ import LearningGrades from "../components/LearningGrades";
 import LocalMaterials from "../components/LocalMaterials";
 import CourseNotebook from "../components/CourseNotebook";
 import CourseReviews from "../components/CourseReviews";
-import CourseGlyph from "../components/CourseGlyph";
-import { ArrowLeft, BookOpen, ChevronRight, Play } from "lucide-react";
+import CourseGlyph, { coursePigment } from "../components/CourseGlyph";
+import { ArrowLeft, BookOpen, Play } from "lucide-react";
 import {
   action,
   connectHaoxue,
@@ -123,12 +123,12 @@ export default function Courses({ login }: { login: Login }) {
                       {rows.map((c) => (
                         <button
                           className="course-tile"
+                          style={coursePigment(c.name)}
                           key={c.id}
                           onClick={() => navigate({ course: c.id })}
                         >
-                          <CourseGlyph name={c.name} />
                           <h4>{c.name}</h4>
-                          <ChevronRight size={16} aria-hidden="true" />
+                          <CourseGlyph name={c.name} />
                         </button>
                       ))}
                     </div>

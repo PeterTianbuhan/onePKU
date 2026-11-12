@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CalendarRange, ChevronRight, MapPin, PenLine } from "lucide-react";
+import { CalendarRange, ChevronRight, MapPin } from "lucide-react";
 import { useResource, type Assignment, type Course, fmtTime } from "../lib/api";
 import {
   useNotifications,
@@ -12,7 +12,9 @@ import { NoticeReader } from "./Notices";
 import { pageLink } from "../lib/navigation";
 import CampusCard, { type Card } from "../components/CampusCard";
 import CourseGlyph from "../components/CourseGlyph";
-import landscape from "../assets/campus-card-school.webp";
+import DueStamp, { dueTone } from "../components/DueStamp";
+import TodayHero from "../components/TodayHero";
+import DeadlineRuler from "../components/DeadlineRuler";
 
 const DAY = 24 * 60 * 60 * 1000;
 const beijingDay = (time: number) =>
@@ -22,12 +24,6 @@ const beijing = (time: number, options: Intl.DateTimeFormatOptions) =>
     timeZone: "Asia/Shanghai",
     ...options,
   });
-function numeral(n: number): string {
-  const digits = "〇一二三四五六七八九";
-  if (n < 10) return digits[n];
-  const ones = n % 10 ? digits[n % 10] : "";
-  return (n < 20 ? "" : digits[Math.floor(n / 10)]) + "十" + ones;
-}
 /** 与安卓端一致：24 小时内显示倒计时。更远的按北京时间的日历日说「明天 / 后天 / 几天后」。 */
 function deadlineLabel(deadline: string, now: number): string {
   const due = Date.parse(deadline);
@@ -68,7 +64,6 @@ export default function Today({
   const courses = useResource<Course[]>({ kind: "allCourses" });
   const news = useNotifications();
   const now = Date.now();
-  const [month, day] = beijingDay(now).split("-").slice(1).map(Number);
   const latest = news.items.slice(0, 4);
   const current = (courses.data?.data ?? []).filter((c) => c.current);
   // 页头一句话：只说已经读到的数，没读到的那一半不出现。
@@ -87,16 +82,12 @@ export default function Today({
   ].filter(Boolean);
   return (
     <>
-      <header className="today-hero">
-        <img className="today-hero-art" src={landscape} alt="" />
-        <div className="eyebrow">
-          今日 · {beijing(now, { weekday: "long" })}
-        </div>
-        <h1 aria-label={`今日，${month}月${day}日`}>
-          {numeral(month)}月{numeral(day)}日
-        </h1>
-        <p className="today-brief">{brief.join(" · ") || "北京时间"}</p>
-      </header>
+      <TodayHero brief={brief.join(" · ")} />
+      <DeadlineRuler
+        assignments={assignments.data?.data ?? []}
+        now={now}
+        navigate={navigate}
+      />
       <div className="today-grid">
         <div className="column">
           <Resource
@@ -123,15 +114,7 @@ export default function Today({
               return items.length ? (
                 <div className="list">
                   {items.map((a) => {
-                    const due = a.deadline ? Date.parse(a.deadline) : null;
-                    const tone =
-                      due === null
-                        ? "open"
-                        : due < now
-                          ? "overdue"
-                          : due - now < DAY
-                            ? "urgent"
-                            : "";
+                    const tone = dueTone(a.deadline, now);
                     return (
                       <button
                         className="assignment-row"
@@ -140,18 +123,7 @@ export default function Today({
                           navigate(pageLink("作业", { assignment: a.hash_id }))
                         }
                       >
-                        <span className={`due-stamp ${tone}`}>
-                          {due === null ? (
-                            <PenLine size={16} />
-                          ) : (
-                            <>
-                              <small>
-                                {beijing(due, { weekday: "short" })}
-                              </small>
-                              <b>{Number(beijingDay(due).slice(8))}</b>
-                            </>
-                          )}
-                        </span>
+                        <DueStamp deadline={a.deadline} now={now} />
                         <span className="grow">
                           <strong>{a.title}</strong>
                           <small>{a.course_name}</small>

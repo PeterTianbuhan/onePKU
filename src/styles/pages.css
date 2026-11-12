@@ -1,73 +1,330 @@
 /* 各页面：今日、课程列表、作业列表、通知、成绩、校历、校园卡、空闲教室、设置。 */
 
 /* ── 今日 ───────────────────────────────────────────── */
+/* 一幅画：左边是日子和题款，右边是未名湖，天上的日月按北京时刻走。
+   画是一张只有浓淡的墨稿，颜色由晨、昼、昏、夜四套墨色染上去。 */
 .today-hero {
+  --hero-ink: #3b4652;
+  --hero-orb: #c4402f;
+  --hero-glow: transparent;
   position: relative;
   isolation: isolate;
-  margin: -40px calc(-1 * var(--page-pad)) 22px;
-  padding: 76px var(--page-pad) 48px;
+  min-height: 336px;
+  margin: -40px calc(-1 * var(--page-pad)) 0;
+  padding: 58px var(--page-pad) 64px;
   overflow: hidden;
 }
-/* 未名湖与博雅塔：从右下角淡入，左边留给日期。 */
-.today-hero-art {
+.today-hero[data-sky="dawn"] {
+  --hero-ink: #9a4458;
+  --hero-orb: #cf4a31;
+  --hero-glow: #f6c3a8;
+}
+.today-hero[data-sky="dusk"] {
+  --hero-ink: #84402f;
+  --hero-orb: #cc4a22;
+  --hero-glow: #f3bd84;
+}
+.today-hero[data-sky="night"] {
+  --hero-ink: #35416f;
+  --hero-orb: #35416f;
+  --hero-glow: #c3cbee;
+}
+html[data-theme="dark"] .today-hero {
+  --hero-ink: #a3adb8;
+  --hero-orb: #d9604e;
+}
+html[data-theme="dark"] .today-hero[data-sky="dawn"] {
+  --hero-ink: #d58f9b;
+  --hero-glow: #6b2f33;
+}
+html[data-theme="dark"] .today-hero[data-sky="dusk"] {
+  --hero-ink: #d89c7f;
+  --hero-glow: #6a3f1f;
+}
+html[data-theme="dark"] .today-hero[data-sky="night"] {
+  --hero-ink: #8f9cd8;
+  --hero-orb: #c9d0f2;
+  --hero-glow: #2a3364;
+}
+.hero-scene {
   position: absolute;
   z-index: -1;
-  right: 0;
-  bottom: 0;
-  width: min(880px, 82%);
-  height: 100%;
-  object-fit: cover;
-  object-position: 100% 81%;
-  mix-blend-mode: multiply;
-  opacity: 0.62;
+  inset: 0 0 0 auto;
+  width: min(1040px, 90%);
+  container-type: inline-size;
   pointer-events: none;
+  animation: ink-in 1.2s var(--ease) both;
+}
+.hero-ink {
+  position: absolute;
+  inset: auto 0 -5.5cqw 0;
+  aspect-ratio: 1392 / 592;
+  background: linear-gradient(
+    to top,
+    var(--hero-ink) 34%,
+    color-mix(in srgb, var(--hero-ink) 70%, transparent)
+  );
+  opacity: 0.82;
   -webkit-mask-image:
-    linear-gradient(
-      to right,
-      transparent 0,
-      #000 44%,
-      #000 80%,
-      transparent 91%
-    ),
-    linear-gradient(to bottom, transparent 0, #000 20%, #000 64%, transparent);
+    var(--ink-image),
+    linear-gradient(to right, transparent 2%, #000 40%, #000 88%, transparent),
+    linear-gradient(to top, transparent 10%, #000 30%);
+  -webkit-mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
   -webkit-mask-composite: source-in;
   mask-image:
-    linear-gradient(
-      to right,
-      transparent 0,
-      #000 44%,
-      #000 80%,
-      transparent 91%
-    ),
-    linear-gradient(to bottom, transparent 0, #000 20%, #000 64%, transparent);
+    var(--ink-image),
+    linear-gradient(to right, transparent 2%, #000 40%, #000 88%, transparent),
+    linear-gradient(to top, transparent 10%, #000 30%);
+  mask-size: 100% 100%;
+  mask-repeat: no-repeat;
   mask-composite: intersect;
 }
-/* 深色下把画反相成夜色：白底变黑后用滤色叠掉，只剩朱红的线。 */
-html[data-theme="dark"] .today-hero-art {
-  filter: invert(1) hue-rotate(180deg) saturate(0.7);
-  mix-blend-mode: screen;
-  opacity: 0.4;
+html[data-theme="dark"] .hero-ink {
+  opacity: 0.5;
 }
-.today-hero h1 {
-  font-size: 46px;
-  line-height: 1.2;
+/* 天光：日月周围的一片天微微染色，跟着日月走。 */
+.hero-wash {
+  position: absolute;
+  left: calc(22% + var(--sx) * 64%);
+  bottom: calc(9cqw + var(--sy) * 17cqw);
+  width: 64cqw;
+  height: 30cqw;
+  translate: -50% 50%;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--hero-glow) 66%, transparent),
+    transparent
+  );
+}
+.hero-orb {
+  position: absolute;
+  left: calc(22% + var(--sx) * 64%);
+  bottom: calc(9cqw + var(--sy) * 17cqw);
+  width: 5.6cqw;
+  aspect-ratio: 1;
+  translate: -50% 50%;
+  animation: orb-rise 1.6s 0.15s var(--ease) both;
+}
+.hero-orb.sun {
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 42% 36%,
+    color-mix(in srgb, var(--hero-orb) 86%, #fff),
+    var(--hero-orb) 68%
+  );
+  opacity: 0.9;
+}
+.hero-orb.moon {
+  width: 5.2cqw;
+  overflow: visible;
+}
+.moon-dark {
+  fill: color-mix(in srgb, var(--hero-orb) 12%, transparent);
+}
+.moon-lit {
+  fill: var(--surface);
+}
+html[data-theme="dark"] .moon-lit {
+  fill: #ece6d2;
+}
+.moon-rim {
+  fill: none;
+  stroke: var(--hero-orb);
+  stroke-width: 1;
+  opacity: 0.55;
+}
+.hero-lockup {
+  position: relative;
+  width: fit-content;
+}
+.hero-lockup > * {
+  animation: rise 0.5s var(--ease) both;
+}
+.hero-lockup > :nth-child(2) {
+  animation-delay: 0.06s;
+}
+.hero-lockup > :nth-child(3) {
+  animation-delay: 0.12s;
+}
+.hero-month {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  font-family: var(--font-serif);
+  font-size: 21px;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.3em;
 }
-.today-hero .eyebrow {
-  margin-bottom: 8px;
+.hero-month span {
+  color: var(--muted);
+  font-family: var(--font-sans);
   font-size: 13px;
-  letter-spacing: 0.14em;
+  font-weight: 400;
+  letter-spacing: 0.18em;
+}
+.hero-day {
+  display: flex;
+  gap: 16px;
+  margin: 0 0 8px -5px;
+}
+.hero-day h1 {
+  font-size: 124px;
+  line-height: 1.12;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+/* 题款：从右往左竖着读，年在右，月日在左，末尾钤一方节气印。 */
+.hero-colophon {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: flex-start;
+  gap: 7px;
+  padding-top: 24px;
+  color: var(--muted);
+  font-family: var(--font-serif);
+  font-size: 13px;
+  line-height: 1.25;
+  letter-spacing: 0.26em;
+}
+.hero-colophon span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  writing-mode: vertical-rl;
+}
+.seal {
+  padding: 5px 2.5px 3px;
+  border-radius: 3px;
+  background: var(--seal);
+  color: #fff;
+  font-family: var(--font-serif);
+  font-size: 11.5px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.12em;
+  align-self: flex-end;
+  writing-mode: vertical-rl;
+  filter: url(#seal-rough);
 }
 .today-brief {
-  margin-top: 12px;
   color: var(--muted);
   font-size: 14px;
+}
+
+/* 两周的时间尺：贴着湖岸，一天一格，作业按截止日立在尺上。 */
+.ruler {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(14, minmax(0, 1fr));
+  margin: 0 0 38px;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid color-mix(in srgb, var(--text) 70%, transparent);
+}
+.ruler li {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  padding-top: 9px;
+}
+.ruler li::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 1px;
+  height: 5px;
+  background: color-mix(in srgb, var(--text) 70%, transparent);
+}
+.ruler time {
+  display: grid;
+  justify-items: center;
+  line-height: 1.2;
+}
+.ruler time small {
+  color: var(--faint);
+  font-size: 11px;
+}
+.ruler time b {
+  display: grid;
+  place-items: center;
+  min-width: 26px;
+  height: 26px;
+  margin-top: 1px;
+  padding: 0 4px;
+  border-radius: 13px;
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: lining-nums;
+}
+.ruler .rest time b {
+  color: var(--faint);
+  font-weight: 400;
+}
+.ruler .today time small {
+  color: var(--primary);
+  font-weight: 600;
+}
+.ruler .today time b {
+  background: var(--seal);
+  color: #fff;
+}
+.ruler-marks {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 4px;
+  padding-bottom: 12px;
+  translate: -50%;
+}
+/* 立在尺上的细杆 */
+.ruler .marked .ruler-marks::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  height: 12px;
+  background: color-mix(in srgb, var(--text) 70%, transparent);
+}
+.ruler-marks button {
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: var(--background);
+  transition: transform 0.16s var(--ease);
+  animation: rise 0.5s 0.3s var(--ease) both;
+}
+.ruler-marks button:hover {
+  transform: translateY(-2px);
+}
+.ruler-marks .course-glyph {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--pigment) 16%, var(--background));
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--pigment) 30%, transparent);
+  font-size: 14px;
+}
+.ruler-marks small {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.today-grid .column {
+  gap: 34px;
 }
 .today-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);
-  gap: var(--section-gap);
+  gap: 0 48px;
   align-items: start;
 }
 .assignment-row {
@@ -364,29 +621,30 @@ html[data-theme="dark"] .today-hero-art {
   line-height: 1;
 }
 .quick-links {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 26px;
+  margin-top: 6px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
 }
 .quick-links > button {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 13px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-default);
-  background: var(--surface);
-  text-align: left;
+  gap: 8px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
 }
 .quick-links > button:hover {
-  border-color: var(--border-strong);
-  background: var(--hover);
+  color: var(--primary);
 }
 .quick-links > button > svg {
   color: var(--primary);
 }
 .quick-links strong {
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 500;
 }
 
@@ -431,44 +689,69 @@ html[data-theme="dark"] .today-hero-art {
 }
 .course-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+  gap: 14px;
 }
+/* 一门课一张色笺：课名在上，课名的头一个字淡淡地压在角上。 */
 .course-tile {
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 62px;
-  padding: 14px;
-  border: 1px solid var(--border);
+  align-items: flex-start;
+  min-height: 104px;
+  padding: 16px 18px;
+  border: 0;
   border-radius: var(--radius-default);
-  background: var(--surface);
+  background: color-mix(in srgb, var(--pigment) 9%, transparent);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--pigment) 14%, transparent);
+  overflow: hidden;
   text-align: left;
   transition:
-    transform 0.16s var(--ease),
-    box-shadow 0.16s var(--ease),
-    border-color 0.16s var(--ease);
+    transform 0.2s var(--ease),
+    background-color 0.2s var(--ease),
+    box-shadow 0.2s var(--ease);
 }
 .course-tile:hover {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-md);
-  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--pigment) 15%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--pigment) 26%, transparent),
+    var(--shadow-md);
+  transform: translateY(-2px);
 }
 .course-tile .course-glyph {
-  width: 34px;
-  height: 34px;
-  font-size: 17px;
+  position: absolute;
+  right: -6px;
+  bottom: -20px;
+  width: auto;
+  height: auto;
+  background: transparent;
+  font-size: 92px;
+  font-weight: 700;
+  opacity: 0.16;
+  transition:
+    opacity 0.2s var(--ease),
+    transform 0.4s var(--ease);
+}
+.course-tile:hover .course-glyph {
+  opacity: 0.26;
+  transform: translate(-3px, -3px);
 }
 .course-tile h4 {
-  flex: 1;
-  min-width: 0;
+  position: relative;
+  max-width: 78%;
   margin: 0;
-  font-size: 14px;
-  font-weight: 550;
-  line-height: 1.45;
+  font-family: var(--font-serif);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
 }
-.course-tile > svg {
-  color: var(--faint);
+.course-tile small {
+  position: absolute;
+  left: 18px;
+  bottom: 14px;
+  color: color-mix(in srgb, var(--pigment) 70%, var(--muted));
+  font-size: 12px;
 }
 
 /* ── 作业列表 ─────────────────────────────────────────── */
@@ -500,7 +783,7 @@ html[data-theme="dark"] .today-hero-art {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 13px 10px;
+  padding: 12px 6px;
   border: 0;
   border-bottom: 1px solid var(--border);
   background: transparent;
@@ -524,12 +807,8 @@ html[data-theme="dark"] .today-hero-art {
   color: var(--muted);
   font-size: 12.5px;
 }
-.assignment-index,
-.resource-plain > .video-list {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-default);
-  background: var(--surface);
-  overflow: hidden;
+.assignment-index {
+  border-top: 1px solid var(--rule);
 }
 @media (max-width: 1050px) {
   .assignment-filters {
@@ -575,10 +854,7 @@ html[data-theme="dark"] .today-hero-art {
   display: grid;
   grid-template-columns: minmax(280px, 0.85fr) minmax(0, 1.2fr);
   min-height: 420px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-default);
-  background: var(--surface);
-  overflow: hidden;
+  border-top: 1px solid var(--rule);
 }
 .news-workspace.index-only {
   grid-template-columns: minmax(0, 1fr);
@@ -755,6 +1031,53 @@ html[data-theme="dark"] .today-hero-art {
 .study-metrics strong + span {
   color: var(--faint);
   font-size: 12px;
+}
+/* 成绩页头：左边三个数，右边各学期 GPA 的墨线。 */
+.grade-overview {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 40px;
+  padding-bottom: 22px;
+}
+.grade-overview .study-metrics {
+  padding-bottom: 0;
+}
+.grade-overview .study-metrics strong {
+  font-size: 44px;
+}
+.gpa-trend {
+  max-width: 100%;
+  height: auto;
+  color: var(--text);
+  overflow: visible;
+  animation: fade 0.6s var(--ease) both;
+}
+.gpa-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.gpa-dot {
+  fill: var(--seal);
+  stroke: var(--background);
+  stroke-width: 2.5;
+}
+.gpa-value,
+.gpa-term {
+  text-anchor: middle;
+  fill: currentColor;
+  font-family: var(--font-serif);
+  font-size: 13px;
+  font-variant-numeric: lining-nums;
+}
+.gpa-term {
+  fill: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 11px;
 }
 .grade-tools {
   display: flex;
@@ -1021,14 +1344,6 @@ html[data-theme="dark"] .today-hero-art {
 }
 .transaction-list h2 .subtle {
   font-weight: 400;
-}
-.transaction-list > .table-scroll,
-.transaction-list > .skeleton,
-.transaction-list > .empty {
-  padding: 4px 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-default);
-  background: var(--surface);
 }
 @media (max-width: 900px) {
   .card-overview,

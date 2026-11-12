@@ -284,22 +284,21 @@ input[type="search"]::-webkit-search-cancel-button {
   color: var(--primary);
 }
 
-/* 卡片（Resource）：每块数据自己的边界 */
+/* 一节（Resource）：不套盒子，直接排在纸上。标题下一道墨线，行与行之间是细线。 */
 .resource {
   min-width: 0;
-  padding: 18px 20px 20px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-default);
-  background: var(--surface);
-  box-shadow: 0 1px 2px rgb(var(--shadow-ink) / 0.03);
 }
 .resource-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  min-height: 30px;
-  margin-bottom: 12px;
+  min-height: 34px;
+  margin-bottom: 10px;
+}
+.resource-head:has(> h2) {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--rule);
 }
 .head-actions {
   display: flex;
@@ -313,17 +312,6 @@ input[type="search"]::-webkit-search-cancel-button {
 .resource-head .icon-button:focus-visible,
 .resource[aria-busy="true"] > .resource-head .icon-button {
   opacity: 1;
-}
-.resource.resource-plain,
-.resource.resource-page {
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-.resource-plain > .resource-head {
-  margin-bottom: 8px;
 }
 .column {
   display: flex;
@@ -549,9 +537,6 @@ td:last-child {
 }
 .modal-body > .resource {
   margin-top: 20px;
-  padding: 0;
-  border: 0;
-  box-shadow: none;
 }
 .modal-body > .resource:first-child {
   margin-top: 0;
@@ -795,9 +780,6 @@ td:last-child {
 }
 
 @media (max-width: 640px) {
-  .resource {
-    padding: 16px;
-  }
   .modal {
     max-width: calc(100vw - 20px);
   }

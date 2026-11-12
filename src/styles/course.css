@@ -370,6 +370,8 @@
   position: absolute;
   top: 0;
   right: 0;
+  padding: 0;
+  border: 0;
 }
 .resource-page:has(.assignment-detail) > .resource-head h2 {
   display: none;
@@ -413,13 +415,6 @@
   font-size: 14px;
   font-weight: 550;
 }
-/* 详情本身已经是一张卡片，里面的反馈不再套一层 */
-.assignment-detail .resource {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
 .assignment-feedback {
   margin-top: 24px;
 }
@@ -434,6 +429,8 @@
 .feedback-compact > .resource-head {
   flex: 1;
   margin: 0;
+  padding: 0;
+  border: 0;
 }
 .feedback-compact > .resource-head h2 {
   color: var(--muted);

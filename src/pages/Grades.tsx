@@ -17,6 +17,59 @@ import {
   type ScopeOverride,
 } from "../lib/grades";
 
+/** 「24-25-2」写成「25春」：学年的后一年配春、暑，前一年配秋。 */
+function termLabel(term: string): string {
+  const [from, to, xq] = term.split("-");
+  return xq === "1" ? `${from}秋` : `${to}${xq === "2" ? "春" : "暑"}`;
+}
+
+/** 各学期 GPA 的走势：一条墨线，每学期一个朱砂点。不足两个学期不画。 */
+function GpaTrend({ points }: { points: { term: string; gpa: number }[] }) {
+  if (points.length < 2) return null;
+  const width = 96 * (points.length - 1) + 72;
+  const values = points.map((p) => p.gpa);
+  const low = Math.min(...values);
+  const span = Math.max(Math.max(...values) - low, 0.2);
+  const at = points.map((p, i) => ({
+    ...p,
+    x: 36 + i * 96,
+    y: 78 - ((p.gpa - low) / span) * 44,
+  }));
+  const line = at.map((p, i) => `${i ? "L" : "M"}${p.x} ${p.y}`).join("");
+  return (
+    <svg
+      className="gpa-trend"
+      viewBox={`0 0 ${width} 116`}
+      style={{ width }}
+      role="img"
+      aria-label={`各学期 GPA：${points.map((p) => `${termLabel(p.term)} ${p.gpa.toFixed(2)}`).join("，")}`}
+    >
+      <defs>
+        <linearGradient id="gpa-wash" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="currentColor" stopOpacity="0.1" />
+          <stop offset="1" stopColor="currentColor" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path
+        d={`${line}L${at[at.length - 1].x} 92L${at[0].x} 92Z`}
+        fill="url(#gpa-wash)"
+      />
+      <path d={line} className="gpa-line" />
+      {at.map((p) => (
+        <g key={p.term}>
+          <circle cx={p.x} cy={p.y} r="4" className="gpa-dot" />
+          <text x={p.x} y={p.y - 11} className="gpa-value">
+            {p.gpa.toFixed(2)}
+          </text>
+          <text x={p.x} y="110" className="gpa-term">
+            {termLabel(p.term)}
+          </text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
 function GradeSummary({
   data,
   scope,
@@ -32,8 +85,26 @@ function GradeSummary({
   // 学校只返回全部课程的累计 GPA，专业口径只能本地算。
   const official = scope === "major" ? null : officialGpa(data.overall_gpa);
   const gpa = official ?? calculated.gpa;
+  // 每学期先用学校给的 GPA，专业口径与缺失时本地计算。没有 GPA 的学期不上图。
+  const trend = [...new Set(courses.map((c) => `${c.xnd}-${c.xq}`))]
+    .sort()
+    .map((term) => ({
+      term,
+      gpa:
+        (scope === "major"
+          ? null
+          : officialGpa(
+              data.semester_gpas.find((s) => s.xndxq === term)?.gpa,
+            )) ??
+        calculateGrades(
+          courses.filter((c) => `${c.xnd}-${c.xq}` === term),
+          scope,
+          override,
+        ).gpa,
+    }))
+    .filter((p): p is { term: string; gpa: number } => p.gpa !== null);
   return (
-    <>
+    <div className="grade-overview">
       <div className="study-metrics grade-metrics">
         <div>
           <div className="grade-label">
@@ -94,7 +165,8 @@ function GradeSummary({
           <span>学校返回</span>
         </div>
       </div>
-    </>
+      <GpaTrend points={trend} />
+    </div>
   );
 }
 

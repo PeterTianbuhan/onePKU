@@ -4,7 +4,11 @@
 
 一个本地运行的北大校园应用，有 macOS / Windows 桌面版和 Android 手机版两套实现。课程、作业、成绩、通知、校历、空闲教室、校园卡放在一处，数据只在你的设备上。
 
-![OnePKU 今日页](docs/onepku-preview.png)
+![OnePKU 今日页](docs/onepku-preview.webp)
+
+今日页的湖景按北京时刻换色：清晨、黄昏、夜里（月亮按月相画）。
+
+![清晨、黄昏与夜里的今日页](docs/onepku-sky.webp)
 
 </div>
 

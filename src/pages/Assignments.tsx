@@ -10,6 +10,7 @@ import {
 import { Button, Empty, Resource, Search, type Login } from "../components/ui";
 import { AssignmentDetails } from "../components/AssignmentDetails";
 import { usePageParams } from "../lib/navigation";
+import DueStamp from "../components/DueStamp";
 
 export function assignmentStatus(a: Assignment, now = Date.now()) {
   if (a.detail_error) return "unknown";
@@ -154,6 +155,7 @@ export function AssignmentWorkspace({
                     className="assignment-choice"
                     onClick={() => select(a.hash_id)}
                   >
+                    <DueStamp deadline={a.deadline} now={Date.now()} />
                     <span className="grow">
                       <strong>{a.title}</strong>
                       <small>
